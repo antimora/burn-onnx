@@ -39,26 +39,28 @@ use burn_onnx::ModelGen;
 
 fn main() {
     ModelGen::new()
-        .input("model.onnx")
-        .out_dir("src/model")
+        .input("src/model/my_model.onnx")
+        .out_dir("model/")
         .run_from_script();
 }
 ```
 
-Then use the generated model:
+Include the generated code in `src/model/mod.rs`:
 
 ```rust
-mod model;
-
-use burn::backend::Wgpu;
-use model::Model;
-
-fn main() {
-    let device = Default::default();
-    let model: Model<Wgpu> = Model::default();
-
-    let output = model.forward(input);
+pub mod my_model {
+    include!(concat!(env!("OUT_DIR"), "/model/my_model.rs"));
 }
+```
+
+Then use the model:
+
+```rust
+use burn::backend::NdArray;
+use crate::model::my_model::Model;
+
+let model: Model<NdArray<f32>> = Model::default();
+let output = model.forward(input_tensor);
 ```
 
 For detailed usage instructions, see the
@@ -66,9 +68,9 @@ For detailed usage instructions, see the
 
 ## Examples
 
-| Example | Description |
-|---------|-------------|
-| [onnx-inference](examples/onnx-inference) | Basic ONNX model inference |
+| Example                                                       | Description                         |
+| ------------------------------------------------------------- | ----------------------------------- |
+| [onnx-inference](examples/onnx-inference)                     | Basic ONNX model inference          |
 | [image-classification-web](examples/image-classification-web) | WebAssembly/WebGPU image classifier |
 
 ## Supported Operators
