@@ -75,10 +75,17 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
                 let output_rank = shape;
 
                 // Generate code to concatenate shape arrays
+                // Handle scalar inputs by converting them to single-element arrays
                 let mut shape_parts = Vec::new();
                 for input in &self.inputs {
                     let input_name = arg_to_ident(input);
-                    shape_parts.push(quote! { &#input_name[..] });
+                    if input.ty.is_scalar() {
+                        // Scalar: wrap in array and slice
+                        shape_parts.push(quote! { &[#input_name][..] });
+                    } else {
+                        // Shape or tensor: already an array, just slice
+                        shape_parts.push(quote! { &#input_name[..] });
+                    }
                 }
 
                 quote! {
