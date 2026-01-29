@@ -147,7 +147,7 @@ impl NodeProcessor for ConcatProcessor {
             if has_shape {
                 node.outputs[0].ty = ArgType::Shape(total_length);
             } else {
-                // Get dtype from first scalar or tensor
+                // Get dtype from first scalar or tensor and validate all match
                 let first_dtype = node
                     .inputs
                     .iter()
@@ -157,6 +157,22 @@ impl NodeProcessor for ConcatProcessor {
                         _ => None,
                     })
                     .unwrap_or(crate::ir::DType::I64);
+
+                for (i, input) in node.inputs.iter().enumerate() {
+                    let dtype = match &input.ty {
+                        ArgType::Scalar(d) => Some(*d),
+                        ArgType::Tensor(t) => Some(t.dtype),
+                        _ => None,
+                    };
+                    if let Some(d) = dtype {
+                        if d != first_dtype {
+                            return Err(ProcessError::TypeMismatch {
+                                expected: format!("{:?}", first_dtype),
+                                actual: format!("{:?} at input {}", d, i),
+                            });
+                        }
+                    }
+                }
 
                 node.outputs[0].ty = ArgType::Tensor(TensorType {
                     dtype: first_dtype,
@@ -490,6 +506,23 @@ mod tests {
         let processor = ConcatProcessor;
         let config = processor.extract_config(&node, 16).unwrap();
         assert_eq!(config.axis, 0); // Only valid axis for scalars
+    }
+
+    #[test]
+    fn test_concat_scalar_dtype_mismatch() {
+        use burn_tensor::DType;
+
+        let mut node = TestNodeBuilder::new(NodeType::Concat, "test_concat_dtype_mismatch")
+            .input_scalar_i64("s1")
+            .input_scalar("s2", DType::F32)
+            .output_tensor_i64("output", 1, None)
+            .attr_int("axis", 0)
+            .build();
+
+        let processor = ConcatProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 16, &prefs);
+        assert!(matches!(result, Err(ProcessError::TypeMismatch { .. })));
     }
 
     #[test]
