@@ -78,20 +78,14 @@ impl NodeProcessor for BatchNormProcessor {
     }
 
     fn lift_constants(&self, node: &mut RawNode, _opset: usize) -> Result<(), ProcessError> {
-        // Only lift weight inputs (scale, bias, mean, var) to static if ALL of them
-        // are constants or already static. If any is a runtime input, keep them all
-        // as-is so the codegen uses the runtime (inline math) path.
-        let all_liftable = (1..=4).all(|i| {
-            node.inputs
-                .get(i)
-                .is_some_and(|inp| inp.is_constant() || inp.is_static())
-        });
+        // Only lift weight inputs to static if ALL four are constants.
+        // Partially lifting would break: the Static path needs all 4 as snapshots,
+        // and the Runtime path needs all 4 as forward inputs.
+        let all_constant = (1..=4).all(|i| node.inputs.len() > i && node.inputs[i].is_constant());
 
-        if all_liftable {
+        if all_constant {
             for i in 1..=4 {
-                if node.inputs[i].is_constant() {
-                    node.inputs[i].to_static()?;
-                }
+                node.inputs[i].to_static()?;
             }
         }
 
@@ -146,11 +140,11 @@ impl NodeProcessor for BatchNormProcessor {
             }
         }
 
-        // Check if all weight inputs (scale, bias, mean, var) are static
+        // Check if all weight inputs (1-4) have static values
         let all_static = (1..=4).all(|i| node.inputs[i].value().is_some());
 
-        if all_static {
-            let num_features = node.inputs[1].value().unwrap().shape[0];
+        if let (true, Some(weight_tensor)) = (all_static, node.inputs[1].value()) {
+            let num_features = weight_tensor.shape[0];
             Ok(BatchNormConfig::Static(BatchNormStaticConfig::new(
                 num_features,
                 epsilon as f64,
