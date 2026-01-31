@@ -154,8 +154,8 @@ mod tests {
     use burn::tensor::DType;
     use insta::assert_snapshot;
     use onnx_ir::node::batch_norm::{
-        BatchNormConfig, BatchNormRuntimeConfig, BatchNormStaticConfig,
-        BatchNormalizationNode, BatchNormalizationNodeBuilder,
+        BatchNormConfig, BatchNormRuntimeConfig, BatchNormStaticConfig, BatchNormalizationNode,
+        BatchNormalizationNodeBuilder,
     };
 
     fn create_batch_norm_node(name: &str) -> BatchNormalizationNode {
