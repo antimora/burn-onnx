@@ -121,14 +121,20 @@ impl NodeProcessor for SplitProcessor {
                         .get("axis")
                         .map(|v| {
                             let a = v.clone().into_i64();
-                            if a < 0 { (a + rank as i64) as usize } else { a as usize }
+                            if a < 0 {
+                                (a + rank as i64) as usize
+                            } else {
+                                a as usize
+                            }
                         })
                         .unwrap_or(0);
-                    let mut shape = input_shape.clone();
                     if i < sizes.len() {
+                        let mut shape = input_shape.clone();
                         shape[axis] = sizes[i];
+                        Some(shape)
+                    } else {
+                        None
                     }
-                    Some(shape)
                 } else {
                     None
                 }
