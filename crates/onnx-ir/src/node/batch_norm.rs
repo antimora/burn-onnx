@@ -78,18 +78,21 @@ impl NodeProcessor for BatchNormProcessor {
     }
 
     fn lift_constants(&self, node: &mut RawNode, _opset: usize) -> Result<(), ProcessError> {
-        // Lift scale (input[1]), bias (input[2]), mean (input[3]), and variance (input[4])
-        if node.inputs.len() > 1 && node.inputs[1].is_constant() {
-            node.inputs[1].to_static()?;
-        }
-        if node.inputs.len() > 2 && node.inputs[2].is_constant() {
-            node.inputs[2].to_static()?;
-        }
-        if node.inputs.len() > 3 && node.inputs[3].is_constant() {
-            node.inputs[3].to_static()?;
-        }
-        if node.inputs.len() > 4 && node.inputs[4].is_constant() {
-            node.inputs[4].to_static()?;
+        // Only lift weight inputs (scale, bias, mean, var) to static if ALL of them
+        // are constants or already static. If any is a runtime input, keep them all
+        // as-is so the codegen uses the runtime (inline math) path.
+        let all_liftable = (1..=4).all(|i| {
+            node.inputs
+                .get(i)
+                .is_some_and(|inp| inp.is_constant() || inp.is_static())
+        });
+
+        if all_liftable {
+            for i in 1..=4 {
+                if node.inputs[i].is_constant() {
+                    node.inputs[i].to_static()?;
+                }
+            }
         }
 
         Ok(())
@@ -143,9 +146,11 @@ impl NodeProcessor for BatchNormProcessor {
             }
         }
 
-        // Check if scale (input[1]) has a static value — if so, all weights are static
-        if let Some(weight_tensor) = node.inputs[1].value() {
-            let num_features = weight_tensor.shape[0];
+        // Check if all weight inputs (scale, bias, mean, var) are static
+        let all_static = (1..=4).all(|i| node.inputs[i].value().is_some());
+
+        if all_static {
+            let num_features = node.inputs[1].value().unwrap().shape[0];
             Ok(BatchNormConfig::Static(BatchNormStaticConfig::new(
                 num_features,
                 epsilon as f64,

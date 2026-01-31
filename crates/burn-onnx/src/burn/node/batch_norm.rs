@@ -168,16 +168,16 @@ mod tests {
             .build()
     }
 
-    fn create_runtime_batch_norm_node(name: &str) -> BatchNormalizationNode {
+    fn create_runtime_batch_norm_node(name: &str, input_rank: usize) -> BatchNormalizationNode {
         let config = BatchNormConfig::Runtime(BatchNormRuntimeConfig::new(1e-5, 0.9));
 
         BatchNormalizationNodeBuilder::new(name)
-            .input_tensor("input", 4, DType::F32)
+            .input_tensor("input", input_rank, DType::F32)
             .input_tensor("scale", 1, DType::F32)
             .input_tensor("bias", 1, DType::F32)
             .input_tensor("mean", 1, DType::F32)
             .input_tensor("var", 1, DType::F32)
-            .output_tensor("output", 4, DType::F32)
+            .output_tensor("output", input_rank, DType::F32)
             .config(config)
             .build()
     }
@@ -207,8 +207,33 @@ mod tests {
     }
 
     #[test]
-    fn test_batch_norm_runtime_forward() {
-        let node = create_runtime_batch_norm_node("batch_norm1");
+    fn test_batch_norm_runtime_forward_rank3() {
+        let node = create_runtime_batch_norm_node("batch_norm1", 3);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            input: Tensor<B, 3>,
+            scale: Tensor<B, 1>,
+            bias: Tensor<B, 1>,
+            mean: Tensor<B, 1>,
+            var: Tensor<B, 1>,
+        ) -> Tensor<B, 3> {
+            let output = {
+                let scale = scale.unsqueeze_dims(&[0isize, 2isize]);
+                let bias = bias.unsqueeze_dims(&[0isize, 2isize]);
+                let mean = mean.unsqueeze_dims(&[0isize, 2isize]);
+                let var = var.unsqueeze_dims(&[0isize, 2isize]);
+                (input - mean) / (var + 0.00001f64).sqrt() * scale + bias
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_batch_norm_runtime_forward_rank4() {
+        let node = create_runtime_batch_norm_node("batch_norm1", 4);
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(
@@ -232,8 +257,33 @@ mod tests {
     }
 
     #[test]
+    fn test_batch_norm_runtime_forward_rank5() {
+        let node = create_runtime_batch_norm_node("batch_norm1", 5);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            input: Tensor<B, 5>,
+            scale: Tensor<B, 1>,
+            bias: Tensor<B, 1>,
+            mean: Tensor<B, 1>,
+            var: Tensor<B, 1>,
+        ) -> Tensor<B, 5> {
+            let output = {
+                let scale = scale.unsqueeze_dims(&[0isize, 2isize, 3isize, 4isize]);
+                let bias = bias.unsqueeze_dims(&[0isize, 2isize, 3isize, 4isize]);
+                let mean = mean.unsqueeze_dims(&[0isize, 2isize, 3isize, 4isize]);
+                let var = var.unsqueeze_dims(&[0isize, 2isize, 3isize, 4isize]);
+                (input - mean) / (var + 0.00001f64).sqrt() * scale + bias
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
     fn test_batch_norm_runtime_forward_with_clone() {
-        let node = create_runtime_batch_norm_node("batch_norm1");
+        let node = create_runtime_batch_norm_node("batch_norm1", 4);
         let code = codegen_forward_with_clone(&node);
         assert_snapshot!(code, @r"
         pub fn forward(
