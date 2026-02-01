@@ -122,16 +122,31 @@ impl From<ProcessError> for Error {
 /// // Build from reader
 /// let graph = OnnxGraphBuilder::new().parse_reader(std::io::Cursor::new(data))?;
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct OnnxGraphBuilder {
-    // Future options can be added here without breaking changes
-    // e.g., strict_mode: bool, min_opset_version: Option<usize>
+    /// Whether to run graph simplification passes (default: true)
+    simplify: bool,
+}
+
+impl Default for OnnxGraphBuilder {
+    fn default() -> Self {
+        Self { simplify: true }
+    }
 }
 
 impl OnnxGraphBuilder {
     /// Create a new ONNX graph builder with default settings
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Enable or disable graph simplification passes (default: true)
+    ///
+    /// When enabled, the builder runs optimization passes on the IR graph
+    /// such as constant folding and dead node elimination.
+    pub fn simplify(mut self, simplify: bool) -> Self {
+        self.simplify = simplify;
+        self
     }
 
     /// Parse an ONNX model from a file path
@@ -248,7 +263,7 @@ impl OnnxGraphBuilder {
             });
         }
 
-        let graph = build_graph_with_base_path(&model, base_path)?;
+        let graph = build_graph_with_options(&model, base_path, self.simplify)?;
 
         if let Some(path) = path_str {
             log::info!("Finished parsing ONNX file: {}", path);
@@ -273,8 +288,17 @@ pub fn build_graph_with_base_path(
     model: &ModelProto,
     base_path: Option<&Path>,
 ) -> Result<OnnxGraph, Error> {
+    build_graph_with_options(model, base_path, false)
+}
+
+/// Build IR graph from ONNX model with base path and simplification option
+fn build_graph_with_options(
+    model: &ModelProto,
+    base_path: Option<&Path>,
+    simplify: bool,
+) -> Result<OnnxGraph, Error> {
     let opset_version = extract_opset_version(model)?;
-    build_graph_from_proto_with_base_path(&model.graph, opset_version, base_path)
+    build_graph_from_proto_with_options(&model.graph, opset_version, base_path, simplify)
 }
 
 /// Build IR graph from ONNX GraphProto with base path for external data
@@ -291,7 +315,23 @@ pub fn build_graph_from_proto_with_base_path(
     opset_version: usize,
     base_path: Option<&Path>,
 ) -> Result<OnnxGraph, Error> {
-    let graph_builder = build_graph_builder_from_proto(graph, opset_version, None, base_path)?;
+    build_graph_from_proto_with_options(graph, opset_version, base_path, false)
+}
+
+/// Build IR graph from ONNX GraphProto with simplification option
+fn build_graph_from_proto_with_options(
+    graph: &crate::protos::GraphProto,
+    opset_version: usize,
+    base_path: Option<&Path>,
+    simplify: bool,
+) -> Result<OnnxGraph, Error> {
+    let graph_builder = build_graph_builder_from_proto_with_simplify(
+        graph,
+        opset_version,
+        None,
+        base_path,
+        simplify,
+    )?;
 
     log::debug!(" PHASE 6: Node Conversion (RawNode -> Node) ");
     Ok(graph_builder.convert_to_graph(opset_version))
@@ -311,12 +351,23 @@ pub(crate) fn build_graph_builder_from_proto(
     name_registry: Option<crate::graph_state::NameRegistry>,
     base_path: Option<&Path>,
 ) -> Result<crate::ir::OnnxGraphBuilder, Error> {
+    build_graph_builder_from_proto_with_simplify(graph, opset_version, name_registry, base_path, false)
+}
+
+fn build_graph_builder_from_proto_with_simplify(
+    graph: &crate::protos::GraphProto,
+    opset_version: usize,
+    name_registry: Option<crate::graph_state::NameRegistry>,
+    base_path: Option<&Path>,
+    simplify: bool,
+) -> Result<crate::ir::OnnxGraphBuilder, Error> {
     build_graph_builder_from_proto_with_outer_scope(
         graph,
         opset_version,
         name_registry,
         crate::ir::OuterScopeTypes::new(),
         base_path,
+        simplify,
     )
 }
 
@@ -338,6 +389,7 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
     name_registry: Option<crate::graph_state::NameRegistry>,
     outer_scope: crate::ir::OuterScopeTypes,
     base_path: Option<&Path>,
+    simplify: bool,
 ) -> Result<crate::ir::OnnxGraphBuilder, Error> {
     log::debug!(" PHASE 1: Initialization ");
     let state_rc = initialization::initialize_from_graph_with_registry_and_outer_scope(
@@ -354,7 +406,14 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
     type_inference::infer_types(&state_rc, opset_version).map_err(Error::TypeInference)?;
 
     log::debug!(" PHASE 4: Post-processing ");
-    let (mut nodes, inputs, mut outputs) = post_processing::post_process(&state_rc);
+    let (nodes, inputs, outputs) = post_processing::post_process(&state_rc);
+
+    let (mut nodes, inputs, mut outputs) = if simplify {
+        log::debug!(" PHASE 4b: Simplification ");
+        crate::simplify::simplify_graph(nodes, inputs, outputs, &state_rc)
+    } else {
+        (nodes, inputs, outputs)
+    };
 
     log::debug!(" PHASE 5: Finalization ");
     Ok(finalization::finalize(
