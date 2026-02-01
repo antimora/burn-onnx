@@ -274,23 +274,6 @@ impl OnnxGraphBuilder {
     }
 }
 
-/// Build IR graph from ONNX model with base path for external data support
-///
-/// The `base_path` is the directory containing the ONNX file, used for resolving
-/// external tensor data paths (for models >2GB).
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - Missing opset version for default domain
-/// - Type inference fails
-pub fn build_graph_with_base_path(
-    model: &ModelProto,
-    base_path: Option<&Path>,
-) -> Result<OnnxGraph, Error> {
-    build_graph_with_options(model, base_path, false)
-}
-
 /// Build IR graph from ONNX model with base path and simplification option
 fn build_graph_with_options(
     model: &ModelProto,
@@ -298,35 +281,8 @@ fn build_graph_with_options(
     simplify: bool,
 ) -> Result<OnnxGraph, Error> {
     let opset_version = extract_opset_version(model)?;
-    build_graph_from_proto_with_options(&model.graph, opset_version, base_path, simplify)
-}
-
-/// Build IR graph from ONNX GraphProto with base path for external data
-///
-/// The `base_path` is used for resolving external tensor data paths (for models >2GB).
-/// Subgraphs that need a shared name registry should use `build_graph_builder_from_proto`
-/// directly (see `DeferredGraph::build_with_outer_scope`).
-///
-/// # Errors
-///
-/// Returns an error if node conversion or type inference fails
-pub fn build_graph_from_proto_with_base_path(
-    graph: &crate::protos::GraphProto,
-    opset_version: usize,
-    base_path: Option<&Path>,
-) -> Result<OnnxGraph, Error> {
-    build_graph_from_proto_with_options(graph, opset_version, base_path, false)
-}
-
-/// Build IR graph from ONNX GraphProto with simplification option
-fn build_graph_from_proto_with_options(
-    graph: &crate::protos::GraphProto,
-    opset_version: usize,
-    base_path: Option<&Path>,
-    simplify: bool,
-) -> Result<OnnxGraph, Error> {
-    let graph_builder = build_graph_builder_from_proto_with_simplify(
-        graph,
+    let graph_builder = build_graph_builder_from_proto(
+        &model.graph,
         opset_version,
         None,
         base_path,
@@ -337,7 +293,7 @@ fn build_graph_from_proto_with_options(
     Ok(graph_builder.convert_to_graph(opset_version))
 }
 
-/// Build IR graph as OnnxGraphBuilder (for subgraphs during processing)
+/// Build IR graph as OnnxGraphBuilder from ONNX GraphProto
 ///
 /// This returns OnnxGraphBuilder which still contains RawNode instances.
 /// Call convert_to_graph() to get the final OnnxGraph with Node enum instances.
@@ -346,21 +302,6 @@ fn build_graph_from_proto_with_options(
 ///
 /// Returns an error if node conversion or type inference fails
 pub(crate) fn build_graph_builder_from_proto(
-    graph: &crate::protos::GraphProto,
-    opset_version: usize,
-    name_registry: Option<crate::graph_state::NameRegistry>,
-    base_path: Option<&Path>,
-) -> Result<crate::ir::OnnxGraphBuilder, Error> {
-    build_graph_builder_from_proto_with_simplify(
-        graph,
-        opset_version,
-        name_registry,
-        base_path,
-        false,
-    )
-}
-
-fn build_graph_builder_from_proto_with_simplify(
     graph: &crate::protos::GraphProto,
     opset_version: usize,
     name_registry: Option<crate::graph_state::NameRegistry>,
