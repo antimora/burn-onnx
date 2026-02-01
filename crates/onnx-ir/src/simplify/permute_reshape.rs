@@ -105,7 +105,11 @@ fn extract_permute_pattern(
 
         // Gather's index (input[1]) must be a constant scalar
         let index_arg = gather.inputs.get(1)?;
-        let index_val = index_arg.value()?.scalar_i64().ok()?;
+        let mut index_val = index_arg.value()?.scalar_i64().ok()?;
+        // Normalize negative indices (ONNX Gather supports them)
+        if index_val < 0 {
+            index_val += concat.inputs.len() as i64;
+        }
         perm.push(index_val);
 
         // Gather's data input (input[0]) must come from a Shape node
