@@ -3,6 +3,7 @@
 //! Runs optimization passes on the IR graph after post-processing but before finalization.
 //! Each pass is a function that takes and returns `(nodes, inputs, outputs)`.
 
+mod constant_shape;
 mod dead_nodes;
 mod permute_reshape;
 
@@ -13,6 +14,7 @@ use crate::{
     ir::{Argument, RawNode},
 };
 
+use constant_shape::simplify_constant_shape;
 use dead_nodes::eliminate_dead_nodes;
 use permute_reshape::simplify_permute_reshape;
 
@@ -25,6 +27,9 @@ pub(crate) fn simplify_graph(
     outputs: Vec<Argument>,
     _state: &Rc<RefCell<GraphState>>,
 ) -> (Vec<RawNode>, Vec<Argument>, Vec<Argument>) {
+    // Constant propagation (may eliminate Shape->Gather chains)
+    let nodes = simplify_constant_shape(nodes);
+
     // Pattern-based simplifications (may create dead nodes)
     let nodes = simplify_permute_reshape(nodes);
 
