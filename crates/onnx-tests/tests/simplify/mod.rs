@@ -60,10 +60,7 @@ mod tests {
         let u = unsimplified::simplify_concat_shapes::Model::<TestBackend>::new(&device);
         let x = Tensor::<TestBackend, 2>::ones([2, 3], &device);
         let y = Tensor::<TestBackend, 3>::ones([4, 5, 6], &device);
-        assert_eq!(
-            s.forward(x.clone(), y.clone()),
-            u.forward(x, y)
-        );
+        assert_eq!(s.forward(x.clone(), y.clone()), u.forward(x, y));
     }
 
     #[test]
@@ -110,10 +107,7 @@ mod tests {
         let u = unsimplified::simplify_where_on_shapes::Model::<TestBackend>::new(&device);
         let x = Tensor::<TestBackend, 3>::ones([2, 3, 4], &device);
         let y = Tensor::<TestBackend, 3>::ones([5, 6, 7], &device);
-        assert_eq!(
-            s.forward(true, x.clone(), y.clone()),
-            u.forward(true, x, y)
-        );
+        assert_eq!(s.forward(true, x.clone(), y.clone()), u.forward(true, x, y));
     }
 
     #[test]

@@ -26,7 +26,8 @@ fn main() {
 }
 
 fn add_all_inputs(model_gen: &mut ModelGen) {
-    model_gen.input("tests/abs/abs.onnx")
+    model_gen
+        .input("tests/abs/abs.onnx")
         .input("tests/add/add.onnx")
         .input("tests/add/add_shape.onnx")
         .input("tests/add/add_broadcast.onnx")

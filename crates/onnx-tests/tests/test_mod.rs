@@ -106,6 +106,7 @@ pub mod scan;
 pub mod shape;
 pub mod sigmoid;
 pub mod sign;
+pub mod simplify;
 pub mod sin;
 pub mod sinh;
 pub mod slice;
@@ -125,7 +126,6 @@ pub mod transpose;
 pub mod trilu;
 pub mod unsqueeze;
 pub mod where_op;
-pub mod simplify;
 pub mod xor;
 
 /// Include specified models in the `model` directory in the target directory.
