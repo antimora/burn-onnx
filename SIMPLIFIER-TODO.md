@@ -92,9 +92,9 @@ Replace common multi-node patterns with simpler equivalents.
       Transpose or simplified Reshape
 - [x] Constant Shape propagation: when a tensor's shape is statically known, replace
       Shape -> Gather chains with constant values
-- [ ] Shape op elimination: when input has fully static shape, replace entire Shape node
+- [x] Shape op elimination: when input has fully static shape, replace entire Shape node
       with a constant tensor (generalizes the Shape->Gather pass above)
-- [ ] Slice-after-Shape elimination: `Shape -> Slice` with known dims -> constant
+- [x] Slice-after-Shape elimination: `Shape -> Slice` with known dims -> constant
 
 ### Deferred (requires subgraph handling)
 
