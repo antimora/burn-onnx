@@ -16,10 +16,9 @@
 //!
 //! ## Future work: Constant folding
 //!
-//! TODO: Add constant folding pass that evaluates nodes with all-constant inputs at compile
+//! TODO(#70): Add constant folding pass that evaluates nodes with all-constant inputs at compile
 //! time. This would replace arbitrary constant expressions (e.g., Const(2) + Const(3) -> Const(5))
-//! beyond the shape-specific patterns already handled. See SIMPLIFIER-TODO.md for the full plan
-//! and priority order.
+//! beyond the shape-specific patterns already handled.
 
 mod constant_shape;
 mod dead_nodes;
