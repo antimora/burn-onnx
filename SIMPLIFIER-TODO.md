@@ -58,6 +58,14 @@ I THINK MOST OF THEM ARE ALREADY DONE IN POST-PROCESSING PHASE
 - [ ] No-op Reshape elimination: remove Reshape where output shape == input shape
 - [ ] No-op Pad elimination: remove Pad where all pad values are 0
 - [ ] No-op Dropout elimination: remove Dropout in inference mode (ratio=0 or test mode)
+- [x] No-op Expand elimination: remove Expand where output shape == input shape
+- [x] No-op Concat elimination: remove Concat with single input (replace with Identity)
+- [x] No-op Split elimination: remove Split with single output
+- [x] No-op Flatten elimination: remove Flatten where input is already rank 2
+- [ ] Consecutive idempotent op elimination: `Relu(Relu(x))` -> `Relu(x)`, same for
+      Ceil, Floor, Round, Sign
+- [ ] Identity element elimination: `x + 0 = x`, `x * 1 = x`, `x / 1 = x`, `x ** 1 = x`,
+      concat with empty tensor
 - [ ] Unused initializer elimination: remove initializers/constants not consumed by any node
 
 ## Fusion Passes
@@ -84,6 +92,12 @@ Replace common multi-node patterns with simpler equivalents.
       Transpose or simplified Reshape
 - [x] Constant Shape propagation: when a tensor's shape is statically known, replace
       Shape -> Gather chains with constant values
+- [ ] Shape op elimination: when input has fully static shape, replace entire Shape node
+      with a constant tensor (generalizes the Shape->Gather pass above)
+- [ ] Slice-after-Shape elimination: `Shape -> Slice` with known dims -> constant
+
+### Deferred (requires subgraph handling)
+
 - [ ] Constant If elimination: when the condition of an If node is a constant, replace with
       the taken branch's subgraph
 - [ ] Constant Loop elimination: when trip count is a constant and condition is always true,

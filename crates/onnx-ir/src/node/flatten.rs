@@ -86,6 +86,14 @@ impl NodeProcessor for FlattenProcessor {
         Ok(())
     }
 
+    fn is_noop(&self, node: &RawNode) -> bool {
+        // Flatten is a no-op when input is already rank 2 (output is always rank 2)
+        if let ArgType::Tensor(in_t) = &node.inputs[0].ty {
+            return in_t.rank == 2;
+        }
+        false
+    }
+
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
         // Extract the shape of the input tensor
         let tensor = match &node.inputs.first().unwrap().ty {
