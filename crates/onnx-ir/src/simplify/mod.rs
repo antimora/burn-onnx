@@ -2,6 +2,24 @@
 //!
 //! Runs optimization passes on the IR graph after post-processing but before finalization.
 //! Each pass is a function that takes and returns `(nodes, inputs, outputs)`.
+//!
+//! ## Current passes (in execution order per iteration)
+//!
+//! 1. **Constant shape propagation** - Shape->Gather, Shape->Slice, and full Shape elimination
+//! 2. **Permute-reshape detection** - Shape+Gather+Unsqueeze+Concat+Reshape -> Transpose
+//! 3. **Idempotent op elimination** - f(f(x)) -> f(x) for Relu, Ceil, Floor, etc.
+//! 4. **Identity element elimination** - x+0, x*1, x/1, x**1 -> x
+//! 5. **Common subexpression elimination** - merge duplicate nodes
+//! 6. **Dead node elimination** - remove unreferenced nodes (cascading)
+//!
+//! All passes run in a fixed-point loop until the graph stabilizes.
+//!
+//! ## Future work: Constant folding
+//!
+//! TODO: Add constant folding pass that evaluates nodes with all-constant inputs at compile
+//! time. This would replace arbitrary constant expressions (e.g., Const(2) + Const(3) -> Const(5))
+//! beyond the shape-specific patterns already handled. See SIMPLIFIER-TODO.md for the full plan
+//! and priority order.
 
 mod constant_shape;
 mod dead_nodes;

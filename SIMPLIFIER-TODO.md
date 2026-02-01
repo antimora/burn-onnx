@@ -18,35 +18,9 @@ Reference: [onnx-simplifier](https://github.com/daquexian/onnx-simplifier)
 - [x] Disable simplification in `onnx-tests` and `onnx-ir` integration tests
 - [x] Fixed-point iteration: apply passes repeatedly until the graph stops changing
 
-## Constant Folding
-
-DO NOT WORK ON CONSTANT FOLDING!!
-
-Evaluate nodes where all inputs are compile-time constants and replace with constant tensors.
-Unlike onnx-simplifier (which uses ONNX Runtime), we evaluate ops directly on constant data.
-
-- [ ] Core framework: detect nodes with all-static inputs, evaluate, replace with constants
-- [ ] Arithmetic ops on constants: Add, Sub, Mul, Div, Pow, Mod, Sqrt, Reciprocal, Neg, Abs,
-      Ceil, Floor, Exp, Log
-- [ ] Comparison ops on constants: Equal, Greater, Less, GreaterOrEqual, LessOrEqual, Not, And,
-      Or, Xor
-- [ ] Tensor manipulation on constants: Reshape, Transpose, Squeeze, Unsqueeze, Flatten, Expand,
-      Slice, Concat, Split, Tile
-- [ ] Reduction ops on constants: ReduceSum, ReduceMean, ReduceMax, ReduceMin, ReduceProd
-- [ ] Shape ops: Shape, Size, Gather (on constants), GatherElements, ScatterElements
-- [ ] Cast on constants
-- [ ] Where/Select on constants
-- [ ] MatMul/Gemm on small constant matrices
-- [ ] Large tensor threshold: skip folding ops that produce tensors above a configurable size
-      (Tile, ConstantOfShape, Expand are common culprits)
-- [ ] Skip non-deterministic ops: RandomUniform, RandomNormal, RandomUniformLike,
-      RandomNormalLike, Multinomial
-
 ## Elimination Passes
 
 Remove unnecessary nodes from the graph.
-
-I THINK MOST OF THEM ARE ALREADY DONE IN POST-PROCESSING PHASE
 
 - [x] Dead node elimination: remove nodes whose outputs are not consumed by any other node
       or graph output
@@ -66,21 +40,6 @@ I THINK MOST OF THEM ARE ALREADY DONE IN POST-PROCESSING PHASE
       Ceil, Floor, Round, Sign, Abs
 - [x] Identity element elimination: `x + 0 = x`, `0 + x = x`, `x - 0 = x`,
       `x * 1 = x`, `1 * x = x`, `x / 1 = x`, `x ** 1 = x`
-- [ ] Unused initializer elimination: remove initializers/constants not consumed by any node
-
-## Fusion Passes
-
-DO NOT WORK ON FUSION PASS
-
-Combine multiple nodes into a single more efficient operation.
-
-- [ ] BatchNorm into Conv: fold BN parameters (scale, bias, mean, var) into Conv weights/bias
-- [ ] Pad into Conv/Pool: merge explicit Pad node into the padding attribute of Conv/Pool ops
-- [ ] Add bias into Conv: fold a following Add (constant bias) into Conv's bias parameter
-- [ ] Consecutive Squeeze fusion: merge chained Squeeze ops into one
-- [ ] Consecutive Transpose fusion: merge chained Transpose ops into one (compose permutations)
-- [ ] Transpose into Gemm: absorb Transpose into Gemm's transA/transB attributes
-- [ ] Consecutive Reshape fusion: merge chained Reshape ops into one
 
 ## Pattern-Based Simplifications
 
@@ -103,6 +62,44 @@ Replace common multi-node patterns with simpler equivalents.
 - [ ] Constant Loop elimination: when trip count is a constant and condition is always true,
       consider unrolling or simplifying
 
-## Shape Inference Propagation
+## Constant Folding (future work)
 
-DO NOT WORK ON THIS
+Evaluate nodes where all inputs are compile-time constants and replace with constant tensors.
+Unlike onnx-simplifier (which uses ONNX Runtime), we evaluate ops directly on constant data.
+
+**Approach**: Build a core framework that detects nodes with all-static inputs, evaluates them
+using burn's CPU backend (or manual evaluation on raw bytes), and replaces with constant tensors.
+Roll out incrementally per op category.
+
+**Priority order** (based on frequency in real models):
+1. Core framework: detect all-constant-input nodes, evaluate, replace with constants
+2. Arithmetic: Add, Sub, Mul, Div, Pow, Neg, Abs, Sqrt, Reciprocal, Exp, Log, Ceil, Floor, Mod
+3. Tensor manipulation: Reshape, Transpose, Squeeze, Unsqueeze, Flatten, Expand, Slice, Concat,
+   Split, Tile
+4. Cast on constants
+5. Comparison/logical: Equal, Greater, Less, GreaterOrEqual, LessOrEqual, Not, And, Or, Xor
+6. Shape ops: Shape, Size, Gather, GatherElements, ScatterElements
+7. Reductions: ReduceSum, ReduceMean, ReduceMax, ReduceMin, ReduceProd
+8. Where/Select on constants
+9. MatMul/Gemm on small constant matrices
+
+**Safeguards**:
+- Large tensor threshold: skip folding ops that produce tensors above a configurable size
+  (Tile, ConstantOfShape, Expand are common culprits)
+- Skip non-deterministic ops: RandomUniform, RandomNormal, RandomUniformLike,
+  RandomNormalLike, Multinomial
+
+**Note**: Many high-value constant expression patterns (shape computation subgraphs) are already
+handled by the pattern-based simplification passes above. Constant folding would cover the
+remaining cases where arbitrary constant expressions appear in models.
+
+## Fusion Passes (not planned)
+
+Op fusion is handled at runtime by Burn's backend fusion system, not at the ONNX import level.
+These are listed here for reference only.
+
+- BatchNorm into Conv: fold BN parameters into Conv weights/bias
+- Pad into Conv/Pool: merge explicit Pad into padding attributes
+- Add bias into Conv: fold constant Add into Conv's bias parameter
+- Consecutive Squeeze/Transpose/Reshape fusion: merge chained ops into one
+- Transpose into Gemm: absorb into transA/transB attributes
