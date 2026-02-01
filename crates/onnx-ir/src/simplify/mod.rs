@@ -5,8 +5,8 @@
 //!
 //! ## Current passes (in execution order per iteration)
 //!
-//! 1. **Constant shape propagation** - Shape->Gather and Shape->Slice elimination
-//! 2. **Permute-reshape detection** - Shape+Gather+Unsqueeze+Concat+Reshape -> Transpose
+//! 1. **Permute-reshape detection** - Shape+Gather+Unsqueeze+Concat+Reshape -> Transpose
+//! 2. **Constant shape propagation** - Shape->Gather and Shape->Slice elimination
 //! 3. **Idempotent op elimination** - f(f(x)) -> f(x) for Relu, Ceil, Floor, etc.
 //! 4. **Identity element elimination** - x+0, x*1, x/1, x**1 -> x
 //! 5. **Common subexpression elimination** - merge duplicate nodes
@@ -59,11 +59,12 @@ pub(crate) fn simplify_graph(
     for iteration in 0..MAX_ITERATIONS {
         let node_count_before = nodes.len();
 
+        // Structural pattern detection (must run before constant folding, which
+        // replaces Gather/Slice nodes with Constants and destroys the patterns)
+        nodes = simplify_permute_reshape(nodes);
+
         // Constant propagation (may eliminate Shape->Gather chains)
         nodes = simplify_constant_shape(nodes, &mut outputs, _state);
-
-        // Pattern-based simplifications (may create dead nodes)
-        nodes = simplify_permute_reshape(nodes);
 
         // Idempotent op elimination: f(f(x)) -> f(x)
         nodes = eliminate_idempotent_ops(nodes);

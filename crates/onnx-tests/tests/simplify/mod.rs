@@ -239,24 +239,7 @@ mod tests {
         assert_codegen_differs(s, u, "permute_via_shape_gather");
         insta::assert_snapshot!(extract_forward(s), @r"
         pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
-                let gather1_out1 = 2i64;
-                let gather2_out1 = 3i64;
-                let gather3_out1 = 5i64;
-                let gather4_out1 = 4i64;
-                let unsqueeze1_out1 = [gather1_out1];
-                let unsqueeze2_out1 = [gather2_out1];
-                let unsqueeze3_out1 = [gather3_out1];
-                let unsqueeze4_out1 = [gather4_out1];
-                let concat1_out1: [i64; 4usize] = [
-                    &unsqueeze1_out1[..],
-                    &unsqueeze2_out1[..],
-                    &unsqueeze3_out1[..],
-                    &unsqueeze4_out1[..],
-                ]
-                    .concat()
-                    .try_into()
-                    .unwrap();
-                let reshape1_out1 = input.reshape(concat1_out1);
+                let reshape1_out1 = input.permute([0, 1, 3, 2]);
                 reshape1_out1
             }
         }
