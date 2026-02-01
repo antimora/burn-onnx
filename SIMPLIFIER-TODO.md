@@ -62,6 +62,8 @@ I THINK MOST OF THEM ARE ALREADY DONE IN POST-PROCESSING PHASE
 
 ## Fusion Passes
 
+DO NOT WORK ON FUSION PASS
+
 Combine multiple nodes into a single more efficient operation.
 
 - [ ] BatchNorm into Conv: fold BN parameters (scale, bias, mean, var) into Conv weights/bias
