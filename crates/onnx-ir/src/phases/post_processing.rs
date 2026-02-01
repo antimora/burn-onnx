@@ -69,7 +69,7 @@ fn plan_noop_elimination(
         let node = &nodes[idx];
 
         if node.inputs.is_empty() {
-            log::warn!("Identity node {} has no inputs, skipping", node.name);
+            log::warn!("No-op node {} has no inputs, skipping", node.name);
             continue;
         }
 
@@ -83,10 +83,10 @@ fn plan_noop_elimination(
         // the original ONNX names. We need to find the original name by reverse-looking up
         // the node_output_map (which maps original names to node indices).
         //
-        // For this Identity node at index `idx` with output index 0, find the original name.
+        // For this no-op node at index `idx` with output index 0, find the original name.
         for (original_name, &(node_idx, output_idx)) in node_output_map.iter() {
             if node_idx == idx && output_idx == 0 {
-                // Found the original ONNX output name for this Identity node
+                // Found the original ONNX output name for this no-op node
                 if original_name != output_name {
                     rewire_map.insert(original_name.clone(), input_name.clone());
                 }
@@ -203,8 +203,8 @@ pub(crate) fn post_process(
         apply_noop_elimination(&mut nodes, &mut outputs, elimination_plan);
     }
 
-    // Re-run constant lifting after identity elimination
-    log::debug!("Re-running constant lifting after Identity elimination");
+    // Re-run constant lifting after no-op elimination
+    log::debug!("Re-running constant lifting after no-op elimination");
     {
         let mut state = state_rc.borrow_mut();
         state.processed_nodes = nodes.clone();

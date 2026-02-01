@@ -2,7 +2,6 @@
 # /// script
 # dependencies = [
 #   "onnx>=1.15.0",
-#   "numpy>=1.24.0",
 # ]
 # ///
 
@@ -17,7 +16,6 @@ post-processing via the is_noop() processor trait method:
 
 import onnx
 from onnx import helper, TensorProto
-import numpy as np
 
 
 def create_cast_same_type_model():
