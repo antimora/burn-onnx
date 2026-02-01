@@ -53,14 +53,14 @@ const MAX_ITERATIONS: usize = 10;
 pub(crate) fn simplify_graph(
     mut nodes: Vec<RawNode>,
     inputs: Vec<Argument>,
-    outputs: Vec<Argument>,
+    mut outputs: Vec<Argument>,
     _state: &Rc<RefCell<GraphState>>,
 ) -> (Vec<RawNode>, Vec<Argument>, Vec<Argument>) {
     for iteration in 0..MAX_ITERATIONS {
         let node_count_before = nodes.len();
 
         // Constant propagation (may eliminate Shape->Gather chains)
-        nodes = simplify_constant_shape(nodes, _state);
+        nodes = simplify_constant_shape(nodes, &mut outputs, _state);
 
         // Pattern-based simplifications (may create dead nodes)
         nodes = simplify_permute_reshape(nodes);

@@ -16,6 +16,7 @@ use crate::tensor_store::TensorDataRef;
 /// Orphaned nodes are cleaned up by dead node elimination.
 pub(crate) fn simplify_constant_shape(
     mut nodes: Vec<RawNode>,
+    graph_outputs: &mut [Argument],
     state: &Rc<RefCell<GraphState>>,
 ) -> Vec<RawNode> {
     // Build output_name -> node index map
@@ -107,6 +108,13 @@ pub(crate) fn simplify_constant_shape(
                 }
             }
         }
+        for output in graph_outputs.iter_mut() {
+            if output.value_source == ValueSource::Dynamic
+                && constant_set.contains(output.name.as_str())
+            {
+                output.value_source = ValueSource::Constant;
+            }
+        }
     }
 
     nodes
@@ -160,6 +168,15 @@ fn extract_constant_shape_dim(
     nodes: &[RawNode],
     producer: &HashMap<String, usize>,
 ) -> Option<i64> {
+    // Only fold when the output is a scalar or single-element shape.
+    // Gather with tensor indices produces Shape(N) outputs that can't be
+    // represented as a single constant value.
+    match &gather.outputs[0].ty {
+        ArgType::Scalar(_) => {}
+        ArgType::Shape(1) => {}
+        _ => return None,
+    }
+
     // Gather's axis must be 0 (indexing into the 1D shape output)
     let axis = gather
         .attrs
@@ -371,6 +388,15 @@ mod tests {
         }
     }
 
+    fn scalar_arg(name: &str, dtype: DType) -> Argument {
+        Argument {
+            name: name.to_string(),
+            ty: ArgType::Scalar(dtype),
+            value_source: ValueSource::Dynamic,
+            value_store: None,
+        }
+    }
+
     fn const_scalar_arg(name: &str, value: i64) -> Argument {
         Argument::from_const_i64(name, value)
     }
@@ -429,7 +455,7 @@ mod tests {
                 "gather",
                 NodeType::Gather,
                 vec![shape_arg("shape_out", 3), const_scalar_arg("idx", 1)],
-                vec![arg("dim_val")],
+                vec![scalar_arg("dim_val", DType::I64)],
                 [("axis".to_string(), AttributeValue::Int64(0))]
                     .into_iter()
                     .collect(),
@@ -437,7 +463,7 @@ mod tests {
         ];
 
         let state = test_state();
-        let result = simplify_constant_shape(nodes, &state);
+        let result = simplify_constant_shape(nodes, &mut [], &state);
         let gather = result.iter().find(|n| n.name == "gather").unwrap();
         assert_eq!(gather.node_type, NodeType::Constant);
 
@@ -463,7 +489,7 @@ mod tests {
                 "gather",
                 NodeType::Gather,
                 vec![shape_arg("shape_out", 3), const_scalar_arg("idx", 1)],
-                vec![arg("dim_val")],
+                vec![scalar_arg("dim_val", DType::I64)],
                 [("axis".to_string(), AttributeValue::Int64(0))]
                     .into_iter()
                     .collect(),
@@ -471,7 +497,7 @@ mod tests {
         ];
 
         let state = test_state();
-        let result = simplify_constant_shape(nodes, &state);
+        let result = simplify_constant_shape(nodes, &mut [], &state);
         let gather = result.iter().find(|n| n.name == "gather").unwrap();
         assert_eq!(gather.node_type, NodeType::Constant);
         let val = gather.inputs[0].value().unwrap().scalar_i64().unwrap();
@@ -501,7 +527,7 @@ mod tests {
         ];
 
         let state = test_state();
-        let result = simplify_constant_shape(nodes, &state);
+        let result = simplify_constant_shape(nodes, &mut [], &state);
         assert_eq!(result[1].node_type, NodeType::Gather);
     }
 
@@ -528,7 +554,7 @@ mod tests {
         ];
 
         let state = test_state();
-        let result = simplify_constant_shape(nodes, &state);
+        let result = simplify_constant_shape(nodes, &mut [], &state);
         assert_eq!(result[1].node_type, NodeType::Gather);
     }
 
@@ -557,7 +583,7 @@ mod tests {
         ];
 
         let state = test_state();
-        let result = simplify_constant_shape(nodes, &state);
+        let result = simplify_constant_shape(nodes, &mut [], &state);
         let shape = result.iter().find(|n| n.name == "shape").unwrap();
         assert_eq!(shape.node_type, NodeType::Shape); // NOT replaced
     }
@@ -573,7 +599,7 @@ mod tests {
         )];
 
         let state = test_state();
-        let result = simplify_constant_shape(nodes, &state);
+        let result = simplify_constant_shape(nodes, &mut [], &state);
         assert_eq!(result[0].node_type, NodeType::Shape);
     }
 
@@ -604,7 +630,7 @@ mod tests {
         ];
 
         let state = test_state();
-        let result = simplify_constant_shape(nodes, &state);
+        let result = simplify_constant_shape(nodes, &mut [], &state);
         let slice = result.iter().find(|n| n.name == "slice").unwrap();
         assert_eq!(slice.node_type, NodeType::Constant);
         let vals = slice.inputs[0].value().unwrap().to_i64_vec().unwrap();
@@ -639,7 +665,7 @@ mod tests {
         ];
 
         let state = test_state();
-        let result = simplify_constant_shape(nodes, &state);
+        let result = simplify_constant_shape(nodes, &mut [], &state);
         let slice = result.iter().find(|n| n.name == "slice").unwrap();
         assert_eq!(slice.node_type, NodeType::Constant);
         let vals = slice.inputs[0].value().unwrap().to_i64_vec().unwrap();
@@ -671,7 +697,7 @@ mod tests {
         ];
 
         let state = test_state();
-        let result = simplify_constant_shape(nodes, &state);
+        let result = simplify_constant_shape(nodes, &mut [], &state);
         let slice = result.iter().find(|n| n.name == "slice").unwrap();
         assert_eq!(slice.node_type, NodeType::Constant);
         let vals = slice.inputs[0].value().unwrap().to_i64_vec().unwrap();
@@ -703,7 +729,7 @@ mod tests {
         ];
 
         let state = test_state();
-        let result = simplify_constant_shape(nodes, &state);
+        let result = simplify_constant_shape(nodes, &mut [], &state);
         assert_eq!(result[1].node_type, NodeType::Slice);
     }
 
@@ -732,7 +758,7 @@ mod tests {
         ];
 
         let state = test_state();
-        let result = simplify_constant_shape(nodes, &state);
+        let result = simplify_constant_shape(nodes, &mut [], &state);
         assert_eq!(result[1].node_type, NodeType::Slice);
     }
 }
