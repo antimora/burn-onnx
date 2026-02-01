@@ -368,41 +368,45 @@ def constant_of_shape_opt():
 
 
 def gather_shape_chain():
-    """Shape(x) -> Gather(0) -> Cast(FLOAT) -> Mul(y, gathered).
+    """Chained Shape->Gather where first Gather's result feeds second Gather's index.
 
-    When x.shape[0] == 1, the gathered dim is 1. After Cast to float it becomes
-    1.0, so Mul(y, 1.0) is an identity element that should be eliminated.
-    This tests that value_store propagation through constant_shape folding
-    enables downstream identity element elimination.
+    Shape(x) -> Gather(const 1) -> first_dim (== 1 for x.shape=[3,1,4])
+    Shape(y) -> Gather(first_dim) -> second_dim (== dim_1 of y)
+
+    The second Gather uses the first's output as its index. Without proper
+    value_store propagation, the second Gather can never be folded because
+    its index input has value_source=Constant but value_store=None.
     """
     graph = helper.make_graph(
         name="main_graph",
         nodes=[
-            helper.make_node("Shape", ["x"], ["shape_out"]),
+            helper.make_node("Shape", ["x"], ["shape_x"]),
             helper.make_node(
                 "Constant",
                 [],
-                ["idx"],
-                value=helper.make_tensor("idx_val", TensorProto.INT64, [], [0]),
+                ["idx1"],
+                value=helper.make_tensor("idx1_val", TensorProto.INT64, [], [1]),
             ),
-            helper.make_node("Gather", ["shape_out", "idx"], ["dim_val"], axis=0),
-            helper.make_node("Cast", ["dim_val"], ["dim_float"], to=TensorProto.FLOAT),
-            helper.make_node("Mul", ["y", "dim_float"], ["result"]),
+            # Gather dim 1 from x's shape: x.shape=[3,1,4] -> 1
+            helper.make_node("Gather", ["shape_x", "idx1"], ["dim_from_x"], axis=0),
+            helper.make_node("Shape", ["y"], ["shape_y"]),
+            # Use the gathered value (1) as index into y's shape: y.shape=[5,6,7] -> 6
+            helper.make_node("Gather", ["shape_y", "dim_from_x"], ["dim_from_y"], axis=0),
         ],
         inputs=[
             helper.make_value_info(
                 "x",
-                helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[1, 3, 4]),
+                helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[3, 1, 4]),
             ),
             helper.make_value_info(
                 "y",
-                helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[2, 5]),
+                helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[5, 6, 7]),
             ),
         ],
         outputs=[
             helper.make_value_info(
-                "result",
-                helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[2, 5]),
+                "dim_from_y",
+                helper.make_tensor_type_proto(TensorProto.INT64, shape=[]),
             ),
         ],
     )

@@ -97,6 +97,18 @@ pub(crate) fn simplify_constant_shape(
     // ValueSource::Constant so the dead constant elimination pass in
     // convert_to_graph recognizes them as live references.
     if !constant_outputs.is_empty() {
+        // Build map: constant output name -> value_store from the producing node
+        let mut store_map: HashMap<String, crate::tensor_store::ValueStore> = HashMap::new();
+        for node in &nodes {
+            for output in &node.outputs {
+                if output.value_source == ValueSource::Constant {
+                    if let Some(ref store) = output.value_store {
+                        store_map.insert(output.name.clone(), store.clone());
+                    }
+                }
+            }
+        }
+
         let constant_set: std::collections::HashSet<&str> =
             constant_outputs.iter().map(|s| s.as_str()).collect();
         for node in &mut nodes {
@@ -105,6 +117,7 @@ pub(crate) fn simplify_constant_shape(
                     && constant_set.contains(input.name.as_str())
                 {
                     input.value_source = ValueSource::Constant;
+                    input.value_store = store_map.get(input.name.as_str()).cloned();
                 }
             }
         }
@@ -113,6 +126,7 @@ pub(crate) fn simplify_constant_shape(
                 && constant_set.contains(output.name.as_str())
             {
                 output.value_source = ValueSource::Constant;
+                output.value_store = store_map.get(output.name.as_str()).cloned();
             }
         }
     }
@@ -760,5 +774,77 @@ mod tests {
         let state = test_state();
         let result = simplify_constant_shape(nodes, &mut [], &state);
         assert_eq!(result[1].node_type, NodeType::Slice);
+    }
+
+    #[test]
+    fn test_value_store_propagated_to_downstream_inputs() {
+        // Shape(x=[2,3,4]) -> Gather(idx=1) -> downstream Add
+        // After folding, the Add's input referencing the Gather output should have value_store
+        let nodes = vec![
+            raw_node(
+                "shape",
+                NodeType::Shape,
+                vec![tensor_arg_with_shape("input", vec![2, 3, 4])],
+                vec![shape_arg("shape_out", 3)],
+                HashMap::new(),
+            ),
+            raw_node(
+                "gather",
+                NodeType::Gather,
+                vec![shape_arg("shape_out", 3), const_scalar_arg("idx", 1)],
+                vec![scalar_arg("dim_val", DType::I64)],
+                [("axis".to_string(), AttributeValue::Int64(0))]
+                    .into_iter()
+                    .collect(),
+            ),
+            raw_node(
+                "add",
+                NodeType::Add,
+                vec![scalar_arg("dim_val", DType::I64), arg("other")],
+                vec![arg("add_out")],
+                HashMap::new(),
+            ),
+        ];
+
+        let state = test_state();
+        let result = simplify_constant_shape(nodes, &mut [], &state);
+
+        // The Add's first input should now have value_store and be readable
+        let add_node = result.iter().find(|n| n.name == "add").unwrap();
+        assert_eq!(add_node.inputs[0].value_source, ValueSource::Constant);
+        let val = add_node.inputs[0].value().unwrap().scalar_i64().unwrap();
+        assert_eq!(val, 3);
+    }
+
+    #[test]
+    fn test_value_store_propagated_to_graph_outputs() {
+        // Shape(x=[2,3,4]) -> Gather(idx=0) -> graph output
+        // After folding, the graph output should have value_store
+        let nodes = vec![
+            raw_node(
+                "shape",
+                NodeType::Shape,
+                vec![tensor_arg_with_shape("input", vec![2, 3, 4])],
+                vec![shape_arg("shape_out", 3)],
+                HashMap::new(),
+            ),
+            raw_node(
+                "gather",
+                NodeType::Gather,
+                vec![shape_arg("shape_out", 3), const_scalar_arg("idx", 0)],
+                vec![scalar_arg("dim_val", DType::I64)],
+                [("axis".to_string(), AttributeValue::Int64(0))]
+                    .into_iter()
+                    .collect(),
+            ),
+        ];
+
+        let mut graph_outputs = vec![scalar_arg("dim_val", DType::I64)];
+        let state = test_state();
+        simplify_constant_shape(nodes, &mut graph_outputs, &state);
+
+        assert_eq!(graph_outputs[0].value_source, ValueSource::Constant);
+        let val = graph_outputs[0].value().unwrap().scalar_i64().unwrap();
+        assert_eq!(val, 2);
     }
 }

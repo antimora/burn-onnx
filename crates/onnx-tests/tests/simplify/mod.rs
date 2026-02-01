@@ -124,19 +124,16 @@ mod tests {
         );
     }
 
-    /// Shape->Gather chain where gathered dim=1 feeds into Mul.
-    /// Tests that value_store propagation enables identity element elimination.
+    /// Chained Shape->Gather where first Gather's result is the second Gather's index.
+    /// Tests that value_store propagation enables multi-iteration constant folding.
     #[test]
     fn gather_shape_chain() {
         let device = Default::default();
         let s = simplified::simplify_gather_shape_chain::Model::<TestBackend>::new(&device);
         let u = unsimplified::simplify_gather_shape_chain::Model::<TestBackend>::new(&device);
-        let x = Tensor::<TestBackend, 3>::ones([1, 3, 4], &device);
-        let y = Tensor::<TestBackend, 2>::from_floats([[1., 2., 3., 4., 5.], [6., 7., 8., 9., 10.]], &device);
-        assert_eq!(
-            s.forward(x.clone(), y.clone()).to_data(),
-            u.forward(x, y).to_data()
-        );
+        let x = Tensor::<TestBackend, 3>::ones([3, 1, 4], &device);
+        let y = Tensor::<TestBackend, 3>::ones([5, 6, 7], &device);
+        assert_eq!(s.forward(x.clone(), y.clone()), u.forward(x, y));
     }
 
     #[test]
