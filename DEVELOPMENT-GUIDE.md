@@ -389,8 +389,8 @@ post-processing. This pass folds shape-related computations into constants at co
 - **ConstantOfShape optimization**: `ConstantOfShape(Shape(x))` uses a known shape
 
 Simplification is off by default. Existing operator tests use `.simplify(false)` to test
-unsimplified codegen. Dedicated comparison tests in `crates/onnx-tests/tests/simplify/` verify
-that simplified and unsimplified codegen produce identical outputs.
+unsimplified codegen. Dedicated comparison tests in `crates/onnx-tests/tests/simplify/` verify that
+simplified and unsimplified codegen produce identical outputs.
 
 #### Phase 5: Finalization
 
