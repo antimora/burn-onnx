@@ -156,8 +156,7 @@ fn collect_gru_snapshots(
                 let rb_start = 3 * hidden_size + onnx_gate_idx * hidden_size;
                 let rb_end = rb_start + hidden_size;
 
-                let rb: Tensor<SerializationBackend, 1> =
-                    b.clone().slice([rb_start..rb_end]);
+                let rb: Tensor<SerializationBackend, 1> = b.clone().slice([rb_start..rb_end]);
                 let bias_data = rb.into_data();
 
                 let path = format!(
