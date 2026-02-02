@@ -1,4 +1,11 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+
+# /// script
+# dependencies = [
+#   "onnx==1.19.0",
+#   "torch==2.1.1",
+# ]
+# ///
 
 # used to generate model: conv1d_asymmetric_padding.onnx
 

@@ -110,19 +110,23 @@ impl ToTokens for PaddingConfig2d {
 }
 
 /// Converts PaddingConfig3d to Rust code tokens.
-/// Format: Explicit(front, top, left, back, bottom, right)
+/// Burn only supports symmetric 3D padding: Explicit(depth, height, width).
+/// Asymmetric 3D padding will cause a codegen-time panic.
 impl ToTokens for PaddingConfig3d {
     fn to_tokens(&self) -> TokenStream {
         match self {
             Self::Valid => quote! { PaddingConfig3d::Valid },
             Self::Explicit(front, top, left, back, bottom, right) => {
-                let front = front.to_tokens();
-                let top = top.to_tokens();
-                let left = left.to_tokens();
-                let back = back.to_tokens();
-                let bottom = bottom.to_tokens();
-                let right = right.to_tokens();
-                quote! { PaddingConfig3d::Explicit(#front, #top, #left, #back, #bottom, #right) }
+                if self.is_asymmetric() {
+                    panic!(
+                        "Asymmetric 3D padding is not supported by Burn. \
+                         Got front={front}, top={top}, left={left}, back={back}, bottom={bottom}, right={right}"
+                    );
+                }
+                let depth = front.to_tokens();
+                let height = top.to_tokens();
+                let width = left.to_tokens();
+                quote! { PaddingConfig3d::Explicit(#depth, #height, #width) }
             }
         }
     }

@@ -20,7 +20,6 @@ impl NodeCodegen for onnx_ir::conv3d::Conv3dNode {
         let groups = self.config.groups.to_tokens();
         let bias = self.config.bias;
 
-        // Asymmetric 3D padding is handled by the burn-nn module (will panic if attempted)
         let padding = self.config.padding.to_tokens();
 
         Some(Field::new(
@@ -45,7 +44,6 @@ impl NodeCodegen for onnx_ir::conv3d::Conv3dNode {
         let output = arg_to_ident(self.outputs.first().unwrap());
         let field = Ident::new(&self.name, Span::call_site());
 
-        // Asymmetric 3D padding will panic at runtime in the burn-nn module
         quote! {
             let #output = self.#field.forward(#input);
         }
@@ -151,18 +149,10 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Asymmetric 3D padding is not supported by Burn")]
     fn test_conv3d_field_init_asymmetric_padding() {
         let node = create_conv3d_node_asymmetric("conv1");
-        let code = codegen_field_init(&node);
-        // Asymmetric padding is passed directly to the module (will panic at runtime)
-        assert_snapshot!(code, @r"
-        let conv1 = Conv3dConfig::new([3, 64], [3, 3, 3])
-            .with_stride([1, 1, 1])
-            .with_padding(PaddingConfig3d::Explicit(1, 2, 3, 4, 5, 6))
-            .with_dilation([1, 1, 1])
-            .with_groups(1)
-            .with_bias(true)
-            .init(device);
-        ");
+        // Asymmetric 3D padding panics at codegen time since Burn doesn't support it
+        let _ = codegen_field_init(&node);
     }
 }
