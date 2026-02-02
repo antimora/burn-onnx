@@ -90,6 +90,12 @@ examples/
 - Simplification comparison tests in `crates/onnx-tests/tests/simplify/`
 - Use `torch.manual_seed(42)` or `np.random.seed(42)` for reproducibility
 
+### Bug Fixes
+
+- Every bug fix **must** include an integration test that reproduces the bug
+- Workflow: write a failing test first, then fix the code to make it pass
+- The test should fail without the fix and pass with it
+
 ### Simplification
 
 - `ModelGen::simplify(true)` enables an optional ONNX-IR pass that folds shape computations into

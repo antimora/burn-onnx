@@ -85,6 +85,12 @@ examples/
 - Python scripts generate ONNX models for testing
 - Use `torch.manual_seed(42)` for reproducibility
 
+### Bug Fixes
+
+- Every bug fix **must** include an integration test that reproduces the bug
+- Workflow: write a failing test first, then fix the code to make it pass
+- The test should fail without the fix and pass with it
+
 ### Simplification
 
 - `ModelGen::simplify(true)` enables an optional ONNX-IR pass that folds shape computations into
