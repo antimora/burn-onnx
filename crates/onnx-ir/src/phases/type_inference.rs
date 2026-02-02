@@ -38,6 +38,19 @@ pub(super) fn iterative_type_inference_with_preferences(
 ) -> Result<(), ProcessError> {
     let registry = get_processor_registry();
 
+    // Check for unregistered (unsupported) node types before running inference
+    let unsupported: Vec<_> = nodes
+        .iter()
+        .filter(|n| !registry.contains(&n.node_type))
+        .map(|n| format!("{:?} (node '{}')", n.node_type, n.name))
+        .collect();
+    if !unsupported.is_empty() {
+        return Err(ProcessError::Custom(format!(
+            "Unsupported ONNX operation(s): {}",
+            unsupported.join(", ")
+        )));
+    }
+
     // Track collected preferences: (producer_output_name, consumer_name, pref_type_str)
     let mut collected_preferences: HashSet<(String, String, String)> = HashSet::new();
 
