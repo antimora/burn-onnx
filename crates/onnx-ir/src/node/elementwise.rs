@@ -69,9 +69,10 @@ pub struct ElementwiseUnaryNode {
     pub node_type: crate::ir::NodeType,
 }
 
-/// Node processor for element-wise binary
-/// Node processor for element-wise unary operations
-/// Used for: Neg, Abs, Ceil, Floor, Sqrt, Exp, Log, Sin, Cos, etc.
+/// Node processor for element-wise unary operations that don't yet have
+/// dedicated processors (Elu, Selu, Celu, Mish, Softplus, Softsign,
+/// ThresholdedRelu). Will be removed as these ops get their own processors.
+#[allow(dead_code)]
 pub(crate) struct ElementwiseUnaryProcessor;
 
 impl NodeProcessor for ElementwiseUnaryProcessor {
