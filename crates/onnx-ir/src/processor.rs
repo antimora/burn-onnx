@@ -162,7 +162,10 @@ impl std::fmt::Display for ProcessError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ProcessError::UnsupportedOpset { required, actual } => {
-                write!(f, "Unsupported opset version: requires {required}, got {actual}")
+                write!(
+                    f,
+                    "Unsupported opset version: requires {required}, got {actual}"
+                )
             }
             ProcessError::MissingInput(name) => write!(f, "Missing input: {name}"),
             ProcessError::MissingOutput(name) => write!(f, "Missing output: {name}"),
@@ -176,7 +179,11 @@ impl std::fmt::Display for ProcessError {
                 write!(f, "Type mismatch: expected {expected}, got {actual}")
             }
             ProcessError::ConflictingPreferences { output, details } => {
-                write!(f, "Conflicting preferences for output '{output}': {}", details.join(", "))
+                write!(
+                    f,
+                    "Conflicting preferences for output '{output}': {}",
+                    details.join(", ")
+                )
             }
             ProcessError::MissingAttribute(name) => write!(f, "Missing attribute: {name}"),
             ProcessError::InvalidAttribute { name, reason } => {
