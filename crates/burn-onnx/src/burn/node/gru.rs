@@ -213,7 +213,9 @@ impl NodeCodegen for onnx_ir::gru::GruNode {
 
     fn field(&self) -> Option<Field> {
         if self.config.clip.is_some() {
-            panic!("GRU clip attribute is not supported. Burn's GRU module does not support cell state clipping.");
+            panic!(
+                "GRU clip attribute is not supported. Burn's GRU module does not support cell state clipping."
+            );
         }
         if self.config.gate_activation != GruActivationFunction::Sigmoid
             || self.config.hidden_activation != GruActivationFunction::Tanh
@@ -463,35 +465,114 @@ mod tests {
     fn test_gru_forward_basic() {
         let node = create_gru_node("gru1", GruDirection::Forward, false, false, 2);
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code);
+        assert_snapshot!(code, @r#"
+        pub fn forward(
+            &self,
+            input: Tensor<B, 3>,
+            W: Tensor<B, 3>,
+            R: Tensor<B, 3>,
+            B: Tensor<B, 2>,
+        ) -> (Tensor<B, 4>, Tensor<B, 3>) {
+            let (Y, Y_h) = {
+                let gru_output = self.gru1.forward(input.swap_dims(0, 1), None);
+                let batch_first_output = gru_output;
+                (
+                    batch_first_output.clone().swap_dims(0, 1).unsqueeze_dims::<4>(&[1]),
+                    {
+                        let [_batch, seq_len, _hidden] = batch_first_output.dims();
+                        let step = batch_first_output
+                            .clone()
+                            .slice([0.._batch, (seq_len - 1)..seq_len, 0.._hidden]);
+                        step.squeeze_dim::<2>(1).unsqueeze_dims::<3>(&[0])
+                    },
+                )
+            };
+            (Y, Y_h)
+        }
+        "#);
     }
 
     #[test]
     fn test_gru_forward_reverse() {
         let node = create_gru_node("gru1", GruDirection::Reverse, false, false, 2);
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code);
+        assert_snapshot!(code, @r#"
+        pub fn forward(
+            &self,
+            input: Tensor<B, 3>,
+            W: Tensor<B, 3>,
+            R: Tensor<B, 3>,
+            B: Tensor<B, 2>,
+        ) -> (Tensor<B, 4>, Tensor<B, 3>) {
+            let (Y, Y_h) = {
+                let gru_output = self
+                    .gru1
+                    .forward(
+                        {
+                            let batch_first_input = input.swap_dims(0, 1);
+                            batch_first_input.flip([1])
+                        },
+                        None,
+                    );
+                let batch_first_output = gru_output.flip([1]);
+                (
+                    batch_first_output.clone().swap_dims(0, 1).unsqueeze_dims::<4>(&[1]),
+                    {
+                        let [_batch, seq_len, _hidden] = batch_first_output.dims();
+                        let step = batch_first_output
+                            .clone()
+                            .slice([0.._batch, 0..1, 0.._hidden]);
+                        step.squeeze_dim::<2>(1).unsqueeze_dims::<3>(&[0])
+                    },
+                )
+            };
+            (Y, Y_h)
+        }
+        "#);
     }
 
     #[test]
     fn test_gru_forward_y_only() {
         let node = create_gru_node("gru1", GruDirection::Forward, false, false, 1);
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code);
+        assert_snapshot!(code, @r#"
+        pub fn forward(
+            &self,
+            input: Tensor<B, 3>,
+            W: Tensor<B, 3>,
+            R: Tensor<B, 3>,
+            B: Tensor<B, 2>,
+        ) -> Tensor<B, 4> {
+            let Y = {
+                let gru_output = self.gru1.forward(input.swap_dims(0, 1), None);
+                let batch_first_output = gru_output;
+                batch_first_output.clone().swap_dims(0, 1).unsqueeze_dims::<4>(&[1])
+            };
+            Y
+        }
+        "#);
     }
 
     #[test]
     fn test_gru_field_forward() {
         let node = create_gru_node("gru1", GruDirection::Forward, false, false, 2);
         let code = codegen_field_init(&node);
-        assert_snapshot!(code);
+        assert_snapshot!(code, @r"
+        let gru1 = burn::nn::gru::GruConfig::new(4, 8, true)
+            .with_reset_after(false)
+            .init(device);
+        ");
     }
 
     #[test]
     fn test_gru_field_reverse() {
         let node = create_gru_node("gru1", GruDirection::Reverse, false, false, 2);
         let code = codegen_field_init(&node);
-        assert_snapshot!(code);
+        assert_snapshot!(code, @r"
+        let gru1 = burn::nn::gru::GruConfig::new(4, 8, true)
+            .with_reset_after(false)
+            .init(device);
+        ");
     }
 
     #[test]
@@ -501,20 +582,87 @@ mod tests {
         // Remove the first output (Y), keep only Y_h
         node.outputs.remove(0);
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code);
+        assert_snapshot!(code, @r#"
+        pub fn forward(
+            &self,
+            input: Tensor<B, 3>,
+            W: Tensor<B, 3>,
+            R: Tensor<B, 3>,
+            B: Tensor<B, 2>,
+        ) -> Tensor<B, 3> {
+            let Y_h = {
+                let gru_output = self.gru1.forward(input.swap_dims(0, 1), None);
+                let batch_first_output = gru_output;
+                batch_first_output.clone().swap_dims(0, 1).unsqueeze_dims::<4>(&[1])
+            };
+            Y_h
+        }
+        "#);
     }
 
     #[test]
     fn test_gru_forward_batch_first() {
         let node = create_gru_node("gru1", GruDirection::Forward, true, false, 2);
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code);
+        assert_snapshot!(code, @r#"
+        pub fn forward(
+            &self,
+            input: Tensor<B, 3>,
+            W: Tensor<B, 3>,
+            R: Tensor<B, 3>,
+            B: Tensor<B, 2>,
+        ) -> (Tensor<B, 4>, Tensor<B, 3>) {
+            let (Y, Y_h) = {
+                let gru_output = self.gru1.forward(input, None);
+                let batch_first_output = gru_output;
+                (
+                    batch_first_output.clone().unsqueeze_dims::<4>(&[2]),
+                    {
+                        let [_batch, seq_len, _hidden] = batch_first_output.dims();
+                        let step = batch_first_output
+                            .clone()
+                            .slice([0.._batch, (seq_len - 1)..seq_len, 0.._hidden]);
+                        step.squeeze_dim::<2>(1).unsqueeze_dims::<3>(&[0])
+                    },
+                )
+            };
+            (Y, Y_h)
+        }
+        "#);
     }
 
     #[test]
     fn test_gru_forward_with_initial_h() {
         let node = create_gru_node("gru1", GruDirection::Forward, false, true, 2);
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code);
+        assert_snapshot!(code, @r#"
+        pub fn forward(
+            &self,
+            input: Tensor<B, 3>,
+            W: Tensor<B, 3>,
+            R: Tensor<B, 3>,
+            B: Tensor<B, 2>,
+            sequence_lens: i64,
+            initial_h: Tensor<B, 3>,
+        ) -> (Tensor<B, 4>, Tensor<B, 3>) {
+            let (Y, Y_h) = {
+                let gru_output = self
+                    .gru1
+                    .forward(input.swap_dims(0, 1), Some(initial_h.squeeze_dim(0)));
+                let batch_first_output = gru_output;
+                (
+                    batch_first_output.clone().swap_dims(0, 1).unsqueeze_dims::<4>(&[1]),
+                    {
+                        let [_batch, seq_len, _hidden] = batch_first_output.dims();
+                        let step = batch_first_output
+                            .clone()
+                            .slice([0.._batch, (seq_len - 1)..seq_len, 0.._hidden]);
+                        step.squeeze_dim::<2>(1).unsqueeze_dims::<3>(&[0])
+                    },
+                )
+            };
+            (Y, Y_h)
+        }
+        "#);
     }
 }
