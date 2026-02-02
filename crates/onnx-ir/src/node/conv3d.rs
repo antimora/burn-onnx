@@ -29,6 +29,7 @@ pub struct Conv3dNode {
 
 /// Configuration for Conv3d operations.
 #[derive(Debug, Clone, PartialEq, Eq, new)]
+#[allow(clippy::too_many_arguments)]
 pub struct Conv3dConfig {
     /// Input and output channels [in, out].
     pub channels: [usize; 2],

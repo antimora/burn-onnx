@@ -28,6 +28,7 @@ pub struct Conv2dNode {
 
 /// Configuration for Conv2d operations
 #[derive(Debug, Clone, new)]
+#[allow(clippy::too_many_arguments)]
 pub struct Conv2dConfig {
     /// Channels [in, out]
     pub channels: [usize; 2],
