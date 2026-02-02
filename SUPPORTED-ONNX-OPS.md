@@ -119,7 +119,7 @@ functionality.
 | [MeanVarianceNormalization][102] | ❌             | ❌           |
 | [MelWeightMatrix][103]           | ❌             | ❌           |
 | [Min][104]                       | ✅             | ✅           |
-| [Mish][105]                      | ❌             | ❌           |
+| [Mish][105]                      | ❌             | ✅           |
 | [Mod][106]                       | ✅             | ✅           |
 | [Mul][107]                       | ✅             | ✅           |
 | [Multinomial][108]               | ❌             | ❌           |
@@ -186,7 +186,7 @@ functionality.
 | [Slice][167]                     | ✅             | ✅           |
 | [Softmax][168]                   | ✅             | ✅           |
 | [SoftmaxCrossEntropyLoss][169]   | ❌             | ❌           |
-| [Softplus][170]                  | ❌             | ❌           |
+| [Softplus][170]                  | ❌             | ✅           |
 | [Softsign][171]                  | ❌             | ❌           |
 | [SpaceToDepth][172]              | ✅             | ✅           |
 | [Split][173]                     | ✅             | ✅           |
