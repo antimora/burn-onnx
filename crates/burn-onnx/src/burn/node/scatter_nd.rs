@@ -23,123 +23,81 @@ impl NodeCodegen for onnx_ir::scatter_nd::ScatterNDNode {
             _ => panic!("Expected tensor input for data"),
         };
 
-        // Choose the element type for to_data/from_data based on tensor kind
+        if matches!(data_kind, TensorKind::Bool) {
+            panic!("ScatterND not supported for bool tensors");
+        }
+
         let reduction_body = match self.config.reduction {
             ScatterNDReduction::None => quote! {
-                output_values[dst_idx] = update_values[src_idx];
+                output_flat = output_flat.slice_assign(
+                    [target_offset..target_offset + slice_size],
+                    update_slice,
+                );
             },
             ScatterNDReduction::Add => quote! {
-                output_values[dst_idx] = output_values[dst_idx] + update_values[src_idx];
+                let existing = output_flat.clone().narrow(0, target_offset, slice_size);
+                output_flat = output_flat.slice_assign(
+                    [target_offset..target_offset + slice_size],
+                    existing.add(update_slice),
+                );
             },
             ScatterNDReduction::Mul => quote! {
-                output_values[dst_idx] = output_values[dst_idx] * update_values[src_idx];
+                let existing = output_flat.clone().narrow(0, target_offset, slice_size);
+                output_flat = output_flat.slice_assign(
+                    [target_offset..target_offset + slice_size],
+                    existing.mul(update_slice),
+                );
             },
-            ScatterNDReduction::Max => match data_kind {
-                TensorKind::Float => quote! {
-                    output_values[dst_idx] = f32::max(output_values[dst_idx], update_values[src_idx]);
-                },
-                TensorKind::Int => quote! {
-                    output_values[dst_idx] = core::cmp::max(output_values[dst_idx], update_values[src_idx]);
-                },
-                TensorKind::Bool => {
-                    panic!("ScatterND max reduction not supported for bool tensors")
-                }
+            ScatterNDReduction::Max => quote! {
+                let existing = output_flat.clone().narrow(0, target_offset, slice_size);
+                let mask = update_slice.clone().greater_equal(existing.clone());
+                let result = existing.mask_where(mask, update_slice);
+                output_flat = output_flat.slice_assign(
+                    [target_offset..target_offset + slice_size],
+                    result,
+                );
             },
-            ScatterNDReduction::Min => match data_kind {
-                TensorKind::Float => quote! {
-                    output_values[dst_idx] = f32::min(output_values[dst_idx], update_values[src_idx]);
-                },
-                TensorKind::Int => quote! {
-                    output_values[dst_idx] = core::cmp::min(output_values[dst_idx], update_values[src_idx]);
-                },
-                TensorKind::Bool => {
-                    panic!("ScatterND min reduction not supported for bool tensors")
-                }
+            ScatterNDReduction::Min => quote! {
+                let existing = output_flat.clone().narrow(0, target_offset, slice_size);
+                let mask = update_slice.clone().lower_equal(existing.clone());
+                let result = existing.mask_where(mask, update_slice);
+                output_flat = output_flat.slice_assign(
+                    [target_offset..target_offset + slice_size],
+                    result,
+                );
             },
         };
 
-        match data_kind {
-            TensorKind::Float => quote! {
-                let #output = {
-                    let device = #data.device();
-                    let data_dims = #data.dims();
-                    let indices_dims = #indices.dims();
-                    let data_data = #data.to_data().convert::<f32>();
-                    let indices_data = #indices.to_data().convert::<i64>();
-                    let updates_data = #updates.to_data().convert::<f32>();
-                    let mut output_values: alloc::vec::Vec<f32> = data_data.into_vec::<f32>().unwrap();
-                    let indices_values: alloc::vec::Vec<i64> = indices_data.into_vec::<i64>().unwrap();
-                    let update_values: alloc::vec::Vec<f32> = updates_data.into_vec::<f32>().unwrap();
-                    let r = data_dims.len();
-                    let q = indices_dims.len();
-                    let k = indices_dims[q - 1];
-                    let mut data_strides = alloc::vec![1usize; r];
-                    for i in (0..r.saturating_sub(1)).rev() {
-                        data_strides[i] = data_strides[i + 1] * data_dims[i + 1];
+        quote! {
+            let #output = {
+                let data_dims = #data.dims();
+                let indices_dims = #indices.dims();
+                let indices_data = #indices.to_data().convert::<i64>();
+                let indices_values: alloc::vec::Vec<i64> = indices_data.into_vec::<i64>().unwrap();
+                let r = data_dims.len();
+                let q = indices_dims.len();
+                let k = indices_dims[q - 1];
+                let mut data_strides = alloc::vec![1usize; r];
+                for i in (0..r.saturating_sub(1)).rev() {
+                    data_strides[i] = data_strides[i + 1] * data_dims[i + 1];
+                }
+                let num_updates: usize = indices_dims[..q - 1].iter().product();
+                let slice_size: usize = if k < r { data_dims[k..].iter().product() } else { 1 };
+                let total_size: usize = data_dims.iter().product();
+                let mut output_flat = #data.reshape([total_size]);
+                let updates_flat = #updates.reshape([num_updates * slice_size]);
+                for i in 0..num_updates {
+                    let mut target_offset = 0usize;
+                    for j in 0..k {
+                        let mut idx = indices_values[i * k + j];
+                        if idx < 0 { idx += data_dims[j] as i64; }
+                        target_offset += idx as usize * data_strides[j];
                     }
-                    let num_updates: usize = indices_dims[..q - 1].iter().product();
-                    let slice_size: usize = if k < r { data_dims[k..].iter().product() } else { 1 };
-                    for i in 0..num_updates {
-                        let mut target_offset = 0usize;
-                        for j in 0..k {
-                            let mut idx = indices_values[i * k + j];
-                            if idx < 0 { idx += data_dims[j] as i64; }
-                            target_offset += idx as usize * data_strides[j];
-                        }
-                        let src_offset = i * slice_size;
-                        for s in 0..slice_size {
-                            let dst_idx = target_offset + s;
-                            let src_idx = src_offset + s;
-                            #reduction_body
-                        }
-                    }
-                    burn::tensor::Tensor::from_data(
-                        burn::tensor::TensorData::new(output_values, data_dims),
-                        &device,
-                    )
-                };
-            },
-            TensorKind::Int => quote! {
-                let #output = {
-                    let device = #data.device();
-                    let data_dims = #data.dims();
-                    let indices_dims = #indices.dims();
-                    let data_data = #data.to_data().convert::<i64>();
-                    let indices_data = #indices.to_data().convert::<i64>();
-                    let updates_data = #updates.to_data().convert::<i64>();
-                    let mut output_values: alloc::vec::Vec<i64> = data_data.into_vec::<i64>().unwrap();
-                    let indices_values: alloc::vec::Vec<i64> = indices_data.into_vec::<i64>().unwrap();
-                    let update_values: alloc::vec::Vec<i64> = updates_data.into_vec::<i64>().unwrap();
-                    let r = data_dims.len();
-                    let q = indices_dims.len();
-                    let k = indices_dims[q - 1];
-                    let mut data_strides = alloc::vec![1usize; r];
-                    for i in (0..r.saturating_sub(1)).rev() {
-                        data_strides[i] = data_strides[i + 1] * data_dims[i + 1];
-                    }
-                    let num_updates: usize = indices_dims[..q - 1].iter().product();
-                    let slice_size: usize = if k < r { data_dims[k..].iter().product() } else { 1 };
-                    for i in 0..num_updates {
-                        let mut target_offset = 0usize;
-                        for j in 0..k {
-                            let mut idx = indices_values[i * k + j];
-                            if idx < 0 { idx += data_dims[j] as i64; }
-                            target_offset += idx as usize * data_strides[j];
-                        }
-                        let src_offset = i * slice_size;
-                        for s in 0..slice_size {
-                            let dst_idx = target_offset + s;
-                            let src_idx = src_offset + s;
-                            #reduction_body
-                        }
-                    }
-                    burn::tensor::Tensor::from_data(
-                        burn::tensor::TensorData::new(output_values, data_dims),
-                        &device,
-                    )
-                };
-            },
-            TensorKind::Bool => panic!("ScatterND not supported for bool tensors"),
+                    let update_slice = updates_flat.clone().narrow(0, i * slice_size, slice_size);
+                    #reduction_body
+                }
+                output_flat.reshape(data_dims)
+            };
         }
     }
 }
@@ -170,20 +128,11 @@ mod tests {
             updates: Tensor<B, 1>,
         ) -> Tensor<B, 1> {
             let output = {
-                let device = data.device();
                 let data_dims = data.dims();
                 let indices_dims = indices.dims();
-                let data_data = data.to_data().convert::<f32>();
                 let indices_data = indices.to_data().convert::<i64>();
-                let updates_data = updates.to_data().convert::<f32>();
-                let mut output_values: alloc::vec::Vec<f32> = data_data
-                    .into_vec::<f32>()
-                    .unwrap();
                 let indices_values: alloc::vec::Vec<i64> = indices_data
                     .into_vec::<i64>()
-                    .unwrap();
-                let update_values: alloc::vec::Vec<f32> = updates_data
-                    .into_vec::<f32>()
                     .unwrap();
                 let r = data_dims.len();
                 let q = indices_dims.len();
@@ -194,6 +143,9 @@ mod tests {
                 }
                 let num_updates: usize = indices_dims[..q - 1].iter().product();
                 let slice_size: usize = if k < r { data_dims[k..].iter().product() } else { 1 };
+                let total_size: usize = data_dims.iter().product();
+                let mut output_flat = data.reshape([total_size]);
+                let updates_flat = updates.reshape([num_updates * slice_size]);
                 for i in 0..num_updates {
                     let mut target_offset = 0usize;
                     for j in 0..k {
@@ -203,17 +155,13 @@ mod tests {
                         }
                         target_offset += idx as usize * data_strides[j];
                     }
-                    let src_offset = i * slice_size;
-                    for s in 0..slice_size {
-                        let dst_idx = target_offset + s;
-                        let src_idx = src_offset + s;
-                        output_values[dst_idx] = update_values[src_idx];
-                    }
+                    let update_slice = updates_flat
+                        .clone()
+                        .narrow(0, i * slice_size, slice_size);
+                    output_flat = output_flat
+                        .slice_assign([target_offset..target_offset + slice_size], update_slice);
                 }
-                burn::tensor::Tensor::from_data(
-                    burn::tensor::TensorData::new(output_values, data_dims),
-                    &device,
-                )
+                output_flat.reshape(data_dims)
             };
             output
         }
@@ -239,20 +187,11 @@ mod tests {
             updates: Tensor<B, 1>,
         ) -> Tensor<B, 1> {
             let output = {
-                let device = data.device();
                 let data_dims = data.dims();
                 let indices_dims = indices.dims();
-                let data_data = data.to_data().convert::<f32>();
                 let indices_data = indices.to_data().convert::<i64>();
-                let updates_data = updates.to_data().convert::<f32>();
-                let mut output_values: alloc::vec::Vec<f32> = data_data
-                    .into_vec::<f32>()
-                    .unwrap();
                 let indices_values: alloc::vec::Vec<i64> = indices_data
                     .into_vec::<i64>()
-                    .unwrap();
-                let update_values: alloc::vec::Vec<f32> = updates_data
-                    .into_vec::<f32>()
                     .unwrap();
                 let r = data_dims.len();
                 let q = indices_dims.len();
@@ -263,6 +202,9 @@ mod tests {
                 }
                 let num_updates: usize = indices_dims[..q - 1].iter().product();
                 let slice_size: usize = if k < r { data_dims[k..].iter().product() } else { 1 };
+                let total_size: usize = data_dims.iter().product();
+                let mut output_flat = data.reshape([total_size]);
+                let updates_flat = updates.reshape([num_updates * slice_size]);
                 for i in 0..num_updates {
                     let mut target_offset = 0usize;
                     for j in 0..k {
@@ -272,17 +214,17 @@ mod tests {
                         }
                         target_offset += idx as usize * data_strides[j];
                     }
-                    let src_offset = i * slice_size;
-                    for s in 0..slice_size {
-                        let dst_idx = target_offset + s;
-                        let src_idx = src_offset + s;
-                        output_values[dst_idx] = output_values[dst_idx] + update_values[src_idx];
-                    }
+                    let update_slice = updates_flat
+                        .clone()
+                        .narrow(0, i * slice_size, slice_size);
+                    let existing = output_flat.clone().narrow(0, target_offset, slice_size);
+                    output_flat = output_flat
+                        .slice_assign(
+                            [target_offset..target_offset + slice_size],
+                            existing.add(update_slice),
+                        );
                 }
-                burn::tensor::Tensor::from_data(
-                    burn::tensor::TensorData::new(output_values, data_dims),
-                    &device,
-                )
+                output_flat.reshape(data_dims)
             };
             output
         }
@@ -308,20 +250,11 @@ mod tests {
             updates: Tensor<B, 1>,
         ) -> Tensor<B, 1> {
             let output = {
-                let device = data.device();
                 let data_dims = data.dims();
                 let indices_dims = indices.dims();
-                let data_data = data.to_data().convert::<f32>();
                 let indices_data = indices.to_data().convert::<i64>();
-                let updates_data = updates.to_data().convert::<f32>();
-                let mut output_values: alloc::vec::Vec<f32> = data_data
-                    .into_vec::<f32>()
-                    .unwrap();
                 let indices_values: alloc::vec::Vec<i64> = indices_data
                     .into_vec::<i64>()
-                    .unwrap();
-                let update_values: alloc::vec::Vec<f32> = updates_data
-                    .into_vec::<f32>()
                     .unwrap();
                 let r = data_dims.len();
                 let q = indices_dims.len();
@@ -332,6 +265,9 @@ mod tests {
                 }
                 let num_updates: usize = indices_dims[..q - 1].iter().product();
                 let slice_size: usize = if k < r { data_dims[k..].iter().product() } else { 1 };
+                let total_size: usize = data_dims.iter().product();
+                let mut output_flat = data.reshape([total_size]);
+                let updates_flat = updates.reshape([num_updates * slice_size]);
                 for i in 0..num_updates {
                     let mut target_offset = 0usize;
                     for j in 0..k {
@@ -341,17 +277,17 @@ mod tests {
                         }
                         target_offset += idx as usize * data_strides[j];
                     }
-                    let src_offset = i * slice_size;
-                    for s in 0..slice_size {
-                        let dst_idx = target_offset + s;
-                        let src_idx = src_offset + s;
-                        output_values[dst_idx] = output_values[dst_idx] * update_values[src_idx];
-                    }
+                    let update_slice = updates_flat
+                        .clone()
+                        .narrow(0, i * slice_size, slice_size);
+                    let existing = output_flat.clone().narrow(0, target_offset, slice_size);
+                    output_flat = output_flat
+                        .slice_assign(
+                            [target_offset..target_offset + slice_size],
+                            existing.mul(update_slice),
+                        );
                 }
-                burn::tensor::Tensor::from_data(
-                    burn::tensor::TensorData::new(output_values, data_dims),
-                    &device,
-                )
+                output_flat.reshape(data_dims)
             };
             output
         }
@@ -377,20 +313,11 @@ mod tests {
             updates: Tensor<B, 1>,
         ) -> Tensor<B, 1> {
             let output = {
-                let device = data.device();
                 let data_dims = data.dims();
                 let indices_dims = indices.dims();
-                let data_data = data.to_data().convert::<f32>();
                 let indices_data = indices.to_data().convert::<i64>();
-                let updates_data = updates.to_data().convert::<f32>();
-                let mut output_values: alloc::vec::Vec<f32> = data_data
-                    .into_vec::<f32>()
-                    .unwrap();
                 let indices_values: alloc::vec::Vec<i64> = indices_data
                     .into_vec::<i64>()
-                    .unwrap();
-                let update_values: alloc::vec::Vec<f32> = updates_data
-                    .into_vec::<f32>()
                     .unwrap();
                 let r = data_dims.len();
                 let q = indices_dims.len();
@@ -401,6 +328,9 @@ mod tests {
                 }
                 let num_updates: usize = indices_dims[..q - 1].iter().product();
                 let slice_size: usize = if k < r { data_dims[k..].iter().product() } else { 1 };
+                let total_size: usize = data_dims.iter().product();
+                let mut output_flat = data.reshape([total_size]);
+                let updates_flat = updates.reshape([num_updates * slice_size]);
                 for i in 0..num_updates {
                     let mut target_offset = 0usize;
                     for j in 0..k {
@@ -410,20 +340,16 @@ mod tests {
                         }
                         target_offset += idx as usize * data_strides[j];
                     }
-                    let src_offset = i * slice_size;
-                    for s in 0..slice_size {
-                        let dst_idx = target_offset + s;
-                        let src_idx = src_offset + s;
-                        output_values[dst_idx] = f32::max(
-                            output_values[dst_idx],
-                            update_values[src_idx],
-                        );
-                    }
+                    let update_slice = updates_flat
+                        .clone()
+                        .narrow(0, i * slice_size, slice_size);
+                    let existing = output_flat.clone().narrow(0, target_offset, slice_size);
+                    let mask = update_slice.clone().greater_equal(existing.clone());
+                    let result = existing.mask_where(mask, update_slice);
+                    output_flat = output_flat
+                        .slice_assign([target_offset..target_offset + slice_size], result);
                 }
-                burn::tensor::Tensor::from_data(
-                    burn::tensor::TensorData::new(output_values, data_dims),
-                    &device,
-                )
+                output_flat.reshape(data_dims)
             };
             output
         }
@@ -449,20 +375,11 @@ mod tests {
             updates: Tensor<B, 1>,
         ) -> Tensor<B, 1> {
             let output = {
-                let device = data.device();
                 let data_dims = data.dims();
                 let indices_dims = indices.dims();
-                let data_data = data.to_data().convert::<f32>();
                 let indices_data = indices.to_data().convert::<i64>();
-                let updates_data = updates.to_data().convert::<f32>();
-                let mut output_values: alloc::vec::Vec<f32> = data_data
-                    .into_vec::<f32>()
-                    .unwrap();
                 let indices_values: alloc::vec::Vec<i64> = indices_data
                     .into_vec::<i64>()
-                    .unwrap();
-                let update_values: alloc::vec::Vec<f32> = updates_data
-                    .into_vec::<f32>()
                     .unwrap();
                 let r = data_dims.len();
                 let q = indices_dims.len();
@@ -473,6 +390,9 @@ mod tests {
                 }
                 let num_updates: usize = indices_dims[..q - 1].iter().product();
                 let slice_size: usize = if k < r { data_dims[k..].iter().product() } else { 1 };
+                let total_size: usize = data_dims.iter().product();
+                let mut output_flat = data.reshape([total_size]);
+                let updates_flat = updates.reshape([num_updates * slice_size]);
                 for i in 0..num_updates {
                     let mut target_offset = 0usize;
                     for j in 0..k {
@@ -482,20 +402,16 @@ mod tests {
                         }
                         target_offset += idx as usize * data_strides[j];
                     }
-                    let src_offset = i * slice_size;
-                    for s in 0..slice_size {
-                        let dst_idx = target_offset + s;
-                        let src_idx = src_offset + s;
-                        output_values[dst_idx] = f32::min(
-                            output_values[dst_idx],
-                            update_values[src_idx],
-                        );
-                    }
+                    let update_slice = updates_flat
+                        .clone()
+                        .narrow(0, i * slice_size, slice_size);
+                    let existing = output_flat.clone().narrow(0, target_offset, slice_size);
+                    let mask = update_slice.clone().lower_equal(existing.clone());
+                    let result = existing.mask_where(mask, update_slice);
+                    output_flat = output_flat
+                        .slice_assign([target_offset..target_offset + slice_size], result);
                 }
-                burn::tensor::Tensor::from_data(
-                    burn::tensor::TensorData::new(output_values, data_dims),
-                    &device,
-                )
+                output_flat.reshape(data_dims)
             };
             output
         }
@@ -521,19 +437,10 @@ mod tests {
             updates: Tensor<B, 1, Int>,
         ) -> Tensor<B, 2, Int> {
             let output = {
-                let device = data.device();
                 let data_dims = data.dims();
                 let indices_dims = indices.dims();
-                let data_data = data.to_data().convert::<i64>();
                 let indices_data = indices.to_data().convert::<i64>();
-                let updates_data = updates.to_data().convert::<i64>();
-                let mut output_values: alloc::vec::Vec<i64> = data_data
-                    .into_vec::<i64>()
-                    .unwrap();
                 let indices_values: alloc::vec::Vec<i64> = indices_data
-                    .into_vec::<i64>()
-                    .unwrap();
-                let update_values: alloc::vec::Vec<i64> = updates_data
                     .into_vec::<i64>()
                     .unwrap();
                 let r = data_dims.len();
@@ -545,6 +452,9 @@ mod tests {
                 }
                 let num_updates: usize = indices_dims[..q - 1].iter().product();
                 let slice_size: usize = if k < r { data_dims[k..].iter().product() } else { 1 };
+                let total_size: usize = data_dims.iter().product();
+                let mut output_flat = data.reshape([total_size]);
+                let updates_flat = updates.reshape([num_updates * slice_size]);
                 for i in 0..num_updates {
                     let mut target_offset = 0usize;
                     for j in 0..k {
@@ -554,17 +464,13 @@ mod tests {
                         }
                         target_offset += idx as usize * data_strides[j];
                     }
-                    let src_offset = i * slice_size;
-                    for s in 0..slice_size {
-                        let dst_idx = target_offset + s;
-                        let src_idx = src_offset + s;
-                        output_values[dst_idx] = update_values[src_idx];
-                    }
+                    let update_slice = updates_flat
+                        .clone()
+                        .narrow(0, i * slice_size, slice_size);
+                    output_flat = output_flat
+                        .slice_assign([target_offset..target_offset + slice_size], update_slice);
                 }
-                burn::tensor::Tensor::from_data(
-                    burn::tensor::TensorData::new(output_values, data_dims),
-                    &device,
-                )
+                output_flat.reshape(data_dims)
             };
             output
         }
