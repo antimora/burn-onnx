@@ -125,7 +125,7 @@ def main():
 
     # Test 5: with max reduction
     # Note: ReferenceEvaluator has a bug with max/min on 1D, so we verify manually
-    model5, indices5 = make_scatter_nd_model(
+    make_scatter_nd_model(
         "scatter_nd_max",
         data_shape=[8],
         indices=[[4], [3], [1], [7]],
@@ -136,7 +136,7 @@ def main():
     print("Test 5 (max) - expected: [1, 11, 3, 10, 9, 6, 7, 12]")
 
     # Test 6: with min reduction
-    model6, indices6 = make_scatter_nd_model(
+    make_scatter_nd_model(
         "scatter_nd_min",
         data_shape=[8],
         indices=[[4], [3], [1], [7]],
