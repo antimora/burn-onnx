@@ -45,10 +45,7 @@ pub(super) fn iterative_type_inference_with_preferences(
         .map(|n| format!("{:?} (node '{}')", n.node_type, n.name))
         .collect();
     if !unsupported.is_empty() {
-        return Err(ProcessError::Custom(format!(
-            "Unsupported ONNX operation(s): {}",
-            unsupported.join(", ")
-        )));
+        return Err(ProcessError::UnsupportedOps(unsupported));
     }
 
     // Track collected preferences: (producer_output_name, consumer_name, pref_type_str)
@@ -225,4 +222,48 @@ pub(super) fn iterative_type_inference_with_preferences(
         max_iterations
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{NodeType, RawNode};
+
+    #[test]
+    fn test_unsupported_ops_detected_before_inference() {
+        let mut nodes = vec![
+            RawNode {
+                node_type: NodeType::Stft,
+                name: "stft1".to_string(),
+                inputs: vec![],
+                outputs: vec![],
+                attrs: Default::default(),
+            },
+            RawNode {
+                node_type: NodeType::Dft,
+                name: "dft1".to_string(),
+                inputs: vec![],
+                outputs: vec![],
+                attrs: Default::default(),
+            },
+        ];
+
+        let result = iterative_type_inference_with_preferences(&mut nodes, 17);
+        let err = result.unwrap_err();
+
+        match &err {
+            ProcessError::UnsupportedOps(ops) => {
+                assert_eq!(ops.len(), 2);
+                assert!(ops[0].contains("Stft"));
+                assert!(ops[1].contains("Dft"));
+            }
+            other => panic!("Expected UnsupportedOps, got: {other:?}"),
+        }
+
+        // Verify Display output is clean (no "Custom(...)" wrapper)
+        let msg = format!("{err}");
+        assert!(msg.starts_with("Unsupported ONNX operation(s):"));
+        assert!(msg.contains("Stft"));
+        assert!(msg.contains("Dft"));
+    }
 }
