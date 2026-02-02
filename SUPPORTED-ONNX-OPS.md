@@ -90,7 +90,7 @@ functionality.
 | [HardSigmoid][74]                | ✅             | ✅           |
 | [HardSwish][75]                  | ✅             | ✅           |
 | [Identity][76]                   | ✅             | ✅           |
-| [If][77]                         | ❌             | ✅           |
+| [If][77]                         | ✅             | ✅           |
 | [Im][78]                         | ❌             | ❌           |
 | [ImageDecoder][197]              | ❌             | ❌           |
 | [InstanceNormalization][79]      | ✅             | ✅           |
