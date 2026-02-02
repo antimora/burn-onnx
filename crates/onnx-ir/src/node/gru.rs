@@ -7,8 +7,8 @@
 //! ## Opset Versions
 //! - **Opset 1**: Initial version
 //! - **Opset 3**: Updated types
-//! - **Opset 7**: Added `layout` attribute
-//! - **Opset 14**: Added `layout` attribute with batch-first option
+//! - **Opset 7**: Introduced `layout` attribute
+//! - **Opset 14**: Extended `layout` attribute to support batch-first option
 //! - **Opset 22**: Added bfloat16 support
 
 use crate::ir::{ArgType, Argument, Node, RawNode, TensorType};
@@ -142,6 +142,10 @@ pub struct GruConfig {
     pub gate_activation: GruActivationFunction,
     /// Activation function for hidden gate (default: Tanh)
     pub hidden_activation: GruActivationFunction,
+    /// Optional alpha parameters for activation functions
+    pub activation_alpha: Option<Vec<f32>>,
+    /// Optional beta parameters for activation functions
+    pub activation_beta: Option<Vec<f32>>,
 }
 
 /// Node representation for GRU operation
@@ -428,6 +432,16 @@ impl NodeProcessor for GruProcessor {
             (GruActivationFunction::Sigmoid, GruActivationFunction::Tanh)
         };
 
+        // Extract activation parameters
+        let activation_alpha = node
+            .attrs
+            .get("activation_alpha")
+            .map(|v| v.clone().into_f32s());
+        let activation_beta = node
+            .attrs
+            .get("activation_beta")
+            .map(|v| v.clone().into_f32s());
+
         Ok(GruConfig::new(
             input_size,
             hidden_size,
@@ -439,6 +453,8 @@ impl NodeProcessor for GruProcessor {
             linear_before_reset,
             gate_activation,
             hidden_activation,
+            activation_alpha,
+            activation_beta,
         ))
     }
 
