@@ -97,13 +97,10 @@ impl NodeProcessor for TransposeProcessor {
         };
 
         // Permute static_shape according to perm
-        let permuted_static_shape = input_tensor.static_shape.as_ref().map(|shape| {
-            config
-                .perm
-                .iter()
-                .map(|&i| shape[i as usize])
-                .collect()
-        });
+        let permuted_static_shape = input_tensor
+            .static_shape
+            .as_ref()
+            .map(|shape| config.perm.iter().map(|&i| shape[i as usize]).collect());
 
         node.outputs[0].ty = ArgType::Tensor(TensorType {
             dtype: input_tensor.dtype,
