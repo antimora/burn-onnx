@@ -141,12 +141,10 @@ pub(super) fn iterative_type_inference_with_preferences(
                         if &input.name == output_name {
                             // Merge static_shape: keep more informative dimension values
                             let mut merged_type = output_ty.clone();
-                            let shape_changed = merged_type.merge_static_shape(&input.ty);
+                            merged_type.merge_static_shape(&input.ty);
                             if input.ty != merged_type {
                                 types_changed = true;
                                 input.ty = merged_type;
-                            } else if shape_changed {
-                                types_changed = true;
                             }
                         }
                     }
@@ -166,12 +164,10 @@ pub(super) fn iterative_type_inference_with_preferences(
                 if let Some(new_type) = output_types.get(&input.name) {
                     // Merge static_shape: keep more informative dimension values
                     let mut merged_type = new_type.clone();
-                    let shape_changed = merged_type.merge_static_shape(&input.ty);
+                    merged_type.merge_static_shape(&input.ty);
                     if input.ty != merged_type {
                         types_changed = true;
                         input.ty = merged_type;
-                    } else if shape_changed {
-                        types_changed = true;
                     }
                 }
             }

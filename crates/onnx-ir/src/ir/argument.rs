@@ -133,6 +133,11 @@ impl TensorType {
     ///   (prefer known values over unknown)
     /// - If ranks differ, no merge is possible (other types like dtype/rank take precedence)
     pub fn merge_static_shape(&mut self, other: &TensorType) -> bool {
+        // Ranks must match for any merge to be valid
+        if self.rank != other.rank {
+            return false;
+        }
+
         match (&mut self.static_shape, &other.static_shape) {
             // self has no shape info, other does -> take other's shape
             (None, Some(other_shape)) if other_shape.len() == self.rank => {
