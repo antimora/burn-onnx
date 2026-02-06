@@ -150,8 +150,14 @@ impl NodeProcessor for GatherNDProcessor {
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
         let mut batch_dims: i64 = 0;
         for (key, value) in node.attrs.iter() {
-            if key.as_str() == "batch_dims" {
-                batch_dims = value.clone().into_i64();
+            match key.as_str() {
+                "batch_dims" => batch_dims = value.clone().into_i64(),
+                _ => {
+                    return Err(ProcessError::InvalidAttribute {
+                        name: key.clone(),
+                        reason: format!("Unexpected attribute for GatherND: {}", key),
+                    });
+                }
             }
         }
 

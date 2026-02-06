@@ -20,7 +20,6 @@ from onnx.reference import ReferenceEvaluator
 
 def compute_gathernd_output_shape(data_shape, indices_shape, batch_dims=0):
     """Compute output shape per the ONNX GatherND spec."""
-    r = len(data_shape)
     q = len(indices_shape)
     b = batch_dims
     k = indices_shape[-1]
