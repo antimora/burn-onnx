@@ -241,7 +241,10 @@ pub fn argument_from_initializer(initializer: &TensorProto) -> (Argument, Tensor
                     DType::U32 => TensorData::new(Vec::<u32>::new(), shape_usize.clone()),
                     DType::U64 => TensorData::new(Vec::<u64>::new(), shape_usize.clone()),
                     DType::Bool => TensorData::new(Vec::<bool>::new(), shape_usize.clone()),
-                    _ => panic!("Unsupported dtype {:?} for empty tensor", dtype),
+                    _ => panic!(
+                        "Unsupported dtype {:?} for empty tensor '{}' (data_type={})",
+                        dtype, name, initializer.data_type
+                    ),
                 };
 
                 let arg = Argument {

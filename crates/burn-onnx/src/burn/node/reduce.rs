@@ -350,7 +350,7 @@ macro_rules! impl_reduce_node {
                             onnx_ir::ir::DType::U32 => quote! { #raw_output_expr.into_scalar().elem::<u32>() },
                             onnx_ir::ir::DType::U64 => quote! { #raw_output_expr.into_scalar().elem::<u64>() },
                             onnx_ir::ir::DType::Bool => quote! { #raw_output_expr.into_scalar().elem::<bool>() },
-                            _ => panic!("Unsupported scalar type for reduce output"),
+                            _ => panic!("Unsupported scalar type {:?} for reduce output", dtype),
                         }
                     }
                     onnx_ir::ir::ArgType::Tensor(_) => raw_output_expr,

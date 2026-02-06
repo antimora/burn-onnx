@@ -108,30 +108,69 @@ mod tests {
 
     #[test]
     fn scalar_type_tokens_float_types() {
-        assert_eq!(scalar_type_tokens(&DType::F16).to_string(), "half :: f16");
-        assert_eq!(scalar_type_tokens(&DType::BF16).to_string(), "half :: bf16");
-        assert_eq!(scalar_type_tokens(&DType::F32).to_string(), "f32");
-        assert_eq!(scalar_type_tokens(&DType::F64).to_string(), "f64");
+        assert_eq!(
+            scalar_type_tokens(&DType::F16).to_string(),
+            quote!(half::f16).to_string()
+        );
+        assert_eq!(
+            scalar_type_tokens(&DType::BF16).to_string(),
+            quote!(half::bf16).to_string()
+        );
+        assert_eq!(
+            scalar_type_tokens(&DType::F32).to_string(),
+            quote!(f32).to_string()
+        );
+        assert_eq!(
+            scalar_type_tokens(&DType::F64).to_string(),
+            quote!(f64).to_string()
+        );
     }
 
     #[test]
     fn scalar_type_tokens_signed_int_types() {
-        assert_eq!(scalar_type_tokens(&DType::I8).to_string(), "i8");
-        assert_eq!(scalar_type_tokens(&DType::I16).to_string(), "i16");
-        assert_eq!(scalar_type_tokens(&DType::I32).to_string(), "i32");
-        assert_eq!(scalar_type_tokens(&DType::I64).to_string(), "i64");
+        assert_eq!(
+            scalar_type_tokens(&DType::I8).to_string(),
+            quote!(i8).to_string()
+        );
+        assert_eq!(
+            scalar_type_tokens(&DType::I16).to_string(),
+            quote!(i16).to_string()
+        );
+        assert_eq!(
+            scalar_type_tokens(&DType::I32).to_string(),
+            quote!(i32).to_string()
+        );
+        assert_eq!(
+            scalar_type_tokens(&DType::I64).to_string(),
+            quote!(i64).to_string()
+        );
     }
 
     #[test]
     fn scalar_type_tokens_unsigned_int_types() {
-        assert_eq!(scalar_type_tokens(&DType::U8).to_string(), "u8");
-        assert_eq!(scalar_type_tokens(&DType::U16).to_string(), "u16");
-        assert_eq!(scalar_type_tokens(&DType::U32).to_string(), "u32");
-        assert_eq!(scalar_type_tokens(&DType::U64).to_string(), "u64");
+        assert_eq!(
+            scalar_type_tokens(&DType::U8).to_string(),
+            quote!(u8).to_string()
+        );
+        assert_eq!(
+            scalar_type_tokens(&DType::U16).to_string(),
+            quote!(u16).to_string()
+        );
+        assert_eq!(
+            scalar_type_tokens(&DType::U32).to_string(),
+            quote!(u32).to_string()
+        );
+        assert_eq!(
+            scalar_type_tokens(&DType::U64).to_string(),
+            quote!(u64).to_string()
+        );
     }
 
     #[test]
     fn scalar_type_tokens_bool() {
-        assert_eq!(scalar_type_tokens(&DType::Bool).to_string(), "bool");
+        assert_eq!(
+            scalar_type_tokens(&DType::Bool).to_string(),
+            quote!(bool).to_string()
+        );
     }
 }
