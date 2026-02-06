@@ -39,17 +39,14 @@ pub enum TensorKind {
 
 impl From<onnx_ir::ir::DType> for TensorKind {
     fn from(dtype: onnx_ir::ir::DType) -> Self {
-        use onnx_ir::ir::DType;
-
-        match dtype {
-            DType::F16 => TensorKind::Float,
-            DType::F32 => TensorKind::Float,
-            DType::F64 => TensorKind::Float,
-            DType::I32 => TensorKind::Int,
-            DType::I64 => TensorKind::Int,
-            DType::I8 | DType::U8 => TensorKind::Int,
-            DType::Bool => TensorKind::Bool,
-            _ => panic!("Unsupported tensor type"),
+        if dtype.is_float() {
+            TensorKind::Float
+        } else if dtype.is_int() || dtype.is_uint() {
+            TensorKind::Int
+        } else if dtype.is_bool() {
+            TensorKind::Bool
+        } else {
+            panic!("Unsupported tensor type: {dtype:?}")
         }
     }
 }
