@@ -237,3 +237,38 @@ pub fn create_lazy_snapshot(
         ParamId::new(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onnx_ir::ir::DType;
+
+    #[test]
+    fn tensor_kind_from_dtype_float_types() {
+        assert_eq!(TensorKind::from(DType::F16), TensorKind::Float);
+        assert_eq!(TensorKind::from(DType::BF16), TensorKind::Float);
+        assert_eq!(TensorKind::from(DType::F32), TensorKind::Float);
+        assert_eq!(TensorKind::from(DType::F64), TensorKind::Float);
+    }
+
+    #[test]
+    fn tensor_kind_from_dtype_signed_int_types() {
+        assert_eq!(TensorKind::from(DType::I8), TensorKind::Int);
+        assert_eq!(TensorKind::from(DType::I16), TensorKind::Int);
+        assert_eq!(TensorKind::from(DType::I32), TensorKind::Int);
+        assert_eq!(TensorKind::from(DType::I64), TensorKind::Int);
+    }
+
+    #[test]
+    fn tensor_kind_from_dtype_unsigned_int_types() {
+        assert_eq!(TensorKind::from(DType::U8), TensorKind::Int);
+        assert_eq!(TensorKind::from(DType::U16), TensorKind::Int);
+        assert_eq!(TensorKind::from(DType::U32), TensorKind::Int);
+        assert_eq!(TensorKind::from(DType::U64), TensorKind::Int);
+    }
+
+    #[test]
+    fn tensor_kind_from_dtype_bool() {
+        assert_eq!(TensorKind::from(DType::Bool), TensorKind::Bool);
+    }
+}
