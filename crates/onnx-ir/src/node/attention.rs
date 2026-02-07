@@ -118,9 +118,7 @@ impl NodeProcessor for AttentionProcessor {
         let has_past_value = node.get_input(5).is_some();
         let has_present = node.outputs.len() >= 3;
 
-        if has_past_key != has_past_value
-            || has_past_key != has_present
-            || node.outputs.len() == 2
+        if has_past_key != has_past_value || has_past_key != has_present || node.outputs.len() == 2
         {
             return Err(ProcessError::Custom(
                 "Attention: past_key, past_value, present_key, present_value can only be used together".to_string(),
