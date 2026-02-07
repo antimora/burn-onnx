@@ -209,8 +209,7 @@ mod tests {
     #[test]
     fn gru_bidirectional_forward() {
         let device = Default::default();
-        let model: gru_bidirectional::Model<TestBackend> =
-            gru_bidirectional::Model::default();
+        let model: gru_bidirectional::Model<TestBackend> = gru_bidirectional::Model::default();
 
         // Same input as other GRU tests: [seq_length=5, batch_size=2, input_size=4] (seed=99)
         let input = Tensor::<TestBackend, 3>::from_floats(
