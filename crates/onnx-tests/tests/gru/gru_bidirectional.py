@@ -4,7 +4,7 @@
 # dependencies = [
 #   "onnx==1.19.0",
 #   "numpy",
-#   "onnxruntime",
+#   "onnxruntime==1.20.1",
 # ]
 # ///
 

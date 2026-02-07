@@ -338,11 +338,6 @@ fn forward_bidirectional(
         quote! { None }
     };
 
-    // BiGru handles batch_first internally via config
-    let forward_call = quote! {
-        let (output_seq, final_state) = self.#field.forward(#input, #initial_state_expr);
-    };
-
     // Y output transformation: split concatenated hidden states
     let y_output_expr = if node.config.batch_first {
         // Burn: [batch, seq, 2*hidden] -> reshape [batch, seq, 2, hidden] (ONNX layout=1)
@@ -364,22 +359,20 @@ fn forward_bidirectional(
         }
     };
 
-    // Y_h: final_state is [2, batch, hidden], already ONNX format
-    let y_h_expr = quote! { final_state };
-
+    // Vary the destructuring to avoid unused-variable warnings in generated code
     match (output_y, output_y_h) {
         (Some(y), Some(y_h)) => {
             quote! {
                 let (#y, #y_h) = {
-                    #forward_call
-                    (#y_output_expr, #y_h_expr)
+                    let (output_seq, final_state) = self.#field.forward(#input, #initial_state_expr);
+                    (#y_output_expr, final_state)
                 };
             }
         }
         (Some(y), None) => {
             quote! {
                 let #y = {
-                    #forward_call
+                    let (output_seq, _final_state) = self.#field.forward(#input, #initial_state_expr);
                     #y_output_expr
                 };
             }
@@ -387,15 +380,15 @@ fn forward_bidirectional(
         (None, Some(y_h)) => {
             quote! {
                 let #y_h = {
-                    #forward_call
-                    #y_h_expr
+                    let (_output_seq, final_state) = self.#field.forward(#input, #initial_state_expr);
+                    final_state
                 };
             }
         }
         (None, None) => {
             quote! {
                 {
-                    #forward_call
+                    let _ = self.#field.forward(#input, #initial_state_expr);
                 }
             }
         }
@@ -814,7 +807,7 @@ mod tests {
             B: Tensor<B, 2>,
         ) -> Tensor<B, 4> {
             let Y = {
-                let (output_seq, final_state) = self.gru1.forward(input, None);
+                let (output_seq, _final_state) = self.gru1.forward(input, None);
                 {
                     let [seq_len, batch_size, _] = output_seq.dims();
                     let reshaped = output_seq.reshape([seq_len, batch_size, 2, 8usize]);
