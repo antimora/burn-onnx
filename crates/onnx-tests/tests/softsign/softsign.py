@@ -23,7 +23,7 @@ def main():
     softsign_node = helper.make_node("Softsign", inputs=["X"], outputs=["Y"])
 
     graph = helper.make_graph([softsign_node], "softsign_graph", [X], [Y])
-    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 1)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 16)])
     model.ir_version = 8
     onnx.checker.check_model(model)
 
