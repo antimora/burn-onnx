@@ -294,7 +294,13 @@ impl NodeProcessor for PadProcessor {
                         )));
                     }
                     Some(tensor_data) => {
-                        let pad_values: Vec<i64> = tensor_data.to_vec().unwrap();
+                        let pad_values: Vec<i64> =
+                            tensor_data
+                                .to_vec()
+                                .map_err(|e| ProcessError::TypeMismatch {
+                                    expected: "i64-compatible tensor for pads".to_string(),
+                                    actual: e.to_string(),
+                                })?;
                         let pads = pad_values
                             .iter()
                             .map(|&x| {
