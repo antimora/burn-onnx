@@ -36,7 +36,15 @@ impl NodeCodegen for onnx_ir::pad::PadNode {
                         let arg = &self.inputs[runtime_ref.input_index];
                         let value = scope.arg(arg);
                         match &arg.ty {
-                            ArgType::Tensor(_) => quote! { #value.into_scalar() },
+                            ArgType::Tensor(t) if t.rank == 0 => {
+                                quote! { #value.into_scalar() }
+                            }
+                            ArgType::Tensor(t) => {
+                                panic!(
+                                    "Pad: constant_value must be a scalar tensor (rank 0), got rank {}",
+                                    t.rank
+                                )
+                            }
                             ArgType::Scalar(_) => quote! { #value },
                             ArgType::Shape(_) => {
                                 panic!("Pad: constant_value cannot be a shape")
