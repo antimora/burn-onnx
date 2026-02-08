@@ -130,7 +130,11 @@ mod tests {
 
     #[test]
     fn test_celu_infer_types() {
-        let mut node = create_test_node(1.0);
+        let mut node = TestNodeBuilder::new(NodeType::Celu, "test_celu")
+            .input_tensor_f32("X", 4, None)
+            .output_default("Y")
+            .attr_float("alpha", 1.0)
+            .build();
         let processor = CeluProcessor;
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
