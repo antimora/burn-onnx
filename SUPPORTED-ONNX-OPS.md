@@ -414,3 +414,13 @@ functionality.
 [202]: https://onnx.ai/onnx/operators/onnx__StringSplit.html "ONNX StringSplit"
 [203]: https://onnx.ai/onnx/operators/onnx__Swish.html "ONNX Swish"
 [204]: https://onnx.ai/onnx/operators/onnx__TensorScatter.html "ONNX TensorScatter"
+
+## Pattern Coalescing
+
+The simplification pass automatically detects and coalesces multi-node patterns
+into single optimized operations:
+
+- **Scaled Dot-Product Attention (SDPA)**: Decomposed attention patterns
+  (Transpose + MatMul + Div/Mul + Softmax + MatMul) exported by PyTorch's ONNX
+  exporter are coalesced into a single Attention node, enabling Burn's optimized
+  attention primitives.

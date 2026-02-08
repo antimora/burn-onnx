@@ -484,6 +484,81 @@ def permute_via_shape_gather():
     )
 
 
+def sdpa_coalesce():
+    """Decomposed scaled dot-product attention pattern.
+
+    Transpose(K) -> MatMul(Q,K^T) -> Div(sqrt_dk) -> Softmax(-1) -> MatMul(scores,V)
+
+    Should be coalesced into a single Attention node by simplification.
+    """
+    import math
+
+    batch, heads, seq_len, head_dim = 1, 2, 3, 4
+    scale_value = math.sqrt(float(head_dim))
+
+    graph = helper.make_graph(
+        name="main_graph",
+        nodes=[
+            # Transpose K: swap last two dims [b,h,s,d] -> [b,h,d,s]
+            helper.make_node(
+                "Transpose", ["k"], ["k_t"], perm=[0, 1, 3, 2]
+            ),
+            # QK^T matmul: [b,h,s,d] x [b,h,d,s] -> [b,h,s,s]
+            helper.make_node("MatMul", ["q", "k_t"], ["qk"]),
+            # Scale by 1/sqrt(head_dim)
+            helper.make_node(
+                "Constant",
+                [],
+                ["scale"],
+                value=helper.make_tensor(
+                    "scale_val", TensorProto.FLOAT, [], [scale_value]
+                ),
+            ),
+            helper.make_node("Div", ["qk", "scale"], ["qk_scaled"]),
+            # Softmax on last axis
+            helper.make_node("Softmax", ["qk_scaled"], ["attn_weights"], axis=-1),
+            # Scores x V: [b,h,s,s] x [b,h,s,d] -> [b,h,s,d]
+            helper.make_node("MatMul", ["attn_weights", "v"], ["output"]),
+        ],
+        inputs=[
+            helper.make_value_info(
+                "q",
+                helper.make_tensor_type_proto(
+                    TensorProto.FLOAT,
+                    shape=[batch, heads, seq_len, head_dim],
+                ),
+            ),
+            helper.make_value_info(
+                "k",
+                helper.make_tensor_type_proto(
+                    TensorProto.FLOAT,
+                    shape=[batch, heads, seq_len, head_dim],
+                ),
+            ),
+            helper.make_value_info(
+                "v",
+                helper.make_tensor_type_proto(
+                    TensorProto.FLOAT,
+                    shape=[batch, heads, seq_len, head_dim],
+                ),
+            ),
+        ],
+        outputs=[
+            helper.make_value_info(
+                "output",
+                helper.make_tensor_type_proto(
+                    TensorProto.FLOAT,
+                    shape=[batch, heads, seq_len, head_dim],
+                ),
+            ),
+        ],
+    )
+    save(
+        helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", OPSET)]),
+        "simplify_sdpa_coalesce.onnx",
+    )
+
+
 if __name__ == "__main__":
     print("Generating simplify test models:")
     shape_folding()
@@ -498,4 +573,5 @@ if __name__ == "__main__":
     constant_of_shape_opt()
     gather_shape_chain()
     permute_via_shape_gather()
+    sdpa_coalesce()
     print("Done.")

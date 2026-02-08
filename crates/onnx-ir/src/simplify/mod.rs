@@ -5,12 +5,13 @@
 //!
 //! ## Current passes (in execution order per iteration)
 //!
-//! 1. **Permute-reshape detection** - Shape+Gather+Unsqueeze+Concat+Reshape -> Transpose
-//! 2. **Constant shape propagation** - Shape->Gather and Shape->Slice elimination
-//! 3. **Idempotent op elimination** - f(f(x)) -> f(x) for Relu, Ceil, Floor, etc.
-//! 4. **Identity element elimination** - x+0, x*1, x/1, x**1 -> x
-//! 5. **Common subexpression elimination** - merge duplicate nodes
-//! 6. **Dead node elimination** - remove unreferenced nodes (cascading)
+//! 1. **Attention coalescing** - decomposed SDPA pattern -> single Attention node
+//! 2. **Permute-reshape detection** - Shape+Gather+Unsqueeze+Concat+Reshape -> Transpose
+//! 3. **Constant shape propagation** - Shape->Gather and Shape->Slice elimination
+//! 4. **Idempotent op elimination** - f(f(x)) -> f(x) for Relu, Ceil, Floor, etc.
+//! 5. **Identity element elimination** - x+0, x*1, x/1, x**1 -> x
+//! 6. **Common subexpression elimination** - merge duplicate nodes
+//! 7. **Dead node elimination** - remove unreferenced nodes (cascading)
 //!
 //! All passes run in a fixed-point loop until the graph stabilizes.
 //!
@@ -20,6 +21,7 @@
 //! time. This would replace arbitrary constant expressions (e.g., Const(2) + Const(3) -> Const(5))
 //! beyond the shape-specific patterns already handled.
 
+mod coalesce_attention;
 mod constant_shape;
 mod dead_nodes;
 mod idempotent;
@@ -34,6 +36,7 @@ use crate::{
     ir::{Argument, RawNode},
 };
 
+use coalesce_attention::coalesce_attention;
 use constant_shape::simplify_constant_shape;
 use dead_nodes::eliminate_dead_nodes;
 use idempotent::eliminate_idempotent_ops;
@@ -57,6 +60,10 @@ pub(crate) fn simplify_graph(
 ) -> (Vec<RawNode>, Vec<Argument>, Vec<Argument>) {
     for iteration in 0..MAX_ITERATIONS {
         let node_count_before = nodes.len();
+
+        // Attention coalescing (must run before permute-reshape, since attention
+        // pattern uses native Transpose nodes, not Reshape-based transposes)
+        nodes = coalesce_attention(nodes);
 
         // Structural pattern detection (must run before constant folding, which
         // replaces Gather/Slice nodes with Constants and destroys the patterns)
