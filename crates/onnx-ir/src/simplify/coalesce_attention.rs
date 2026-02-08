@@ -1,17 +1,26 @@
 use std::collections::HashMap;
 
-use crate::ir::{Argument, AttributeValue, NodeType, RawNode, TensorDataExt};
+use crate::ir::{ArgType, Argument, AttributeValue, NodeType, RawNode, TensorDataExt};
 
 /// Detect decomposed scaled dot-product attention (SDPA) patterns and replace them
 /// with a single Attention node.
 ///
 /// PyTorch's ONNX exporter (especially legacy, opset <=20) decomposes
-/// `F.scaled_dot_product_attention(Q, K, V)` into 4-6 primitive ops:
+/// `F.scaled_dot_product_attention(Q, K, V)` into 4-6 primitive ops.
 ///
+/// **Standard pattern** (post-scaled):
 /// ```text
 /// Q -----> MatMul(Q, K^T) -> [Div/Mul(scale)] -> [Add(mask)] -> Softmax(-1) -> MatMul(scores, V)
 /// K -> Transpose --^                                                            V ----------^
 /// ```
+///
+/// **Pre-scaled pattern** (e.g., RF-DETR):
+/// ```text
+/// Q -> Transpose([0,2,1,3]) -> Mul(sqrt_scale) -\
+///                                                 MatMul -> Softmax(-1) -> MatMul(scores, V)
+/// K -> Transpose([0,2,3,1]) -> Mul(sqrt_scale) -/                         V ----------^
+/// ```
+/// K's combined transpose merges head-split + key-transpose into one op.
 ///
 /// This pass recognizes the pattern and replaces it with a single Attention RawNode,
 /// enabling Burn's optimized attention primitives. Orphaned nodes are cleaned up by
@@ -25,7 +34,7 @@ pub(crate) fn coalesce_attention(mut nodes: Vec<RawNode>) -> Vec<RawNode> {
     // Build consumer map: output_name -> list of node indices that consume it
     let consumer = build_consumer_map(&nodes);
 
-    // Collect replacements: (final_matmul_index, replacement_node)
+    // Collect replacements: (node_index, replacement_node)
     let mut replacements: Vec<(usize, RawNode)> = Vec::new();
 
     for (i, node) in nodes.iter().enumerate() {
@@ -33,19 +42,19 @@ pub(crate) fn coalesce_attention(mut nodes: Vec<RawNode>) -> Vec<RawNode> {
             continue;
         }
 
-        if let Some((final_matmul_idx, attention_node)) =
-            try_match_sdpa(i, &nodes, &producer, &consumer)
-        {
-            replacements.push((final_matmul_idx, attention_node));
+        if let Some(matched) = try_match_sdpa(i, &nodes, &producer, &consumer) {
+            replacements.extend(matched);
         }
     }
 
     // Apply replacements
     for (idx, replacement) in replacements {
-        log::info!(
-            "Simplification: coalescing SDPA pattern into Attention node '{}'",
-            replacement.name,
-        );
+        if replacement.node_type == NodeType::Attention {
+            log::info!(
+                "Simplification: coalescing SDPA pattern into Attention node '{}'",
+                replacement.name,
+            );
+        }
         nodes[idx] = replacement;
     }
 
@@ -54,13 +63,15 @@ pub(crate) fn coalesce_attention(mut nodes: Vec<RawNode>) -> Vec<RawNode> {
 
 /// Try to match a full SDPA pattern starting from a Softmax node.
 ///
-/// Returns `Some((final_matmul_index, attention_node))` if the pattern matches.
+/// Returns a list of `(node_index, replacement_node)` pairs if the pattern matches.
+/// Standard pattern produces one replacement (Attention node at final MatMul index).
+/// Pre-scaled pattern produces two (corrective K Transpose + Attention node).
 fn try_match_sdpa(
     softmax_idx: usize,
     nodes: &[RawNode],
     producer: &HashMap<String, usize>,
     consumer: &HashMap<String, Vec<usize>>,
-) -> Option<(usize, RawNode)> {
+) -> Option<Vec<(usize, RawNode)>> {
     let softmax = &nodes[softmax_idx];
 
     // 1. Validate Softmax axis is last dimension
@@ -116,22 +127,23 @@ fn try_match_sdpa(
         return None;
     }
 
-    // 4. Validate K comes through a Transpose that swaps last two dims
-    let k_transpose_idx = *producer.get(&qk_matmul.inputs[1].name)?;
-    let k_transpose = &nodes[k_transpose_idx];
-    if k_transpose.node_type != NodeType::Transpose {
-        return None;
-    }
-    if !is_last_two_dims_swap(k_transpose)? {
-        return None;
-    }
-    if !is_single_use(&k_transpose.outputs[0].name, consumer) {
-        return None;
-    }
-
-    // Q and K tensors
-    let q_arg = &qk_matmul.inputs[0];
-    let k_arg = &k_transpose.inputs[0];
+    // 4. Extract Q and K tensors
+    // 4a. Standard: K comes through Transpose that swaps last two dims
+    let (q_arg, k_arg, extra_replacements) =
+        if let Some((q, k)) = try_standard_k_pattern(qk_matmul, nodes, producer, consumer) {
+            (q, k, vec![])
+        }
+        // 4b. Pre-scaled: both inputs from Mul(same_scalar), K has combined transpose
+        else if let Some((q, k, prescale, extras)) =
+            try_prescaled_qk_pattern(qk_matmul, qk_matmul_idx, nodes, producer, consumer)
+        {
+            if prescale.is_some() {
+                scale_value = prescale;
+            }
+            (q, k, extras)
+        } else {
+            return None;
+        };
 
     // Validate Q, K are rank 4
     if q_arg.ty.rank() != 4 || k_arg.ty.rank() != 4 {
@@ -162,9 +174,11 @@ fn try_match_sdpa(
 
     // 6. Build the Attention RawNode
     let attention_node =
-        build_attention_node(final_matmul, q_arg, k_arg, v_arg, mask_arg, scale_value);
+        build_attention_node(final_matmul, &q_arg, &k_arg, v_arg, mask_arg, scale_value);
 
-    Some((final_matmul_idx, attention_node))
+    let mut replacements = extra_replacements;
+    replacements.push((final_matmul_idx, attention_node));
+    Some(replacements)
 }
 
 struct MaskAndUpstream<'a> {
@@ -340,6 +354,180 @@ fn is_last_two_dims_swap(transpose: &RawNode) -> Option<bool> {
     Some(true)
 }
 
+/// Standard pattern: K comes through Transpose that swaps last two dims.
+/// Returns (Q_arg, K_arg) where K is from before the transpose.
+fn try_standard_k_pattern(
+    qk_matmul: &RawNode,
+    nodes: &[RawNode],
+    producer: &HashMap<String, usize>,
+    consumer: &HashMap<String, Vec<usize>>,
+) -> Option<(Argument, Argument)> {
+    let k_transpose_idx = *producer.get(&qk_matmul.inputs[1].name)?;
+    let k_transpose = &nodes[k_transpose_idx];
+    if k_transpose.node_type != NodeType::Transpose {
+        return None;
+    }
+    if !is_last_two_dims_swap(k_transpose)? {
+        return None;
+    }
+    if !is_single_use(&k_transpose.outputs[0].name, consumer) {
+        return None;
+    }
+    Some((qk_matmul.inputs[0].clone(), k_transpose.inputs[0].clone()))
+}
+
+/// Pre-scaled pattern: both QK MatMul inputs come from Mul nodes that share
+/// the same scalar (sqrt_scale). K's upstream Transpose has a combined perm that
+/// merges head-split and key-transpose into a single op.
+///
+/// ```text
+/// Q -> Transpose([0,2,1,3]) -> Mul(sqrt_scale) -\
+///                                                 -> MatMul -> ...
+/// K -> Transpose([0,2,3,1]) -> Mul(sqrt_scale) -/
+/// ```
+///
+/// Returns (Q_arg, K_arg, effective_scale, extra_replacements) where:
+/// - Q_arg is Q after head-split transpose [B,H,S,D]
+/// - K_arg is K corrected to [B,H,S,D] via a new Transpose node
+/// - effective_scale is sqrt_scale^2 if extractable, None for default
+/// - extra_replacements contains the corrective Transpose placed at qk_matmul_idx
+#[allow(clippy::type_complexity)]
+fn try_prescaled_qk_pattern(
+    qk_matmul: &RawNode,
+    qk_matmul_idx: usize,
+    nodes: &[RawNode],
+    producer: &HashMap<String, usize>,
+    consumer: &HashMap<String, Vec<usize>>,
+) -> Option<(Argument, Argument, Option<f64>, Vec<(usize, RawNode)>)> {
+    // Both QK MatMul inputs should come from Mul nodes
+    let q_mul_idx = *producer.get(&qk_matmul.inputs[0].name)?;
+    let k_mul_idx = *producer.get(&qk_matmul.inputs[1].name)?;
+    let q_mul = &nodes[q_mul_idx];
+    let k_mul = &nodes[k_mul_idx];
+
+    if q_mul.node_type != NodeType::Mul || k_mul.node_type != NodeType::Mul {
+        return None;
+    }
+    if !is_single_use(&q_mul.outputs[0].name, consumer)
+        || !is_single_use(&k_mul.outputs[0].name, consumer)
+    {
+        return None;
+    }
+
+    // Find the shared scalar input between the two Mul nodes.
+    // Real models often have duplicate Sqrt nodes producing different names for the same
+    // value. CSE merges these in a prior fixed-point iteration, so by the time we run
+    // again both Muls reference the same output name.
+    let (q_tensor_idx, k_tensor_idx) = find_shared_scalar_inputs(q_mul, k_mul)?;
+    let scalar_idx = 1 - q_tensor_idx;
+
+    // Verify the shared input is a scalar (rank <= 1)
+    if q_mul.inputs[scalar_idx].ty.rank() > 1 {
+        return None;
+    }
+
+    // Q's tensor input should come from a Transpose
+    let q_tensor_name = &q_mul.inputs[q_tensor_idx].name;
+    let q_transpose_idx = *producer.get(q_tensor_name.as_str())?;
+    let q_transpose = &nodes[q_transpose_idx];
+    if q_transpose.node_type != NodeType::Transpose {
+        return None;
+    }
+
+    // K's tensor input should come from a Transpose
+    let k_tensor_name = &k_mul.inputs[k_tensor_idx].name;
+    let k_transpose_idx = *producer.get(k_tensor_name.as_str())?;
+    let k_transpose = &nodes[k_transpose_idx];
+    if k_transpose.node_type != NodeType::Transpose {
+        return None;
+    }
+
+    // K's perm should be Q's perm with last two elements swapped
+    let q_perm = get_transpose_perm(q_transpose)?;
+    let k_perm = get_transpose_perm(k_transpose)?;
+    if !is_perm_with_last_two_swapped(&q_perm, &k_perm) {
+        return None;
+    }
+
+    // Q = output of Q's Transpose (before Mul scaling)
+    let q_arg = q_mul.inputs[q_tensor_idx].clone();
+
+    // K after combined transpose is [B,H,D,S]; needs corrective [0,1,3,2] to get [B,H,S,D]
+    let k_combined = &k_mul.inputs[k_tensor_idx];
+    let corrected_k_name = format!("{}_k_corrected", qk_matmul.name);
+
+    let mut k_output = k_combined.clone();
+    k_output.name = corrected_k_name.clone();
+    k_output.value_store = None;
+    // Swap last two dims in static_shape
+    if let ArgType::Tensor(ref mut tt) = k_output.ty
+        && let Some(ref mut shape) = tt.static_shape
+    {
+        let len = shape.len();
+        if len >= 2 {
+            shape.swap(len - 1, len - 2);
+        }
+    }
+
+    // Build corrective perm: identity with last two dims swapped
+    let rank = k_combined.ty.rank();
+    let mut corrective_perm: Vec<i64> = (0..rank as i64).collect();
+    corrective_perm.swap(rank - 1, rank - 2);
+
+    let corrective_transpose = RawNode {
+        node_type: NodeType::Transpose,
+        name: corrected_k_name,
+        inputs: vec![k_combined.clone()],
+        outputs: vec![k_output.clone()],
+        attrs: [("perm".to_string(), AttributeValue::Int64s(corrective_perm))]
+            .into_iter()
+            .collect(),
+    };
+
+    // Extract scale: effective_scale = sqrt_scale^2
+    let prescaled_scale = q_mul.inputs[scalar_idx]
+        .value()
+        .and_then(|data| data.scalar_f64().ok())
+        .map(|v| v * v);
+
+    Some((
+        q_arg,
+        k_output,
+        prescaled_scale,
+        vec![(qk_matmul_idx, corrective_transpose)],
+    ))
+}
+
+/// Find the shared scalar input between two Mul nodes.
+/// Returns (tensor_input_index_in_a, tensor_input_index_in_b) for the non-shared inputs.
+fn find_shared_scalar_inputs(a: &RawNode, b: &RawNode) -> Option<(usize, usize)> {
+    for ai in 0..2 {
+        for bi in 0..2 {
+            if a.inputs[ai].name == b.inputs[bi].name {
+                return Some((1 - ai, 1 - bi));
+            }
+        }
+    }
+    None
+}
+
+/// Get the perm attribute from a Transpose node.
+fn get_transpose_perm(transpose: &RawNode) -> Option<Vec<i64>> {
+    transpose
+        .attrs
+        .get("perm")
+        .map(|attr| attr.clone().into_i64s())
+}
+
+/// Check if `b` equals `a` with the last two elements swapped.
+fn is_perm_with_last_two_swapped(a: &[i64], b: &[i64]) -> bool {
+    let n = a.len();
+    if n != b.len() || n < 2 {
+        return false;
+    }
+    a[..n - 2] == b[..n - 2] && a[n - 2] == b[n - 1] && a[n - 1] == b[n - 2]
+}
+
 /// Check if an output name is consumed by exactly one node.
 fn is_single_use(output_name: &str, consumer: &HashMap<String, Vec<usize>>) -> bool {
     consumer
@@ -381,6 +569,20 @@ mod tests {
             ty: ArgType::Tensor(TensorType {
                 dtype: DType::F32,
                 rank: 4,
+                static_shape: None,
+            }),
+            value_source: ValueSource::Dynamic,
+            value_store: None,
+        }
+    }
+
+    /// Create a rank-0 float32 scalar argument (dynamic, not constant).
+    fn dynamic_scalar(name: &str) -> Argument {
+        Argument {
+            name: name.to_string(),
+            ty: ArgType::Tensor(TensorType {
+                dtype: DType::F32,
+                rank: 0,
                 static_shape: None,
             }),
             value_source: ValueSource::Dynamic,
@@ -741,5 +943,210 @@ mod tests {
         assert_eq!(attention.inputs.len(), 4);
         assert_eq!(attention.inputs[3].name, "mask");
         assert!(attention.attrs.get("scale").is_none());
+    }
+
+    /// Build pre-scaled SDPA pattern with dynamic scalar:
+    /// Q -> Transpose([0,2,1,3]) -> Mul(sqrt_scale) -> MatMul -> Softmax(-1) -> MatMul(scores,V)
+    /// K -> Transpose([0,2,3,1]) -> Mul(sqrt_scale) -/
+    fn build_prescaled_sdpa() -> Vec<RawNode> {
+        vec![
+            transpose_node("transpose_q", "q", "q_t", vec![0, 2, 1, 3]),
+            transpose_node("transpose_k", "k", "k_t", vec![0, 2, 3, 1]),
+            binary_node(
+                "mul_q",
+                NodeType::Mul,
+                tensor4("q_t"),
+                dynamic_scalar("sqrt_scale"),
+                "q_scaled",
+            ),
+            binary_node(
+                "mul_k",
+                NodeType::Mul,
+                tensor4("k_t"),
+                dynamic_scalar("sqrt_scale"),
+                "k_scaled",
+            ),
+            matmul_node("qk_matmul", "q_scaled", "k_scaled", "qk"),
+            softmax_node("softmax", "qk", "attn_weights", -1),
+            matmul_node("sv_matmul", "attn_weights", "v", "output"),
+        ]
+    }
+
+    #[test]
+    fn test_prescaled_sdpa() {
+        let nodes = build_prescaled_sdpa();
+        let result = coalesce_attention(nodes);
+
+        let attention = result
+            .iter()
+            .find(|n| n.node_type == NodeType::Attention)
+            .expect("should produce an Attention node");
+
+        // Q is taken from before the Mul (after head-split transpose)
+        assert_eq!(attention.inputs[0].name, "q_t");
+        // K is corrected via inserted Transpose
+        assert_eq!(attention.inputs[1].name, "qk_matmul_k_corrected");
+        assert_eq!(attention.inputs[2].name, "v");
+        assert_eq!(attention.outputs[0].name, "output");
+
+        // Dynamic scalar -> default scale (None)
+        assert!(attention.attrs.get("scale").is_none());
+
+        // Verify corrective Transpose was inserted
+        let corrective = result
+            .iter()
+            .find(|n| n.name == "qk_matmul_k_corrected")
+            .expect("should have corrective Transpose");
+        assert_eq!(corrective.node_type, NodeType::Transpose);
+        assert_eq!(corrective.inputs[0].name, "k_t");
+        let perm: Vec<i64> = corrective.attrs.get("perm").unwrap().clone().into_i64s();
+        assert_eq!(perm, vec![0, 1, 3, 2]);
+    }
+
+    #[test]
+    fn test_prescaled_sdpa_with_const_scale() {
+        let sqrt_scale = (0.125_f32).sqrt(); // sqrt(1/sqrt(64))
+        let nodes = vec![
+            transpose_node("transpose_q", "q", "q_t", vec![0, 2, 1, 3]),
+            transpose_node("transpose_k", "k", "k_t", vec![0, 2, 3, 1]),
+            binary_node(
+                "mul_q",
+                NodeType::Mul,
+                tensor4("q_t"),
+                const_f32("sqrt_scale", sqrt_scale),
+                "q_scaled",
+            ),
+            binary_node(
+                "mul_k",
+                NodeType::Mul,
+                tensor4("k_t"),
+                const_f32("sqrt_scale", sqrt_scale),
+                "k_scaled",
+            ),
+            matmul_node("qk_matmul", "q_scaled", "k_scaled", "qk"),
+            softmax_node("softmax", "qk", "attn_weights", -1),
+            matmul_node("sv_matmul", "attn_weights", "v", "output"),
+        ];
+
+        let result = coalesce_attention(nodes);
+        let attention = result
+            .iter()
+            .find(|n| n.node_type == NodeType::Attention)
+            .expect("should produce an Attention node");
+
+        // scale = sqrt_scale^2 = 0.125
+        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        assert!((scale - 0.125).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_prescaled_sdpa_with_mask() {
+        // Pre-scaled pattern with Add(mask) before Softmax
+        let nodes = vec![
+            transpose_node("transpose_q", "q", "q_t", vec![0, 2, 1, 3]),
+            transpose_node("transpose_k", "k", "k_t", vec![0, 2, 3, 1]),
+            binary_node(
+                "mul_q",
+                NodeType::Mul,
+                tensor4("q_t"),
+                dynamic_scalar("sqrt_scale"),
+                "q_scaled",
+            ),
+            binary_node(
+                "mul_k",
+                NodeType::Mul,
+                tensor4("k_t"),
+                dynamic_scalar("sqrt_scale"),
+                "k_scaled",
+            ),
+            matmul_node("qk_matmul", "q_scaled", "k_scaled", "qk"),
+            binary_node(
+                "add_mask",
+                NodeType::Add,
+                tensor4("qk"),
+                tensor4("mask"),
+                "qk_masked",
+            ),
+            softmax_node("softmax", "qk_masked", "attn_weights", -1),
+            matmul_node("sv_matmul", "attn_weights", "v", "output"),
+        ];
+
+        let result = coalesce_attention(nodes);
+        let attention = result
+            .iter()
+            .find(|n| n.node_type == NodeType::Attention)
+            .expect("should produce an Attention node");
+
+        assert_eq!(attention.inputs.len(), 4);
+        assert_eq!(attention.inputs[0].name, "q_t");
+        assert_eq!(attention.inputs[1].name, "qk_matmul_k_corrected");
+        assert_eq!(attention.inputs[2].name, "v");
+        assert_eq!(attention.inputs[3].name, "mask");
+        assert!(attention.attrs.get("scale").is_none());
+    }
+
+    #[test]
+    fn test_prescaled_sdpa_different_scalars_not_matched() {
+        // Q and K use different scalars -> should NOT match
+        let nodes = vec![
+            transpose_node("transpose_q", "q", "q_t", vec![0, 2, 1, 3]),
+            transpose_node("transpose_k", "k", "k_t", vec![0, 2, 3, 1]),
+            binary_node(
+                "mul_q",
+                NodeType::Mul,
+                tensor4("q_t"),
+                dynamic_scalar("scale_q"),
+                "q_scaled",
+            ),
+            binary_node(
+                "mul_k",
+                NodeType::Mul,
+                tensor4("k_t"),
+                dynamic_scalar("scale_k"),
+                "k_scaled",
+            ),
+            matmul_node("qk_matmul", "q_scaled", "k_scaled", "qk"),
+            softmax_node("softmax", "qk", "attn_weights", -1),
+            matmul_node("sv_matmul", "attn_weights", "v", "output"),
+        ];
+
+        let result = coalesce_attention(nodes);
+        assert!(
+            !result.iter().any(|n| n.node_type == NodeType::Attention),
+            "should not match when Q and K use different scalars"
+        );
+    }
+
+    #[test]
+    fn test_prescaled_sdpa_same_transpose_not_matched() {
+        // Both Q and K have same perm [0,2,1,3] -> should NOT match
+        // (K perm must be Q perm with last two swapped)
+        let nodes = vec![
+            transpose_node("transpose_q", "q", "q_t", vec![0, 2, 1, 3]),
+            transpose_node("transpose_k", "k", "k_t", vec![0, 2, 1, 3]),
+            binary_node(
+                "mul_q",
+                NodeType::Mul,
+                tensor4("q_t"),
+                dynamic_scalar("sqrt_scale"),
+                "q_scaled",
+            ),
+            binary_node(
+                "mul_k",
+                NodeType::Mul,
+                tensor4("k_t"),
+                dynamic_scalar("sqrt_scale"),
+                "k_scaled",
+            ),
+            matmul_node("qk_matmul", "q_scaled", "k_scaled", "qk"),
+            softmax_node("softmax", "qk", "attn_weights", -1),
+            matmul_node("sv_matmul", "attn_weights", "v", "output"),
+        ];
+
+        let result = coalesce_attention(nodes);
+        assert!(
+            !result.iter().any(|n| n.node_type == NodeType::Attention),
+            "should not match when K transpose perm equals Q transpose perm"
+        );
     }
 }
