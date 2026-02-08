@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ir::{AttributeValue, NodeType, RawNode, TensorDataExt};
+use crate::ir::{Argument, AttributeValue, NodeType, RawNode, TensorDataExt};
 
 /// Detect decomposed scaled dot-product attention (SDPA) patterns and replace them
 /// with a single Attention node.
@@ -76,7 +76,7 @@ fn try_match_sdpa(
 
     // 2. Trace backward from Softmax input through optional Add(mask) and Div/Mul(scale)
     let mut pre_softmax_name: &str = &softmax.inputs[0].name;
-    let mut mask_input: Option<&str> = None;
+    let mut mask_arg: Option<&Argument> = None;
     let mut scale_value: Option<f64> = None;
 
     // Check for optional Add(mask) before Softmax
@@ -88,7 +88,7 @@ fn try_match_sdpa(
             // Try both orderings
             if let Some(result) = try_extract_mask_and_upstream(add_node, nodes, producer, consumer)
             {
-                mask_input = Some(result.mask_name);
+                mask_arg = Some(result.mask);
                 pre_softmax_name = result.upstream_output;
                 scale_value = result.scale;
             }
@@ -100,8 +100,7 @@ fn try_match_sdpa(
         && let Some(&scale_idx) = producer.get(pre_softmax_name)
     {
         let scale_node = &nodes[scale_idx];
-        if let Some((upstream_name, sv)) = try_extract_scale(scale_node, nodes, producer, consumer)
-        {
+        if let Some((upstream_name, sv)) = try_extract_scale(scale_node, consumer) {
             pre_softmax_name = upstream_name;
             scale_value = Some(sv);
         }
@@ -163,13 +162,13 @@ fn try_match_sdpa(
 
     // 6. Build the Attention RawNode
     let attention_node =
-        build_attention_node(final_matmul, q_arg, k_arg, v_arg, mask_input, scale_value);
+        build_attention_node(final_matmul, q_arg, k_arg, v_arg, mask_arg, scale_value);
 
     Some((final_matmul_idx, attention_node))
 }
 
 struct MaskAndUpstream<'a> {
-    mask_name: &'a str,
+    mask: &'a Argument,
     upstream_output: &'a str,
     scale: Option<f64>,
 }
@@ -187,22 +186,20 @@ fn try_extract_mask_and_upstream<'a>(
     // Try both orderings: input[0] is upstream + input[1] is mask, or vice versa
     for (upstream_idx, mask_idx) in [(0, 1), (1, 0)] {
         let upstream_name = &add_node.inputs[upstream_idx].name;
-        let mask_name = &add_node.inputs[mask_idx].name;
+        let mask_arg = &add_node.inputs[mask_idx];
 
         // The upstream path should lead to a Div/Mul(scale) or directly to MatMul
         if let Some(&node_idx) = producer.get(upstream_name.as_str()) {
             let upstream_node = &nodes[node_idx];
 
             // Check if it's a scale node (Div/Mul) with single-use output
-            if let Some((matmul_output, sv)) =
-                try_extract_scale(upstream_node, nodes, producer, consumer)
-            {
+            if let Some((matmul_output, sv)) = try_extract_scale(upstream_node, consumer) {
                 // Verify the scale's upstream is a MatMul
                 if let Some(&mm_idx) = producer.get(matmul_output)
                     && nodes[mm_idx].node_type == NodeType::MatMul
                 {
                     return Some(MaskAndUpstream {
-                        mask_name,
+                        mask: mask_arg,
                         upstream_output: matmul_output,
                         scale: Some(sv),
                     });
@@ -213,7 +210,7 @@ fn try_extract_mask_and_upstream<'a>(
             if upstream_node.node_type == NodeType::MatMul && is_single_use(upstream_name, consumer)
             {
                 return Some(MaskAndUpstream {
-                    mask_name,
+                    mask: mask_arg,
                     upstream_output: upstream_name,
                     scale: None,
                 });
@@ -227,8 +224,6 @@ fn try_extract_mask_and_upstream<'a>(
 /// Returns (upstream_input_name, scale_value) if successful.
 fn try_extract_scale<'a>(
     node: &'a RawNode,
-    _nodes: &'a [RawNode],
-    _producer: &HashMap<String, usize>,
     consumer: &HashMap<String, Vec<usize>>,
 ) -> Option<(&'a str, f64)> {
     if !is_single_use(&node.outputs[0].name, consumer) {
@@ -267,21 +262,17 @@ fn try_extract_scale<'a>(
 /// Build an Attention RawNode that replaces the final MatMul.
 fn build_attention_node(
     final_matmul: &RawNode,
-    q: &crate::ir::Argument,
-    k: &crate::ir::Argument,
-    v: &crate::ir::Argument,
-    mask: Option<&str>,
+    q: &Argument,
+    k: &Argument,
+    v: &Argument,
+    mask: Option<&Argument>,
     scale: Option<f64>,
 ) -> RawNode {
     let mut inputs = vec![q.clone(), k.clone(), v.clone()];
 
     // Attention input[3] is attention_mask (optional)
-    if let Some(mask_name) = mask {
-        // Find the mask argument from context - we need its type info
-        // For now, create a basic argument referencing the mask
-        let mut mask_arg = q.clone();
-        mask_arg.name = mask_name.to_string();
-        inputs.push(mask_arg);
+    if let Some(mask_arg) = mask {
+        inputs.push(mask_arg.clone());
     }
 
     let mut attrs = HashMap::new();
@@ -379,7 +370,7 @@ fn build_consumer_map(nodes: &[RawNode]) -> HashMap<String, Vec<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{ArgType, Argument, DType, TensorType, ValueSource};
+    use crate::ir::{ArgType, DType, TensorType, ValueSource};
     use crate::simplify::tests::node;
     use crate::tensor_store::{TensorDataRef, TensorStore, ValueStore};
 
@@ -569,6 +560,37 @@ mod tests {
     }
 
     #[test]
+    fn test_sdpa_with_mul_constant_first() {
+        // Mul(constant, x) instead of Mul(x, constant)
+        let nodes = vec![
+            transpose_node("transpose_k", "k", "k_t", vec![0, 1, 3, 2]),
+            matmul_node("qk_matmul", "q", "k_t", "qk"),
+            binary_node(
+                "mul_scale",
+                NodeType::Mul,
+                const_f32("scale", 0.25),
+                tensor4("qk"),
+                "qk_scaled",
+            ),
+            softmax_node("softmax", "qk_scaled", "attn_weights", -1),
+            matmul_node("sv_matmul", "attn_weights", "v", "output"),
+        ];
+
+        let result = coalesce_attention(nodes);
+        let attention = result
+            .iter()
+            .find(|n| n.node_type == NodeType::Attention)
+            .expect("should produce an Attention node");
+
+        assert_eq!(attention.inputs[0].name, "q");
+        assert_eq!(attention.inputs[1].name, "k");
+        assert_eq!(attention.inputs[2].name, "v");
+
+        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        assert!((scale - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
     fn test_sdpa_with_mask() {
         let nodes = build_sdpa_with_mask(8.0);
         let result = coalesce_attention(nodes);
@@ -583,6 +605,8 @@ mod tests {
         assert_eq!(attention.inputs[1].name, "k");
         assert_eq!(attention.inputs[2].name, "v");
         assert_eq!(attention.inputs[3].name, "mask");
+        // Mask preserves its own type info (not cloned from Q)
+        assert_eq!(attention.inputs[3].ty.rank(), 4);
 
         let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
         assert!((scale - 0.125).abs() < 1e-6);

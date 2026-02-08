@@ -185,11 +185,54 @@ mod tests {
         let device = Default::default();
         let s = simplified::simplify_sdpa_coalesce::Model::<TestBackend>::new(&device);
         let u = unsimplified::simplify_sdpa_coalesce::Model::<TestBackend>::new(&device);
-        let q = Tensor::<TestBackend, 4>::ones([1, 2, 3, 4], &device);
-        let k = Tensor::<TestBackend, 4>::ones([1, 2, 3, 4], &device);
-        let v = Tensor::<TestBackend, 4>::ones([1, 2, 3, 4], &device);
-        let s_out = s.forward(k.clone(), q.clone(), v.clone());
-        let u_out = u.forward(k, q, v);
+        // Use distinct tensors to catch Q/K/V ordering bugs
+        let q = Tensor::<TestBackend, 4>::from_floats(
+            [[
+                [
+                    [1.0, 2.0, 3.0, 4.0],
+                    [5.0, 6.0, 7.0, 8.0],
+                    [9.0, 10.0, 11.0, 12.0],
+                ],
+                [
+                    [0.1, 0.2, 0.3, 0.4],
+                    [0.5, 0.6, 0.7, 0.8],
+                    [0.9, 1.0, 1.1, 1.2],
+                ],
+            ]],
+            &device,
+        );
+        let k = Tensor::<TestBackend, 4>::from_floats(
+            [[
+                [
+                    [0.1, 0.3, 0.5, 0.7],
+                    [0.2, 0.4, 0.6, 0.8],
+                    [0.9, 1.1, 1.3, 1.5],
+                ],
+                [
+                    [1.0, 1.2, 1.4, 1.6],
+                    [1.1, 1.3, 1.5, 1.7],
+                    [1.8, 2.0, 2.2, 2.4],
+                ],
+            ]],
+            &device,
+        );
+        let v = Tensor::<TestBackend, 4>::from_floats(
+            [[
+                [
+                    [2.0, 0.5, 1.0, 3.0],
+                    [1.5, 2.5, 0.5, 1.0],
+                    [0.5, 1.5, 2.5, 0.5],
+                ],
+                [
+                    [3.0, 1.0, 2.0, 0.5],
+                    [2.5, 0.5, 1.5, 2.0],
+                    [1.0, 3.0, 0.5, 1.5],
+                ],
+            ]],
+            &device,
+        );
+        let s_out = s.forward(q.clone(), k.clone(), v.clone());
+        let u_out = u.forward(q, k, v);
         s_out
             .to_data()
             .assert_approx_eq::<FT>(&u_out.to_data(), Tolerance::default());
