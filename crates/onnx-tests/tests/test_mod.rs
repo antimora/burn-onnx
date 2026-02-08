@@ -125,6 +125,7 @@ pub mod slice;
 pub mod softmax;
 pub mod softplus;
 pub mod softsign;
+pub mod thresholded_relu;
 pub mod space_to_depth;
 pub mod split;
 pub mod sqrt;
