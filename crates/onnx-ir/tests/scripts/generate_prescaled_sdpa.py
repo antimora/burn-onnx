@@ -2,7 +2,6 @@
 # /// script
 # dependencies = [
 #   "onnx>=1.15.0",
-#   "numpy>=1.24.0",
 # ]
 # ///
 
@@ -23,7 +22,6 @@ The simplification pass should coalesce this into a single Attention node.
 
 import onnx
 from onnx import helper, TensorProto
-import numpy as np
 
 
 def create_prescaled_sdpa_model():
