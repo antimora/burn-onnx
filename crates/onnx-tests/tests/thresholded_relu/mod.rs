@@ -12,8 +12,7 @@ mod tests {
     #[test]
     fn thresholded_relu() {
         let device = Default::default();
-        let model: thresholded_relu::Model<TestBackend> =
-            thresholded_relu::Model::new(&device);
+        let model: thresholded_relu::Model<TestBackend> = thresholded_relu::Model::new(&device);
 
         // Run the model (alpha=2.0, input scaled by 3.0)
         let input = Tensor::<TestBackend, 2>::from_floats(
@@ -24,10 +23,7 @@ mod tests {
             &device,
         );
         let output = model.forward(input);
-        let expected = TensorData::from([
-            [0.0f32, 0.0, 0.0],
-            [4.569_089_4, 0.0, 0.0],
-        ]);
+        let expected = TensorData::from([[0.0f32, 0.0, 0.0], [4.569_089_4, 0.0, 0.0]]);
 
         output
             .to_data()
