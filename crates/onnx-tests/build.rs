@@ -150,6 +150,8 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/cumsum/cumsum_single_element.onnx")
         .input("tests/cumsum/cumsum_exclusive_single.onnx")
         .input("tests/deform_conv/deform_conv.onnx")
+        .input("tests/deform_conv/deform_conv_bias.onnx")
+        .input("tests/deform_conv/deform_conv_mask.onnx")
         .input("tests/depth_to_space/depth_to_space_dcr.onnx")
         .input("tests/depth_to_space/depth_to_space_crd.onnx")
         .input("tests/div/div.onnx")

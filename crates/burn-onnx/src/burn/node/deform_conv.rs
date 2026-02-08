@@ -12,10 +12,12 @@ impl NodeCodegen for onnx_ir::deform_conv::DeformConvNode {
 
     fn field(&self) -> Option<Field> {
         let name = Ident::new(&self.name, Span::call_site());
-        let weight_shape = self.inputs[1]
-            .ty
-            .static_shape_known()
-            .expect("DeformConv: weight tensor shape must be known at codegen time");
+        let weight_shape = self.inputs[1].ty.static_shape_known().unwrap_or_else(|| {
+            panic!(
+                "DeformConv '{}': weight tensor shape must be known at codegen time",
+                self.name
+            )
+        });
         let groups = self.config.groups;
         let channels = [weight_shape[1] * groups, weight_shape[0]].to_tokens();
         let kernel_size = self.config.kernel_size.to_tokens();
@@ -216,5 +218,56 @@ mod tests {
             output
         }
         ");
+    }
+
+    #[test]
+    fn test_deform_conv_field_init_non_default_groups() {
+        use onnx_ir::Argument;
+        use onnx_ir::ir::ArgType;
+
+        let config = DeformConvConfig::new([3, 3], [2, 2], PaddingConfig2d::Valid, [2, 2], 2, 4);
+
+        let mut node = DeformConvNodeBuilder::new("deform_conv1")
+            .input_tensor("input", 4, DType::F32)
+            .input_static_tensor_shape("weight", vec![64, 3, 3, 3], DType::F32)
+            .input_tensor("offset", 4, DType::F32)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+
+        // Add optional bias placeholder
+        node.inputs.push(Argument::new("", ArgType::default()));
+
+        let code = codegen_field_init(&node);
+        assert_snapshot!(code, @r"
+        let deform_conv1 = DeformConv2dConfig::new([6, 64], [3, 3])
+            .with_stride([2, 2])
+            .with_padding(PaddingConfig2d::Valid)
+            .with_dilation([2, 2])
+            .with_weight_groups(2)
+            .with_offset_groups(4)
+            .with_bias(false)
+            .init(device);
+        ");
+    }
+
+    #[test]
+    fn test_deform_conv_collect_snapshots_with_bias() {
+        use crate::burn::node_traits::NodeCodegen;
+
+        let node = create_deform_conv_node("deform_conv1", true, false);
+        let snapshots = node.collect_snapshots("deform_conv1");
+        // Weight + bias = 2 snapshots
+        assert_eq!(snapshots.len(), 2);
+    }
+
+    #[test]
+    fn test_deform_conv_collect_snapshots_without_bias() {
+        use crate::burn::node_traits::NodeCodegen;
+
+        let node = create_deform_conv_node("deform_conv1", false, false);
+        let snapshots = node.collect_snapshots("deform_conv1");
+        // Weight only = 1 snapshot
+        assert_eq!(snapshots.len(), 1);
     }
 }

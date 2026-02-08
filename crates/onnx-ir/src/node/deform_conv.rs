@@ -77,19 +77,6 @@ impl NodeProcessor for DeformConvProcessor {
         _opset: usize,
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
-        // Validate attributes
-        for (key, _value) in node.attrs.iter() {
-            match key.as_str() {
-                "kernel_shape" | "strides" | "pads" | "dilations" | "group" | "offset_group" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for DeformConv: {key}"),
-                    });
-                }
-            }
-        }
-
         // Validate input X (rank 4)
         let tensor = match &node.inputs[0].ty {
             ArgType::Tensor(tensor) => tensor,
@@ -177,6 +164,39 @@ impl NodeProcessor for DeformConvProcessor {
                     mask_tensor.rank
                 )));
             }
+        }
+
+        // Validate dtype consistency: W, offset, bias, mask must match X
+        let expected_dtype = tensor.dtype;
+        if weight_tensor.dtype != expected_dtype {
+            return Err(ProcessError::Custom(format!(
+                "DeformConv: weight dtype {:?} does not match input dtype {:?}",
+                weight_tensor.dtype, expected_dtype
+            )));
+        }
+        if offset_tensor.dtype != expected_dtype {
+            return Err(ProcessError::Custom(format!(
+                "DeformConv: offset dtype {:?} does not match input dtype {:?}",
+                offset_tensor.dtype, expected_dtype
+            )));
+        }
+        if let Some(bias_arg) = node.get_input(3)
+            && let ArgType::Tensor(bt) = &bias_arg.ty
+            && bt.dtype != expected_dtype
+        {
+            return Err(ProcessError::Custom(format!(
+                "DeformConv: bias dtype {:?} does not match input dtype {:?}",
+                bt.dtype, expected_dtype
+            )));
+        }
+        if let Some(mask_arg) = node.get_input(4)
+            && let ArgType::Tensor(mt) = &mask_arg.ty
+            && mt.dtype != expected_dtype
+        {
+            return Err(ProcessError::Custom(format!(
+                "DeformConv: mask dtype {:?} does not match input dtype {:?}",
+                mt.dtype, expected_dtype
+            )));
         }
 
         // Compute output static_shape: [batch, out_channels, H_out, W_out]
@@ -302,9 +322,12 @@ impl NodeProcessor for DeformConvProcessor {
     }
 
     fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(&builder, opset).unwrap_or_else(|e| {
+            panic!(
+                "DeformConv '{}' config extraction failed: {e}",
+                builder.name
+            )
+        });
 
         Node::DeformConv(DeformConvNode {
             name: builder.name,
@@ -484,6 +507,93 @@ mod tests {
             }
             _ => panic!("Expected tensor output"),
         }
+    }
+
+    #[test]
+    fn test_deform_conv_static_shape_non_default_stride_dilation() {
+        // Input [1, 2, 8, 8], weight [4, 2, 3, 3], stride=[2,2], pad=[1,1,1,1], dilation=[2,2]
+        // effective_kernel = dilation * (kernel - 1) + 1 = 2*(3-1)+1 = 5
+        // H_out = (8 + 2 - 2*(3-1) - 1) / 2 + 1 = (8 + 2 - 5) / 2 + 1 = 5/2 + 1 = 3
+        let mut node = TestNodeBuilder::new(NodeType::DeformConv, "test")
+            .input_tensor_f32("data", 4, Some(vec![1, 2, 8, 8]))
+            .input_tensor_f32_data("weight", vec![0.0; 72], vec![4, 2, 3, 3])
+            .input_tensor_f32("offset", 4, None)
+            .add_input("", ArgType::default()) // no bias
+            .output_tensor_f32("output", 4, None)
+            .attr_ints("kernel_shape", vec![3, 3])
+            .attr_ints("strides", vec![2, 2])
+            .attr_ints("pads", vec![1, 1, 1, 1])
+            .attr_ints("dilations", vec![2, 2])
+            .attr_int("group", 1)
+            .attr_int("offset_group", 1)
+            .build_with_graph_data(19);
+
+        let processor = DeformConvProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 19, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.rank, 4);
+                assert_eq!(
+                    t.static_shape,
+                    Some(vec![Some(1), Some(4), Some(3), Some(3)])
+                );
+            }
+            _ => panic!("Expected tensor output"),
+        }
+    }
+
+    #[test]
+    fn test_deform_conv_wrong_input_rank() {
+        let mut node = TestNodeBuilder::new(NodeType::DeformConv, "test")
+            .input_tensor_f32("data", 3, None) // rank 3 instead of 4
+            .input_tensor_f32_data("weight", vec![0.0; 32], vec![4, 2, 2, 2])
+            .input_tensor_f32("offset", 4, None)
+            .output_tensor_f32("output", 4, None)
+            .attr_ints("kernel_shape", vec![2, 2])
+            .attr_ints("strides", vec![1, 1])
+            .attr_ints("pads", vec![0, 0, 0, 0])
+            .attr_ints("dilations", vec![1, 1])
+            .attr_int("group", 1)
+            .attr_int("offset_group", 1)
+            .build_with_graph_data(19);
+
+        let processor = DeformConvProcessor;
+        let prefs = OutputPreferences::new();
+        let err = processor.infer_types(&mut node, 19, &prefs).unwrap_err();
+        assert!(err.to_string().contains("rank"), "error: {err}");
+    }
+
+    #[test]
+    fn test_deform_conv_dtype_mismatch() {
+        use crate::ir::DType;
+        let mut node = TestNodeBuilder::new(NodeType::DeformConv, "test")
+            .input_tensor_f32("data", 4, None)
+            .input_tensor_f32_data("weight", vec![0.0; 32], vec![4, 2, 2, 2])
+            .output_tensor_f32("output", 4, None)
+            .attr_ints("kernel_shape", vec![2, 2])
+            .attr_ints("strides", vec![1, 1])
+            .attr_ints("pads", vec![0, 0, 0, 0])
+            .attr_ints("dilations", vec![1, 1])
+            .attr_int("group", 1)
+            .attr_int("offset_group", 1);
+
+        // Add offset with F64 dtype (mismatched)
+        node = node.add_input(
+            "offset",
+            ArgType::Tensor(TensorType {
+                dtype: DType::F64,
+                rank: 4,
+                static_shape: None,
+            }),
+        );
+
+        let mut node = node.build_with_graph_data(19);
+        let processor = DeformConvProcessor;
+        let prefs = OutputPreferences::new();
+        let err = processor.infer_types(&mut node, 19, &prefs).unwrap_err();
+        assert!(err.to_string().contains("dtype"), "error: {err}");
     }
 
     #[test]
