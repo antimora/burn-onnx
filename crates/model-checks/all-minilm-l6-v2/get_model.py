@@ -19,6 +19,22 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download
 
 
+def get_artifacts_dir():
+    """Get platform-specific cache directory for model artifacts."""
+    env_dir = os.environ.get("BURN_CACHE_DIR")
+    if env_dir:
+        base = Path(env_dir)
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches" / "burn-onnx"
+    else:
+        xdg = os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+        base = Path(xdg) / "burn-onnx"
+    d = base / "model-checks" / "all-minilm-l6-v2"
+    d.mkdir(parents=True, exist_ok=True)
+    print(f"Artifacts directory: {d}")
+    return d
+
+
 def download_minilm_model(output_path):
     """Download all-MiniLM-L6-v2 model from Hugging Face."""
     print("Downloading all-MiniLM-L6-v2 model from Hugging Face...")
@@ -27,7 +43,7 @@ def download_minilm_model(output_path):
     model_path = hf_hub_download(
         repo_id="Xenova/all-MiniLM-L6-v2",
         filename="onnx/model.onnx",
-        cache_dir="./artifacts/cache",
+        cache_dir=str(get_artifacts_dir() / "hf_cache"),
     )
 
     # Copy to artifacts
@@ -253,8 +269,7 @@ def main():
     print("=" * 60)
 
     # Setup paths
-    artifacts_dir = Path("artifacts")
-    artifacts_dir.mkdir(exist_ok=True)
+    artifacts_dir = get_artifacts_dir()
 
     original_path = artifacts_dir / "all-minilm-l6-v2.onnx"
     processed_path = artifacts_dir / "all-minilm-l6-v2_opset16.onnx"

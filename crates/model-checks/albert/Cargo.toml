@@ -25,6 +25,8 @@ burn = { workspace = true, features = [
     "metal",
 ] }
 burn-store = { workspace = true, features = ["std", "burnpack", "pytorch"] }
+dirs = "6"
 
 [build-dependencies]
 burn-onnx = { path = "../../burn-onnx" }
+dirs = "6"

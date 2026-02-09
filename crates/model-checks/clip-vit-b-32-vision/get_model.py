@@ -19,6 +19,22 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download
 
 
+def get_artifacts_dir():
+    """Get platform-specific cache directory for model artifacts."""
+    env_dir = os.environ.get("BURN_CACHE_DIR")
+    if env_dir:
+        base = Path(env_dir)
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches" / "burn-onnx"
+    else:
+        xdg = os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+        base = Path(xdg) / "burn-onnx"
+    d = base / "model-checks" / "clip-vit-b-32-vision"
+    d.mkdir(parents=True, exist_ok=True)
+    print(f"Artifacts directory: {d}")
+    return d
+
+
 def download_clip_model(output_path):
     """Download CLIP ViT-B-32-vision model from Hugging Face."""
     print("Downloading CLIP ViT-B-32-vision model from Hugging Face...")
@@ -27,7 +43,7 @@ def download_clip_model(output_path):
     model_path = hf_hub_download(
         repo_id="Qdrant/clip-ViT-B-32-vision",
         filename="model.onnx",
-        cache_dir="./artifacts/cache",
+        cache_dir=str(get_artifacts_dir() / "hf_cache"),
     )
 
     # Copy to artifacts
@@ -216,8 +232,7 @@ def main():
     print("=" * 60)
 
     # Setup paths
-    artifacts_dir = Path("artifacts")
-    artifacts_dir.mkdir(exist_ok=True)
+    artifacts_dir = get_artifacts_dir()
 
     original_path = artifacts_dir / "clip-vit-b-32-vision.onnx"
     processed_path = artifacts_dir / "clip-vit-b-32-vision_opset16.onnx"

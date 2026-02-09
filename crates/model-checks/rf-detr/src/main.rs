@@ -4,7 +4,7 @@ use burn::module::{Initializer, Param};
 use burn::prelude::*;
 
 use burn_store::PytorchStore;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[cfg(feature = "wgpu")]
@@ -42,15 +42,27 @@ impl<B: Backend> TestData<B> {
     }
 }
 
+fn artifacts_dir() -> PathBuf {
+    let base = match std::env::var("BURN_CACHE_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => dirs::cache_dir()
+            .expect("could not determine cache directory")
+            .join("burn-onnx"),
+    };
+    base.join("model-checks").join("rf-detr")
+}
+
 fn main() {
     println!("========================================");
     println!("RF-DETR Small Model Test");
     println!("========================================\n");
 
+    let artifacts_dir = artifacts_dir();
+    println!("Artifacts directory: {}", artifacts_dir.display());
+
     // Check if artifacts exist
-    let artifacts_dir = Path::new("artifacts");
     if !artifacts_dir.exists() {
-        eprintln!("Error: artifacts directory not found!");
+        eprintln!("Error: artifacts directory not found at '{}'!", artifacts_dir.display());
         eprintln!("Please run get_model.py first to download the model.");
         eprintln!("Example: uv run --python 3.11 get_model.py");
         std::process::exit(1);

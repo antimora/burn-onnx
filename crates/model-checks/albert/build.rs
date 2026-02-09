@@ -1,7 +1,22 @@
 use burn_onnx::ModelGen;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+fn artifacts_dir() -> PathBuf {
+    let base = match env::var("BURN_CACHE_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => dirs::cache_dir()
+            .expect("could not determine cache directory")
+            .join("burn-onnx"),
+    };
+    let dir = base.join("model-checks").join("albert");
+    println!(
+        "cargo:warning=model-checks: artifacts dir = {}",
+        dir.display()
+    );
+    dir
+}
 
 fn main() {
     // Supported models
@@ -26,18 +41,20 @@ fn main() {
         std::process::exit(1);
     }
 
-    let onnx_path = format!("artifacts/{}_opset16.onnx", model_name);
-    let test_data_path = format!("artifacts/{}_test_data.pt", model_name);
+    let artifacts = artifacts_dir();
+    let onnx_path = artifacts.join(format!("{}_opset16.onnx", model_name));
+    let test_data_path = artifacts.join(format!("{}_test_data.pt", model_name));
 
     // Tell Cargo to only rebuild if these files change
-    println!("cargo:rerun-if-changed={}", onnx_path);
-    println!("cargo:rerun-if-changed={}", test_data_path);
+    println!("cargo:rerun-if-changed={}", onnx_path.display());
+    println!("cargo:rerun-if-changed={}", test_data_path.display());
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=ALBERT_MODEL");
+    println!("cargo:rerun-if-env-changed=BURN_CACHE_DIR");
 
     // Check if the ONNX model file exists
-    if !Path::new(&onnx_path).exists() {
-        eprintln!("Error: ONNX model file not found at '{}'", onnx_path);
+    if !onnx_path.exists() {
+        eprintln!("Error: ONNX model file not found at '{}'", onnx_path.display());
         eprintln!();
         eprintln!(
             "Please run the following command to download and prepare the {} model:",

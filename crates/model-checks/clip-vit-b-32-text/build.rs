@@ -1,23 +1,37 @@
 use burn_onnx::ModelGen;
-use std::path::Path;
+use std::path::PathBuf;
+
+fn artifacts_dir() -> PathBuf {
+    let base = match std::env::var("BURN_CACHE_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => dirs::cache_dir()
+            .expect("could not determine cache directory")
+            .join("burn-onnx"),
+    };
+    let dir = base.join("model-checks").join("clip-vit-b-32-text");
+    println!(
+        "cargo:warning=model-checks: artifacts dir = {}",
+        dir.display()
+    );
+    dir
+}
 
 fn main() {
-    let onnx_path = "artifacts/clip-vit-b-32-text_opset16.onnx";
-    let test_data_path = "artifacts/test_data.pt";
+    let artifacts = artifacts_dir();
+    let onnx_path = artifacts.join("clip-vit-b-32-text_opset16.onnx");
+    let test_data_path = artifacts.join("test_data.pt");
 
     // Tell Cargo to only rebuild if these files change
-    println!("cargo:rerun-if-changed={}", onnx_path);
-    println!("cargo:rerun-if-changed={}", test_data_path);
+    println!("cargo:rerun-if-changed={}", onnx_path.display());
+    println!("cargo:rerun-if-changed={}", test_data_path.display());
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=BURN_CACHE_DIR");
 
     // Check if the ONNX model file exists
-    if !Path::new(onnx_path).exists() {
-        eprintln!("Error: ONNX model file not found at '{}'", onnx_path);
+    if !onnx_path.exists() {
+        eprintln!("Error: ONNX model file not found at '{}'", onnx_path.display());
         eprintln!();
         eprintln!("Please run the following command to download and prepare the model:");
-        eprintln!("  python get_model.py");
-        eprintln!();
-        eprintln!("Or if you prefer using uv:");
         eprintln!("  uv run get_model.py");
         eprintln!();
         eprintln!("This will download the CLIP ViT-B-32-text model and convert it to ONNX format.");
@@ -25,7 +39,6 @@ fn main() {
     }
 
     // Generate the model code from the ONNX file
-    // Use double precision to handle large Int64 constants in CLIP
     ModelGen::new()
         .input(onnx_path)
         .out_dir("model/")

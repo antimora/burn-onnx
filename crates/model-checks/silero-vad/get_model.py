@@ -19,7 +19,9 @@ See: https://github.com/snakers4/silero-vad/issues/728 for compatibility discuss
 """
 
 import json
+import os
 import struct
+import sys
 import urllib.request
 import wave
 from pathlib import Path
@@ -28,6 +30,22 @@ from collections import defaultdict
 import numpy as np
 import onnx
 import onnxruntime as ort
+
+
+def get_artifacts_dir():
+    """Get platform-specific cache directory for model artifacts."""
+    env_dir = os.environ.get("BURN_CACHE_DIR")
+    if env_dir:
+        base = Path(env_dir)
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches" / "burn-onnx"
+    else:
+        xdg = os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+        base = Path(xdg) / "burn-onnx"
+    d = base / "model-checks" / "silero-vad"
+    d.mkdir(parents=True, exist_ok=True)
+    print(f"Artifacts directory: {d}")
+    return d
 
 
 def extract_node_info(model_path, artifacts_dir):
@@ -136,8 +154,7 @@ def extract_node_info(model_path, artifacts_dir):
 def download_test_data():
     """Download test audio file from silero-vad repository."""
 
-    artifacts_dir = Path("artifacts")
-    artifacts_dir.mkdir(exist_ok=True)
+    artifacts_dir = get_artifacts_dir()
 
     test_wav_path = artifacts_dir / "test.wav"
 
@@ -311,9 +328,7 @@ def generate_reference_outputs(model_path, test_wav_path, artifacts_dir):
 def download_model():
     """Download the Silero VAD ONNX model (opset 18, if-less version)."""
 
-    # Create artifacts directory if it doesn't exist
-    artifacts_dir = Path("artifacts")
-    artifacts_dir.mkdir(exist_ok=True)
+    artifacts_dir = get_artifacts_dir()
 
     model_path = artifacts_dir / "silero_vad.onnx"
 

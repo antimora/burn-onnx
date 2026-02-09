@@ -21,6 +21,22 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download
 
 
+def get_artifacts_dir():
+    """Get platform-specific cache directory for model artifacts."""
+    env_dir = os.environ.get("BURN_CACHE_DIR")
+    if env_dir:
+        base = Path(env_dir)
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches" / "burn-onnx"
+    else:
+        xdg = os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+        base = Path(xdg) / "burn-onnx"
+    d = base / "model-checks" / "modernbert-base"
+    d.mkdir(parents=True, exist_ok=True)
+    print(f"Artifacts directory: {d}")
+    return d
+
+
 def download_modernbert_model(output_path):
     """Download ModernBERT-base model from Hugging Face and export to ONNX."""
     print("Downloading ModernBERT-base model from Hugging Face...")
@@ -32,8 +48,8 @@ def download_modernbert_model(output_path):
         # Download the model
         model_name = "answerdotai/ModernBERT-base"
         print(f"  Loading {model_name}...")
-        model = AutoModel.from_pretrained(model_name, cache_dir="./artifacts/cache")
-        tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir="./artifacts/cache")
+        model = AutoModel.from_pretrained(model_name, cache_dir=str(get_artifacts_dir() / "hf_cache"))
+        tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=str(get_artifacts_dir() / "hf_cache"))
 
         # Set model to evaluation mode
         model.eval()
@@ -272,8 +288,7 @@ def main():
     print("=" * 60)
 
     # Setup paths
-    artifacts_dir = Path("artifacts")
-    artifacts_dir.mkdir(exist_ok=True)
+    artifacts_dir = get_artifacts_dir()
 
     original_path = artifacts_dir / "modernbert-base.onnx"
     processed_path = artifacts_dir / "modernbert-base_opset16.onnx"

@@ -4,7 +4,7 @@ use burn::module::{Initializer, Param};
 use burn::prelude::*;
 
 use burn_store::{ModuleSnapshot, PytorchStore};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[cfg(feature = "wgpu")]
@@ -57,6 +57,16 @@ fn get_model_display_name(model_name: &str) -> &str {
     }
 }
 
+fn artifacts_dir() -> PathBuf {
+    let base = match std::env::var("BURN_CACHE_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => dirs::cache_dir()
+            .expect("could not determine cache directory")
+            .join("burn-onnx"),
+    };
+    base.join("model-checks").join("albert")
+}
+
 fn main() {
     // MODEL_NAME is set at build time from ALBERT_MODEL env var
     let model_name = MODEL_NAME;
@@ -66,10 +76,12 @@ fn main() {
     println!("{} Burn Model Test", display_name);
     println!("========================================\n");
 
+    let artifacts_dir = artifacts_dir();
+    println!("Artifacts directory: {}", artifacts_dir.display());
+
     // Check if artifacts exist
-    let artifacts_dir = Path::new("artifacts");
     if !artifacts_dir.exists() {
-        eprintln!("Error: artifacts directory not found!");
+        eprintln!("Error: artifacts directory not found at '{}'!", artifacts_dir.display());
         eprintln!("Please run get_model.py first to download the model and test data.");
         eprintln!("Example: uv run get_model.py --model {}", model_name);
         std::process::exit(1);

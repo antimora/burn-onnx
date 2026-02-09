@@ -4,7 +4,7 @@ use burn::module::{Initializer, Param};
 use burn::prelude::*;
 
 use burn_store::{ModuleSnapshot, PytorchStore};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[cfg(feature = "wgpu")]
@@ -49,15 +49,27 @@ impl<B: Backend> TestData<B> {
     }
 }
 
+fn artifacts_dir() -> PathBuf {
+    let base = match std::env::var("BURN_CACHE_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => dirs::cache_dir()
+            .expect("could not determine cache directory")
+            .join("burn-onnx"),
+    };
+    base.join("model-checks").join("clip-vit-b-32-text")
+}
+
 fn main() {
     println!("========================================");
     println!("CLIP ViT-B-32-text Burn Model Test");
     println!("========================================\n");
 
+    let artifacts_dir = artifacts_dir();
+    println!("Artifacts directory: {}", artifacts_dir.display());
+
     // Check if artifacts exist
-    let artifacts_dir = Path::new("artifacts");
     if !artifacts_dir.exists() {
-        eprintln!("Error: artifacts directory not found!");
+        eprintln!("Error: artifacts directory not found at '{}'!", artifacts_dir.display());
         eprintln!("Please run get_model.py first to download the model and test data.");
         std::process::exit(1);
     }
@@ -71,17 +83,19 @@ fn main() {
     println!("  Model initialized in {:.2?}", init_time);
 
     // Save model structure to file
-    println!("\nSaving model structure to artifacts/model.txt...");
+    let model_txt_path = artifacts_dir.join("model.txt");
+    println!("\nSaving model structure to {}...", model_txt_path.display());
     let model_str = format!("{}", model);
-    std::fs::write("artifacts/model.txt", &model_str)
+    std::fs::write(&model_txt_path, &model_str)
         .expect("Failed to write model structure to file");
     println!("  Model structure saved");
 
     // Load test data from PyTorch file
-    println!("\nLoading test data from artifacts/test_data.pt...");
+    let test_data_path = artifacts_dir.join("test_data.pt");
+    println!("\nLoading test data from {}...", test_data_path.display());
     let start = Instant::now();
     let mut test_data = TestData::<MyBackend>::new(&device);
-    let mut store = PytorchStore::from_file("artifacts/test_data.pt");
+    let mut store = PytorchStore::from_file(&test_data_path);
     test_data.load_from(&mut store).expect("Failed to load test data");
     let load_time = start.elapsed();
     println!("  Data loaded in {:.2?}", load_time);

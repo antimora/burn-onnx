@@ -21,6 +21,22 @@ from pathlib import Path
 import argparse
 
 
+def get_artifacts_dir():
+    """Get platform-specific cache directory for model artifacts."""
+    env_dir = os.environ.get("BURN_CACHE_DIR")
+    if env_dir:
+        base = Path(env_dir)
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Caches" / "burn-onnx"
+    else:
+        xdg = os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+        base = Path(xdg) / "burn-onnx"
+    d = base / "model-checks" / "albert"
+    d.mkdir(parents=True, exist_ok=True)
+    print(f"Artifacts directory: {d}")
+    return d
+
+
 # Supported ALBERT models configuration
 SUPPORTED_MODELS = {
     'albert-base-v2': {
@@ -182,8 +198,7 @@ def main():
     print("=" * 60)
 
     # Setup paths
-    artifacts_dir = Path("artifacts")
-    artifacts_dir.mkdir(exist_ok=True)
+    artifacts_dir = get_artifacts_dir()
 
     original_path = artifacts_dir / f"{model_name}.onnx"
     processed_path = artifacts_dir / f"{model_name}_opset16.onnx"

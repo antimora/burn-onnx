@@ -3,7 +3,7 @@ extern crate alloc;
 use burn::prelude::*;
 use serde::Deserialize;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(feature = "wgpu")]
 pub type MyBackend = burn::backend::Wgpu;
@@ -74,15 +74,27 @@ fn run_test_case(
     (passed, actual_output, expected_output)
 }
 
+fn artifacts_dir() -> PathBuf {
+    let base = match std::env::var("BURN_CACHE_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => dirs::cache_dir()
+            .expect("could not determine cache directory")
+            .join("burn-onnx"),
+    };
+    base.join("model-checks").join("silero-vad")
+}
+
 fn main() {
     println!("========================================");
     println!("Silero VAD Model Test Suite");
     println!("========================================\n");
 
+    let artifacts_dir = artifacts_dir();
+    println!("Artifacts directory: {}", artifacts_dir.display());
+
     // Check if artifacts exist
-    let artifacts_dir = Path::new("artifacts");
     if !artifacts_dir.exists() {
-        eprintln!("Error: artifacts directory not found!");
+        eprintln!("Error: artifacts directory not found at '{}'!", artifacts_dir.display());
         eprintln!("Please run get_model.py first to download the model.");
         eprintln!("Example: uv run get_model.py");
         std::process::exit(1);
