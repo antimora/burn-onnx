@@ -116,8 +116,10 @@ impl NodeCodegen for onnx_ir::scatter_elements::ScatterElementsNode {
                                 let coord = remaining / idx_strides[d];
                                 remaining %= idx_strides[d];
                                 if d == dim {
+                                    let dim_size = data_dims[d] as i64;
                                     let mut idx = indices_values[flat_idx];
-                                    if idx < 0 { idx += data_dims[d] as i64; }
+                                    if idx < 0 { idx += dim_size; }
+                                    assert!(idx >= 0 && idx < dim_size, "ScatterElements: index out of bounds");
                                     target_offset += idx as usize * data_strides[d];
                                 } else {
                                     target_offset += coord * data_strides[d];
@@ -205,7 +207,7 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r"
+        assert_snapshot!(code, @r#"
         pub fn forward(
             &self,
             data: Tensor<B, 2>,
@@ -240,10 +242,15 @@ mod tests {
                         let coord = remaining / idx_strides[d];
                         remaining %= idx_strides[d];
                         if d == dim {
+                            let dim_size = data_dims[d] as i64;
                             let mut idx = indices_values[flat_idx];
                             if idx < 0 {
-                                idx += data_dims[d] as i64;
+                                idx += dim_size;
                             }
+                            assert!(
+                                idx >= 0 && idx < dim_size,
+                                "ScatterElements: index out of bounds"
+                            );
                             target_offset += idx as usize * data_strides[d];
                         } else {
                             target_offset += coord * data_strides[d];
@@ -261,7 +268,7 @@ mod tests {
             };
             output
         }
-        ");
+        "#);
     }
 
     #[test]
@@ -275,7 +282,7 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r"
+        assert_snapshot!(code, @r#"
         pub fn forward(
             &self,
             data: Tensor<B, 2>,
@@ -310,10 +317,15 @@ mod tests {
                         let coord = remaining / idx_strides[d];
                         remaining %= idx_strides[d];
                         if d == dim {
+                            let dim_size = data_dims[d] as i64;
                             let mut idx = indices_values[flat_idx];
                             if idx < 0 {
-                                idx += data_dims[d] as i64;
+                                idx += dim_size;
                             }
+                            assert!(
+                                idx >= 0 && idx < dim_size,
+                                "ScatterElements: index out of bounds"
+                            );
                             target_offset += idx as usize * data_strides[d];
                         } else {
                             target_offset += coord * data_strides[d];
@@ -330,7 +342,7 @@ mod tests {
             };
             output
         }
-        ");
+        "#);
     }
 
     #[test]
@@ -344,7 +356,7 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r"
+        assert_snapshot!(code, @r#"
         pub fn forward(
             &self,
             data: Tensor<B, 2>,
@@ -379,10 +391,15 @@ mod tests {
                         let coord = remaining / idx_strides[d];
                         remaining %= idx_strides[d];
                         if d == dim {
+                            let dim_size = data_dims[d] as i64;
                             let mut idx = indices_values[flat_idx];
                             if idx < 0 {
-                                idx += data_dims[d] as i64;
+                                idx += dim_size;
                             }
+                            assert!(
+                                idx >= 0 && idx < dim_size,
+                                "ScatterElements: index out of bounds"
+                            );
                             target_offset += idx as usize * data_strides[d];
                         } else {
                             target_offset += coord * data_strides[d];
@@ -399,7 +416,7 @@ mod tests {
             };
             output
         }
-        ");
+        "#);
     }
 
     #[test]
@@ -440,7 +457,7 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r"
+        assert_snapshot!(code, @r#"
         pub fn forward(
             &self,
             data: Tensor<B, 1, Bool>,
@@ -475,10 +492,15 @@ mod tests {
                         let coord = remaining / idx_strides[d];
                         remaining %= idx_strides[d];
                         if d == dim {
+                            let dim_size = data_dims[d] as i64;
                             let mut idx = indices_values[flat_idx];
                             if idx < 0 {
-                                idx += data_dims[d] as i64;
+                                idx += dim_size;
                             }
+                            assert!(
+                                idx >= 0 && idx < dim_size,
+                                "ScatterElements: index out of bounds"
+                            );
                             target_offset += idx as usize * data_strides[d];
                         } else {
                             target_offset += coord * data_strides[d];
@@ -492,7 +514,7 @@ mod tests {
             };
             output
         }
-        ");
+        "#);
     }
 
     #[test]
