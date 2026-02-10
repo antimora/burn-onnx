@@ -17,6 +17,10 @@ pub struct ModelCheckArgs {
     #[arg(long)]
     pub debug: bool,
 
+    /// Stop at the first model failure instead of continuing.
+    #[arg(long)]
+    pub fail_fast: bool,
+
     #[command(subcommand)]
     pub command: Option<ModelCheckSubCommand>,
 }
@@ -129,7 +133,7 @@ fn build(model: &ModelInfo, features: &str, release: bool) -> anyhow::Result<()>
     )
 }
 
-fn run(model: &ModelInfo, features: &str, release: bool) -> anyhow::Result<()> {
+fn run_model(model: &ModelInfo, features: &str, release: bool) -> anyhow::Result<()> {
     let dir = model_dir(model);
     let envs = model_envs(model);
     let args = cargo_args("run", features, release);
@@ -141,6 +145,24 @@ fn run(model: &ModelInfo, features: &str, release: bool) -> anyhow::Result<()> {
         Some(&dir),
         &format!("Failed to run {} model check", model.name),
     )
+}
+
+fn run_one(
+    model: &ModelInfo,
+    subcmd: &ModelCheckSubCommand,
+    features: &str,
+    release: bool,
+) -> anyhow::Result<()> {
+    match subcmd {
+        ModelCheckSubCommand::Download => download(model),
+        ModelCheckSubCommand::Build => build(model, features, release),
+        ModelCheckSubCommand::Run => run_model(model, features, release),
+        ModelCheckSubCommand::All => {
+            download(model)?;
+            build(model, features, release)?;
+            run_model(model, features, release)
+        }
+    }
 }
 
 pub fn handle_command(args: ModelCheckArgs) -> anyhow::Result<()> {
@@ -166,22 +188,35 @@ pub fn handle_command(args: ModelCheckArgs) -> anyhow::Result<()> {
         None => MODELS.iter().collect(),
     };
 
+    let mut failed: Vec<&str> = Vec::new();
+
     for model in &models {
-        match &subcmd {
-            ModelCheckSubCommand::Download => download(model)?,
-            ModelCheckSubCommand::Build => build(model, features, release)?,
-            ModelCheckSubCommand::Run => run(model, features, release)?,
-            ModelCheckSubCommand::All => {
-                download(model)?;
-                build(model, features, release)?;
-                run(model, features, release)?;
+        if let Err(e) = run_one(model, &subcmd, features, release) {
+            error!("\x1B[31;1m{} failed: {}\x1B[0m", model.name, e);
+            if args.fail_fast {
+                return Err(e);
             }
+            failed.push(model.name);
         }
     }
 
-    info!(
-        "\x1B[32;1mModel check completed for {} model(s)\x1B[0m",
-        models.len()
-    );
+    // Summary
+    let passed = models.len() - failed.len();
+    if failed.is_empty() {
+        info!(
+            "\x1B[32;1mAll {} model(s) passed\x1B[0m",
+            models.len()
+        );
+    } else {
+        error!(
+            "\x1B[31;1m{}/{} passed, {} failed: {}\x1B[0m",
+            passed,
+            models.len(),
+            failed.len(),
+            failed.join(", ")
+        );
+        anyhow::bail!("{} model check(s) failed", failed.len());
+    }
+
     Ok(())
 }
