@@ -15,6 +15,9 @@ def get_artifacts_dir(model_name: str) -> Path:
         base = Path(env_dir)
     elif sys.platform == "darwin":
         base = Path.home() / "Library" / "Caches" / "burn-onnx"
+    elif sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
+        base = Path(local) / "burn-onnx"
     else:
         xdg = os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
         base = Path(xdg) / "burn-onnx"
