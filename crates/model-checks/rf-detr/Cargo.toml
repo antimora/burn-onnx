@@ -12,18 +12,13 @@ burn-store = { git = "https://github.com/tracel-ai/burn", default-features = fal
 
 [features]
 default = ["ndarray"]
-ndarray = []
-tch = []
-wgpu = []
-metal = []
+ndarray = ["burn/ndarray"]
+tch = ["burn/tch"]
+wgpu = ["burn/wgpu"]
+metal = ["burn/metal"]
 
 [dependencies]
-burn = { workspace = true, features = [
-    "ndarray",
-    "tch",
-    "wgpu",
-    "metal",
-] }
+burn = { workspace = true }
 burn-store = { workspace = true, features = ["std", "burnpack", "pytorch"] }
 dirs = "6"
 
