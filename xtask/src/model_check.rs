@@ -9,6 +9,14 @@ pub struct ModelCheckArgs {
     #[arg(long)]
     pub model: Option<String>,
 
+    /// Cargo features to pass (default: ndarray).
+    #[arg(long, default_value = "ndarray")]
+    pub features: String,
+
+    /// Build in debug mode instead of release.
+    #[arg(long)]
+    pub debug: bool,
+
     #[command(subcommand)]
     pub command: Option<ModelCheckSubCommand>,
 }
@@ -87,6 +95,14 @@ fn model_envs(model: &ModelInfo) -> Option<HashMap<&str, &str>> {
     })
 }
 
+fn cargo_args<'a>(base: &'a str, features: &'a str, release: bool) -> Vec<&'a str> {
+    let mut args = vec![base, "--no-default-features", "--features", features];
+    if release {
+        args.push("--release");
+    }
+    args
+}
+
 fn download(model: &ModelInfo) -> anyhow::Result<()> {
     let dir = model_dir(model);
     info!("Downloading {} artifacts...", model.name);
@@ -99,40 +115,38 @@ fn download(model: &ModelInfo) -> anyhow::Result<()> {
     )
 }
 
-fn build(model: &ModelInfo) -> anyhow::Result<()> {
+fn build(model: &ModelInfo, features: &str, release: bool) -> anyhow::Result<()> {
     let dir = model_dir(model);
     let envs = model_envs(model);
+    let args = cargo_args("build", features, release);
     info!("Building {}...", model.name);
     run_process(
         "cargo",
-        &["build"],
+        &args,
         envs,
         Some(&dir),
         &format!("Failed to build {} model check", model.name),
     )
 }
 
-fn run(model: &ModelInfo) -> anyhow::Result<()> {
+fn run(model: &ModelInfo, features: &str, release: bool) -> anyhow::Result<()> {
     let dir = model_dir(model);
     let envs = model_envs(model);
+    let args = cargo_args("run", features, release);
     info!("Running {}...", model.name);
     run_process(
         "cargo",
-        &["run"],
+        &args,
         envs,
         Some(&dir),
         &format!("Failed to run {} model check", model.name),
     )
 }
 
-fn all(model: &ModelInfo) -> anyhow::Result<()> {
-    download(model)?;
-    build(model)?;
-    run(model)
-}
-
 pub fn handle_command(args: ModelCheckArgs) -> anyhow::Result<()> {
     let subcmd = args.command.unwrap_or(ModelCheckSubCommand::All);
+    let features = &args.features;
+    let release = !args.debug;
 
     let models: Vec<&ModelInfo> = match &args.model {
         Some(name) => {
@@ -152,15 +166,17 @@ pub fn handle_command(args: ModelCheckArgs) -> anyhow::Result<()> {
         None => MODELS.iter().collect(),
     };
 
-    let action = match &subcmd {
-        ModelCheckSubCommand::Download => download as fn(&ModelInfo) -> _,
-        ModelCheckSubCommand::Build => build,
-        ModelCheckSubCommand::Run => run,
-        ModelCheckSubCommand::All => all,
-    };
-
     for model in &models {
-        action(model)?;
+        match &subcmd {
+            ModelCheckSubCommand::Download => download(model)?,
+            ModelCheckSubCommand::Build => build(model, features, release)?,
+            ModelCheckSubCommand::Run => run(model, features, release)?,
+            ModelCheckSubCommand::All => {
+                download(model)?;
+                build(model, features, release)?;
+                run(model, features, release)?;
+            }
+        }
     }
 
     info!(
