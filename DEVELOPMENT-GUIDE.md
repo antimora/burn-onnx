@@ -736,6 +736,68 @@ This design provides:
 - **Single source of truth**: Both enums are guaranteed to stay in sync
 - **Pattern matching**: Easy to match on specific operations and access their configuration
 
+## Model Checks
+
+The `crates/model-checks/` directory contains real-world model validation tests. Each subdirectory is
+a standalone crate that downloads a model, generates Burn code from it, and runs inference to verify
+correctness.
+
+### Running Model Checks
+
+Use the `model-check` xtask command:
+
+```sh
+# Run all models (download + build + run, ndarray backend, release mode)
+cargo xtask model-check
+
+# Single model
+cargo xtask model-check --model silero-vad
+
+# Subcommands: download, build, run, all (default)
+cargo xtask model-check --model silero-vad build
+
+# Select backend
+cargo xtask model-check --features tch
+
+# Debug build
+cargo xtask model-check --model silero-vad --debug
+
+# Stop on first failure (default: continue and report summary)
+cargo xtask model-check --fail-fast
+```
+
+### Available Models
+
+| Model | Directory | Notes |
+|---|---|---|
+| Silero VAD | `silero-vad` | Voice activity detection |
+| all-MiniLM-L6-v2 | `all-minilm-l6-v2` | Sentence embeddings |
+| CLIP ViT-B-32 text | `clip-vit-b-32-text` | Text encoder |
+| CLIP ViT-B-32 vision | `clip-vit-b-32-vision` | Vision encoder |
+| ModernBERT-base | `modernbert-base` | Language model |
+| RF-DETR Small | `rf-detr` | Object detection |
+| ALBERT | `albert` | Language model (requires Python 3.11) |
+| YOLO v8n | `yolo` | Object detection |
+
+### Model Artifacts
+
+Model artifacts (ONNX files, test data) are stored in the platform cache directory:
+
+- macOS: `~/Library/Caches/burn-onnx/model-checks/<model-name>/`
+- Linux: `~/.cache/burn-onnx/model-checks/<model-name>/`
+
+Set `BURN_CACHE_DIR` to override the base cache path (useful for CI).
+
+### Adding a New Model Check
+
+1. Create a new directory under `crates/model-checks/<model-name>/`
+2. Add `Cargo.toml` with `[workspace]` (standalone), `burn` and `burn-store` dependencies, and
+   backend feature flags forwarding to `burn/<backend>`
+3. Add `get_model.py` (uv script format) to download and prepare the ONNX model
+4. Add `build.rs` to generate Burn code from the ONNX model via `ModelGen`
+5. Add `src/main.rs` to load the model, run inference, and compare against reference outputs
+6. Register the model in `xtask/src/model_check.rs` in the `MODELS` array
+
 ## Resources
 
 1. [PyTorch to ONNX](https://pytorch.org/docs/stable/onnx.html)
