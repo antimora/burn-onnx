@@ -132,6 +132,7 @@ pub mod space_to_depth;
 pub mod split;
 pub mod sqrt;
 pub mod squeeze;
+pub mod swish;
 pub mod sub;
 pub mod subgraph;
 pub mod sum;
