@@ -38,10 +38,30 @@ fn pad(graph: &OnnxGraph) {
     "#);
 }
 
-/// Ops that require min_opset > 2: Split
-#[test]
-fn unsupported_ops_fail() {
-    let result = load_model_result("opset_02_unsupported.onnx");
-    assert!(result.is_err(), "expected parse failure for unsupported ops at opset 2");
+#[rstest]
+fn split(graph: &OnnxGraph) {
+    let node = find_node(graph, "split");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Split "split1"
+      Inputs:
+        split_input: F32[2, 6]
+      Outputs:
+        split1_out1: F32[2, 3]
+        split1_out2: F32[2, 3]
+      Config:
+        SplitConfig {
+            axis: 1,
+            split_size: None,
+            split_sizes: Some(
+                Static(
+                    [
+                        3,
+                        3,
+                    ],
+                ),
+            ),
+            num_outputs: None,
+        }
+    "#);
 }
 

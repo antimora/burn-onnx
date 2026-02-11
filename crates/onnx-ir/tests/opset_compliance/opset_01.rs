@@ -1174,6 +1174,49 @@ fn size(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn slice(graph: &OnnxGraph) {
+    let node = find_node(graph, "slice");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Slice "slice1"
+      Inputs:
+        slice_input: F32[4, 6]
+      Outputs:
+        slice1_out1: F32[4, 6]
+      Config:
+        SliceConfig {
+            starts: Static(
+                [
+                    0,
+                    1,
+                ],
+            ),
+            ends: Static(
+                [
+                    2,
+                    4,
+                ],
+            ),
+            axes: Some(
+                Static(
+                    [
+                        0,
+                        1,
+                    ],
+                ),
+            ),
+            steps: Some(
+                Static(
+                    [
+                        1,
+                        1,
+                    ],
+                ),
+            ),
+        }
+    "#);
+}
+
+#[rstest]
 fn softplus(graph: &OnnxGraph) {
     let node = find_node(graph, "softplus");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -1332,7 +1375,7 @@ fn xor_op(graph: &OnnxGraph) {
     "#);
 }
 
-/// Ops that require min_opset > 1: Add, AveragePool, BatchNormalization, Div, Equal, Gemm, Greater, Hardmax, Less, LogSoftmax, Mean, Mul, Pad, Slice, Softmax, Split, Sub, Sum, Tile
+/// Ops that require min_opset > 1: Add, AveragePool, BatchNormalization, Div, Equal, Gemm, Greater, Hardmax, Less, LogSoftmax, Mean, Mul, Pad, Softmax, Split, Sub, Sum, Tile
 #[test]
 fn unsupported_ops_fail() {
     let result = load_model_result("opset_01_unsupported.onnx");

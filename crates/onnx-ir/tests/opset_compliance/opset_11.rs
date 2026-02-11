@@ -1021,15 +1021,20 @@ fn split(graph: &OnnxGraph) {
       Inputs:
         split_input: F32[2, 6]
       Outputs:
-        split1_out1: F32[?, ?]
-        split1_out2: F32[?, ?]
+        split1_out1: F32[2, 3]
+        split1_out2: F32[2, 3]
       Config:
         SplitConfig {
             axis: 1,
-            split_size: Some(
-                3,
+            split_size: None,
+            split_sizes: Some(
+                Static(
+                    [
+                        3,
+                        3,
+                    ],
+                ),
             ),
-            split_sizes: None,
             num_outputs: None,
         }
     "#);
