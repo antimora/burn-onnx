@@ -235,4 +235,3 @@ fn trilu(graph: &OnnxGraph) {
         }
     "#);
 }
-

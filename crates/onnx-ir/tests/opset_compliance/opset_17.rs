@@ -29,4 +29,3 @@ fn layer_normalization(graph: &OnnxGraph) {
         }
     "#);
 }
-

@@ -451,4 +451,3 @@ fn size(graph: &OnnxGraph) {
         size1_out1: Scalar(I64)
     "#);
 }
-
