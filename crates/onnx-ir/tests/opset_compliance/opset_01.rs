@@ -479,6 +479,22 @@ fn hard_sigmoid(graph: &OnnxGraph) {
     "#);
 }
 
+#[rstest]
+fn hardmax(graph: &OnnxGraph) {
+    let node = find_node(graph, "hardmax");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Hardmax "hardmax1"
+      Inputs:
+        hardmax_input: F32[2, 3, 4]
+      Outputs:
+        hardmax1_out1: F32[2, 3, 4]
+      Config:
+        HardmaxConfig {
+            axis: 1,
+        }
+    "#);
+}
+
 /// Identity is eliminated during post-processing (no-op).
 /// Verify the model parses without error.
 #[test]
@@ -788,6 +804,22 @@ fn log(graph: &OnnxGraph) {
         log_input: F32[2, 3, 4]
       Outputs:
         log1_out1: F32[2, 3, 4]
+    "#);
+}
+
+#[rstest]
+fn log_softmax(graph: &OnnxGraph) {
+    let node = find_node(graph, "logsoftmax");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    LogSoftmax "logsoftmax1"
+      Inputs:
+        logsoftmax_input: F32[2, 3, 4]
+      Outputs:
+        logsoftmax1_out1: F32[2, 3, 4]
+      Config:
+        LogSoftmaxConfig {
+            axis: 1,
+        }
     "#);
 }
 
@@ -1360,6 +1392,22 @@ fn slice(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn softmax(graph: &OnnxGraph) {
+    let node = find_node(graph, "softmax");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Softmax "softmax1"
+      Inputs:
+        softmax_input: F32[2, 3, 4]
+      Outputs:
+        softmax1_out1: F32[2, 3, 4]
+      Config:
+        SoftmaxConfig {
+            axis: 1,
+        }
+    "#);
+}
+
+#[rstest]
 fn softplus(graph: &OnnxGraph) {
     let node = find_node(graph, "softplus");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -1571,7 +1619,7 @@ fn xor_op(graph: &OnnxGraph) {
     "#);
 }
 
-/// Ops that require min_opset > 1: BatchNormalization, Hardmax, LogSoftmax, Pad, Softmax, Tile
+/// Ops that require min_opset > 1: BatchNormalization, Pad, Tile
 #[test]
 fn unsupported_ops_fail() {
     let result = load_model_result("opset_01_unsupported.onnx");

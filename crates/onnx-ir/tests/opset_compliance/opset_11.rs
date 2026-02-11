@@ -367,6 +367,22 @@ fn gemm(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn hardmax(graph: &OnnxGraph) {
+    let node = find_node(graph, "hardmax");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Hardmax "hardmax1"
+      Inputs:
+        hardmax_input: F32[2, 3, 4]
+      Outputs:
+        hardmax1_out1: F32[2, 3, 4]
+      Config:
+        HardmaxConfig {
+            axis: 1,
+        }
+    "#);
+}
+
+#[rstest]
 fn if_op(graph: &OnnxGraph) {
     let node = find_node(graph, "if");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -578,6 +594,22 @@ fn if_op(graph: &OnnxGraph) {
                 ),
             },
             scope_ref_names: [],
+        }
+    "#);
+}
+
+#[rstest]
+fn log_softmax(graph: &OnnxGraph) {
+    let node = find_node(graph, "logsoftmax");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    LogSoftmax "logsoftmax1"
+      Inputs:
+        logsoftmax_input: F32[2, 3, 4]
+      Outputs:
+        logsoftmax1_out1: F32[2, 3, 4]
+      Config:
+        LogSoftmaxConfig {
+            axis: 1,
         }
     "#);
 }
@@ -1014,6 +1046,22 @@ fn slice(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn softmax(graph: &OnnxGraph) {
+    let node = find_node(graph, "softmax");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Softmax "softmax1"
+      Inputs:
+        softmax_input: F32[2, 3, 4]
+      Outputs:
+        softmax1_out1: F32[2, 3, 4]
+      Config:
+        SoftmaxConfig {
+            axis: 1,
+        }
+    "#);
+}
+
+#[rstest]
 fn split(graph: &OnnxGraph) {
     let node = find_node(graph, "split");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -1101,12 +1149,5 @@ fn unsqueeze(graph: &OnnxGraph) {
             ],
         )
     "#);
-}
-
-/// Ops that require min_opset > 11: Hardmax, LogSoftmax, Softmax
-#[test]
-fn unsupported_ops_fail() {
-    let result = load_model_result("opset_11_unsupported.onnx");
-    assert!(result.is_err(), "expected parse failure for unsupported ops at opset 11");
 }
 
