@@ -108,6 +108,9 @@ examples/
   `.clone()` when the tensor is used by multiple downstream nodes. If you also need the tensor twice
   within the same `forward()`, using `#input.clone()` in `quote!` may produce a double-clone in that
   case, which is acceptable
+- **Scope temporary variables in generated code**: When a node's codegen introduces temporary
+  variables (e.g., `indices`, intermediate tensors), wrap them in a block expression to avoid name
+  collisions with other nodes: `let #output = { let tmp = ...; tmp.op() };`
 - Use `quote!` macro for code generation
 - Add `insta` snapshot tests for ALL code generation branches - each config option, each input type
   variant, optional vs required inputs should have test coverage
