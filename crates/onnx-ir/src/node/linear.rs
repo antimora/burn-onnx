@@ -28,6 +28,7 @@
 //! - TODO: Test uses sum verification instead of exact values - Could miss subtle bugs in weight application
 
 use derive_new::new;
+use onnx_ir_derive::NodeBuilder;
 
 use crate::ir::{ArgType, Argument, AttributeValue, Node, RawNode, TensorType};
 use crate::processor::{
@@ -44,31 +45,12 @@ pub struct LinearConfig {
 }
 
 /// Node representation for Linear operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, NodeBuilder)]
 pub struct LinearNode {
     pub name: String,
     pub inputs: Vec<Argument>,
     pub outputs: Vec<Argument>,
     pub config: LinearConfig,
-}
-
-impl core::fmt::Display for LinearNode {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Linear {:?}\n", self.name)?;
-        write!(f, "  Inputs:\n")?;
-        for arg in &self.inputs {
-            write!(f, "    {arg}\n")?;
-        }
-        write!(f, "  Outputs:\n")?;
-        for arg in &self.outputs {
-            write!(f, "    {arg}\n")?;
-        }
-        write!(f, "  Config:\n")?;
-        for line in format!("{:#?}", self.config).lines() {
-            write!(f, "    {line}\n")?;
-        }
-        Ok(())
-    }
 }
 
 pub(crate) struct LinearProcessor;
