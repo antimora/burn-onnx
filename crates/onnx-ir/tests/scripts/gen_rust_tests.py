@@ -111,7 +111,7 @@ MIN_OPSET = {
     "Slice": 1,
     "Tile": 6,
     "Expand": 8,
-    "Pad": 2,
+    "Pad": 1,
     "Clip": 1,
     "Shape": 1,
     "Size": 1,

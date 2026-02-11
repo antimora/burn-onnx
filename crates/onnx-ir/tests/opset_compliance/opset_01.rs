@@ -969,6 +969,33 @@ fn p_relu(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn pad(graph: &OnnxGraph) {
+    let node = find_node(graph, "pad");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Pad "pad1"
+      Inputs:
+        pad_input: F32[2, 3]
+      Outputs:
+        pad1_out1: F32[2, 3]
+      Config:
+        PadConfig {
+            pads: Static(
+                [
+                    1,
+                    1,
+                    0,
+                    0,
+                ],
+            ),
+            constant_value: Static(
+                0.0,
+            ),
+            mode: Constant,
+        }
+    "#);
+}
+
+#[rstest]
 fn pow(graph: &OnnxGraph) {
     let node = find_node(graph, "pow");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -1619,7 +1646,7 @@ fn xor_op(graph: &OnnxGraph) {
     "#);
 }
 
-/// Ops that require min_opset > 1: BatchNormalization, Pad, Tile
+/// Ops that require min_opset > 1: BatchNormalization, Tile
 #[test]
 fn unsupported_ops_fail() {
     let result = load_model_result("opset_01_unsupported.onnx");
