@@ -103,9 +103,7 @@ pub fn node_builder_derive(input: TokenStream) -> TokenStream {
 
     // Derive the op name by stripping "Node" suffix (e.g. "AcosNode" -> "Acos")
     let node_name_str = node_name.to_string();
-    let op_name = node_name_str
-        .strip_suffix("Node")
-        .unwrap_or(&node_name_str);
+    let op_name = node_name_str.strip_suffix("Node").unwrap_or(&node_name_str);
     let op_name_lit = syn::LitStr::new(op_name, node_name.span());
 
     let display_config = if has_config {
