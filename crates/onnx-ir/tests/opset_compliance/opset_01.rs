@@ -1694,4 +1694,3 @@ fn xor_op(graph: &OnnxGraph) {
         xor1_out1: Bool[2, 3, 4]
     "#);
 }
-
