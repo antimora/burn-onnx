@@ -109,7 +109,7 @@ MIN_OPSET = {
     "GatherElements": 11,
     "GatherND": 11,
     "Slice": 1,
-    "Tile": 6,
+    "Tile": 1,
     "Expand": 8,
     "Pad": 1,
     "Clip": 1,

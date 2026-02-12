@@ -456,9 +456,14 @@ def make_slice_op(op_name: str, opset: int):
 def make_tile(op_name: str, opset: int):
     inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [2, 3])
     out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
-    repeats = numpy_helper.from_array(np.array([2, 3], dtype=np.int64), name=_p(op_name, "repeats"))
-    node = helper.make_node(op_name, [_p(op_name, "input"), _p(op_name, "repeats")], [_p(op_name, "output")], name=_p(op_name, "node"))
-    return [node], [inp], [out], [repeats]
+    if opset >= 6:
+        repeats = numpy_helper.from_array(np.array([2, 3], dtype=np.int64), name=_p(op_name, "repeats"))
+        node = helper.make_node(op_name, [_p(op_name, "input"), _p(op_name, "repeats")], [_p(op_name, "output")], name=_p(op_name, "node"))
+        return [node], [inp], [out], [repeats]
+    else:
+        # Opset 1: repeats is an attribute (tiles/repeats)
+        node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"), repeats=[2, 3])
+        return [node], [inp], [out], []
 
 
 def make_expand(op_name: str, opset: int):

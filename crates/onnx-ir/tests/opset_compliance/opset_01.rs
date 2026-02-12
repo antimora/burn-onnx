@@ -1602,6 +1602,27 @@ fn tanh(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn tile(graph: &OnnxGraph) {
+    let node = find_node(graph, "tile");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Tile "tile1"
+      Inputs:
+        tile_input: F32[2, 3]
+      Outputs:
+        tile1_out1: F32[2, 3]
+      Config:
+        TileConfig {
+            repeats: Static(
+                [
+                    2,
+                    3,
+                ],
+            ),
+        }
+    "#);
+}
+
+#[rstest]
 fn top_k(graph: &OnnxGraph) {
     let node = find_node(graph, "topk");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -1671,12 +1692,5 @@ fn xor_op(graph: &OnnxGraph) {
       Outputs:
         xor1_out1: Bool[2, 3, 4]
     "#);
-}
-
-/// Ops that require min_opset > 1: Tile
-#[test]
-fn unsupported_ops_fail() {
-    let result = load_model_result("opset_01_unsupported.onnx");
-    assert!(result.is_err(), "expected parse failure for unsupported ops at opset 1");
 }
 
