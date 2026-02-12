@@ -41,10 +41,7 @@ mod tests {
             ],
             &device,
         );
-        let indices = Tensor::<TestBackend, 2, Int>::from_ints(
-            [[0, 2, 1], [2, 0, 0]],
-            &device,
-        );
+        let indices = Tensor::<TestBackend, 2, Int>::from_ints([[0, 2, 1], [2, 0, 0]], &device);
         let output = model.forward(data, indices);
 
         let expected = TensorData::from([
@@ -78,10 +75,7 @@ mod tests {
             &device,
         );
         let indices = Tensor::<TestBackend, 3, Int>::from_ints(
-            [
-                [[0, 2, 0, 2], [2, 0, 0, 2]],
-                [[1, 0, 1, 1], [1, 0, 1, 0]],
-            ],
+            [[[0, 2, 0, 2], [2, 0, 0, 2]], [[1, 0, 1, 1], [1, 0, 1, 0]]],
             &device,
         );
         let output = model.forward(data, indices);

@@ -32,12 +32,7 @@ mod tests {
         let input: Tensor<TestBackend, 1, Int> = Tensor::from_ints([0, 2, 3], &device);
         let output: Tensor<TestBackend, 2, Int> = model.forward(input);
 
-        let expected = TensorData::from([
-            [1i64, 0, 0],
-            [0, 0, 0],
-            [0, 1, 0],
-            [0, 0, 1],
-        ]);
+        let expected = TensorData::from([[1i64, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 1]]);
 
         output.to_data().assert_eq(&expected, true);
     }

@@ -83,8 +83,16 @@ mod tests {
 
         // np.random.seed(42); np.random.randn(8).astype(np.float32)
         let input = Tensor::<TestBackend, 1>::from_floats(
-            [0.49671414, -0.1382643, 0.64768857, 1.5230298, -0.23415338, -0.23413695, 1.5792128,
-                0.7674347],
+            [
+                0.49671414,
+                -0.1382643,
+                0.64768857,
+                1.5230298,
+                -0.23415338,
+                -0.23413695,
+                1.5792128,
+                0.7674347,
+            ],
             &device,
         );
         let (values, indices) = model.forward(input);
@@ -132,10 +140,8 @@ mod tests {
                 [-0.2257763, -1.0128311, 0.31424734],
             ],
         ]);
-        let expected_indices = TensorData::from([
-            [[2i64, 2, 0], [1, 0, 1]],
-            [[0, 3, 2], [3, 1, 1]],
-        ]);
+        let expected_indices =
+            TensorData::from([[[2i64, 2, 0], [1, 0, 1]], [[0, 3, 2], [3, 1, 1]]]);
 
         values.to_data().assert_eq(&expected_values, true);
         indices.to_data().assert_eq(&expected_indices, true);
@@ -159,15 +165,18 @@ mod tests {
         let (values, indices) = model.forward(input);
 
         let expected_values = TensorData::from([
-            [1.5230298f32, 0.64768857, 0.49671414, -0.1382643, -0.23415338],
+            [
+                1.5230298f32,
+                0.64768857,
+                0.49671414,
+                -0.1382643,
+                -0.23415338,
+            ],
             [1.5792128, 0.7674347, 0.54256004, -0.23413695, -0.46947438],
             [0.24196227, -0.46341768, -0.46572974, -1.7249179, -1.9132802],
         ]);
-        let expected_indices = TensorData::from([
-            [3i64, 2, 0, 1, 4],
-            [1, 2, 4, 0, 3],
-            [2, 0, 1, 4, 3],
-        ]);
+        let expected_indices =
+            TensorData::from([[3i64, 2, 0, 1, 4], [1, 2, 4, 0, 3], [2, 0, 1, 4, 3]]);
 
         values.to_data().assert_eq(&expected_values, true);
         indices.to_data().assert_eq(&expected_indices, true);
@@ -208,7 +217,13 @@ mod tests {
         let expected_values = TensorData::from([
             [
                 [0.49671414f32, 1.5792128, 0.7674347, 1.5230298, 0.54256004],
-                [-0.23413695, -0.1382643, 0.64768857, -0.46947438, -0.23415338],
+                [
+                    -0.23413695,
+                    -0.1382643,
+                    0.64768857,
+                    -0.46947438,
+                    -0.23415338,
+                ],
             ],
             [
                 [1.4656488, 1.8522782, 0.37569803, -0.6006387, 0.82254493],

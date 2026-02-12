@@ -1,6 +1,11 @@
 // Import the shared macro
 use crate::include_models;
-include_models!(layer_norm, layer_norm_no_bias, layer_norm_custom_epsilon, layer_norm_4d);
+include_models!(
+    layer_norm,
+    layer_norm_no_bias,
+    layer_norm_custom_epsilon,
+    layer_norm_4d
+);
 
 #[cfg(test)]
 mod tests {
@@ -50,8 +55,7 @@ mod tests {
     fn layer_norm_no_bias() {
         // LayerNorm without bias (2 inputs: X + scale only)
         let device = Default::default();
-        let model: layer_norm_no_bias::Model<TestBackend> =
-            layer_norm_no_bias::Model::default();
+        let model: layer_norm_no_bias::Model<TestBackend> = layer_norm_no_bias::Model::default();
 
         let input = Tensor::<TestBackend, 3>::from_floats(
             [
