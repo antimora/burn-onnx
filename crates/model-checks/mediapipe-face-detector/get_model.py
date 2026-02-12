@@ -99,12 +99,12 @@ def generate_test_data(model_path, output_path):
     feed = {input_info.name: test_input}
     results = session.run(None, feed)
 
-    # Save as PyTorch tensors
+    # Save as PyTorch tensors with semantic names matching the ONNX outputs
+    output_names = [out.name for out in outputs]
     test_data = {"input": torch.from_numpy(test_input)}
-    for i, result in enumerate(results):
-        key = f"output_{i}"
-        test_data[key] = torch.from_numpy(result)
-        print(f"  Output {i} shape: {result.shape}")
+    for name, result in zip(output_names, results):
+        test_data[name] = torch.from_numpy(result)
+        print(f"  {name} shape: {result.shape}")
 
     torch.save(test_data, output_path)
     print(f"  Test data saved to: {output_path}")

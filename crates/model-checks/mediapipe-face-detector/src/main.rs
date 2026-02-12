@@ -12,23 +12,23 @@ model_checks_common::backend_type!();
 include!(concat!(env!("OUT_DIR"), "/model/face_detector.rs"));
 
 /// Test data structure matching the PyTorch saved format.
-/// BlazeFace outputs two 3D tensors: regressors and classificators.
+/// BlazeFace outputs two 3D tensors: regressors and classifiers.
 #[derive(Debug, Module)]
 struct TestData<B: Backend> {
     input: Param<Tensor<B, 4>>,
-    output_0: Param<Tensor<B, 3>>,
-    output_1: Param<Tensor<B, 3>>,
+    /// Bounding box and keypoint regressors: [1, 896, 16]
+    regressors: Param<Tensor<B, 3>>,
+    /// Face confidence classifiers: [1, 896, 1]
+    classificators: Param<Tensor<B, 3>>,
 }
 
 impl<B: Backend> TestData<B> {
     fn new(device: &B::Device) -> Self {
         // BlazeFace Short Range: 128x128 NHWC input, 896 anchors
-        // output_0: [1, 896, 16] regressors (bbox + keypoints)
-        // output_1: [1, 896, 1] classificators (face confidence)
         Self {
             input: Initializer::Zeros.init([1, 128, 128, 3], device),
-            output_0: Initializer::Zeros.init([1, 896, 16], device),
-            output_1: Initializer::Zeros.init([1, 896, 1], device),
+            regressors: Initializer::Zeros.init([1, 896, 16], device),
+            classificators: Initializer::Zeros.init([1, 896, 1], device),
         }
     }
 }
@@ -94,21 +94,21 @@ fn main() {
     println!("  Input shape: {:?}", input_shape.dims);
 
     // Get reference outputs
-    let ref_0 = test_data.output_0.val();
-    let ref_1 = test_data.output_1.val();
-    println!("  Reference output_0 shape: {:?}", ref_0.shape().dims);
-    println!("  Reference output_1 shape: {:?}", ref_1.shape().dims);
+    let ref_regressors = test_data.regressors.val();
+    let ref_classifiers = test_data.classificators.val();
+    println!("  Reference regressors shape: {:?}", ref_regressors.shape().dims);
+    println!("  Reference classifiers shape: {:?}", ref_classifiers.shape().dims);
 
     // Run inference
     println!("\nRunning model inference...");
     let start = Instant::now();
-    let (out_0, out_1) = model.forward(input);
+    let (out_regressors, out_classifiers) = model.forward(input);
     let inference_time = start.elapsed();
     println!("  Inference completed in {:.2?}", inference_time);
 
     println!("\nModel outputs:");
-    println!("  output_0 shape: {:?}", out_0.shape().dims);
-    println!("  output_1 shape: {:?}", out_1.shape().dims);
+    println!("  regressors shape: {:?}", out_regressors.shape().dims);
+    println!("  classifiers shape: {:?}", out_classifiers.shape().dims);
 
     // Compare outputs
     println!("\nComparing outputs with reference data...");
@@ -116,8 +116,8 @@ fn main() {
     let mut all_passed = true;
 
     for (name, output, reference) in [
-        ("output_0 (regressors)", out_0, ref_0),
-        ("output_1 (classificators)", out_1, ref_1),
+        ("regressors", out_regressors, ref_regressors),
+        ("classifiers", out_classifiers, ref_classifiers),
     ] {
         print!("\n  Checking {name}:");
         if output

@@ -9,7 +9,7 @@ in [tracel-ai/burn#1370](https://github.com/tracel-ai/burn/issues/1370).
 - **Input**: `[1, 128, 128, 3]` (NHWC image)
 - **Outputs**:
   - `regressors`: `[1, 896, 16]` (bounding box + keypoint regressions)
-  - `classificators`: `[1, 896, 1]` (face confidence scores)
+  - `classifiers`: `[1, 896, 1]` (face confidence scores)
 
 ## Current Status
 

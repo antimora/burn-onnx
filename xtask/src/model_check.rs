@@ -42,6 +42,8 @@ struct ModelInfo {
     name: &'static str,
     /// Optional (env_var, default_value) for models with selectable variants.
     env: Option<(&'static str, &'static str)>,
+    /// Skipped in default "all" runs; still runnable with `--model <name>`.
+    blocked: bool,
 }
 
 const MODELS: &[ModelInfo] = &[
@@ -49,46 +51,56 @@ const MODELS: &[ModelInfo] = &[
         dir: "silero-vad",
         name: "Silero VAD",
         env: None,
+        blocked: false,
     },
     ModelInfo {
         dir: "all-minilm-l6-v2",
         name: "all-MiniLM-L6-v2",
         env: None,
+        blocked: false,
     },
     ModelInfo {
         dir: "clip-vit-b-32-text",
         name: "CLIP ViT-B-32 text",
         env: None,
+        blocked: false,
     },
     ModelInfo {
         dir: "clip-vit-b-32-vision",
         name: "CLIP ViT-B-32 vision",
         env: None,
+        blocked: false,
     },
     ModelInfo {
         dir: "modernbert-base",
         name: "ModernBERT-base",
         env: None,
+        blocked: false,
     },
     ModelInfo {
         dir: "rf-detr",
         name: "RF-DETR Small",
         env: None,
+        blocked: false,
     },
     ModelInfo {
         dir: "albert",
         name: "ALBERT",
         env: Some(("ALBERT_MODEL", "albert-base-v2")),
+        blocked: false,
     },
     ModelInfo {
         dir: "yolo",
         name: "YOLO",
         env: Some(("YOLO_MODEL", "yolov8n")),
+        blocked: false,
     },
+    // Blocked: needs channel-dimension Pad support (tracel-ai/burn#4507)
     ModelInfo {
         dir: "mediapipe-face-detector",
         name: "MediaPipe Face Detector",
         env: None,
+        blocked: true,
     },
 ];
 
@@ -190,7 +202,7 @@ pub fn handle_command(args: ModelCheckArgs) -> anyhow::Result<()> {
                 })?;
             vec![m]
         }
-        None => MODELS.iter().collect(),
+        None => MODELS.iter().filter(|m| !m.blocked).collect(),
     };
 
     let mut failed: Vec<&str> = Vec::new();
