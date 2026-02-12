@@ -105,30 +105,24 @@ impl NodeProcessor for TileProcessor {
     }
 
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
-        // Extract repeats config
+        // Extract repeats config (always an input, all opset versions)
         fn get_repeats(node: &RawNode) -> TileInput {
-            // Check for repeats input (opset 6+)
             if let Some(input) = node.inputs.get(1) {
                 match input.value() {
                     None => {
                         // Runtime input - store reference instead of cloning the argument
-                        return TileInput::Runtime(RuntimeInputRef::new(input.name.clone(), 1));
+                        TileInput::Runtime(RuntimeInputRef::new(input.name.clone(), 1))
                     }
                     Some(tensor_data) => {
                         let i64_values: Vec<i64> = tensor_data.to_vec().unwrap();
                         let repeats = i64_values.iter().map(|&x| x as usize).collect();
-                        return TileInput::Static(repeats);
+                        TileInput::Static(repeats)
                     }
                 }
+            } else {
+                // No repeats input provided - default to empty
+                TileInput::Static(vec![])
             }
-            // Check for repeats attribute (opset 1-5)
-            if let Some(attr) = node.attrs.get("repeats") {
-                let values = attr.clone().into_i64s();
-                let repeats = values.iter().map(|&x| x as usize).collect();
-                return TileInput::Static(repeats);
-            }
-            // No repeats provided - default to empty
-            TileInput::Static(vec![])
         }
 
         let repeats = get_repeats(node);

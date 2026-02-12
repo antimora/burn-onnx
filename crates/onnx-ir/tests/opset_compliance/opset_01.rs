@@ -544,106 +544,6 @@ fn if_op(graph: &OnnxGraph) {
                 nodes: [
                     Constant(
                         ConstantNode {
-                            name: "constant21",
-                            inputs: [
-                                Argument {
-                                    name: "",
-                                    ty: Tensor(
-                                        TensorType {
-                                            dtype: F32,
-                                            rank: 2,
-                                            static_shape: Some(
-                                                [
-                                                    Some(
-                                                        2,
-                                                    ),
-                                                    Some(
-                                                        3,
-                                                    ),
-                                                ],
-                                            ),
-                                        },
-                                    ),
-                                    value_source: Static(
-                                        0,
-                                    ),
-                                },
-                            ],
-                            outputs: [
-                                Argument {
-                                    name: "constant21_out1",
-                                    ty: Tensor(
-                                        TensorType {
-                                            dtype: F32,
-                                            rank: 2,
-                                            static_shape: Some(
-                                                [
-                                                    Some(
-                                                        2,
-                                                    ),
-                                                    Some(
-                                                        3,
-                                                    ),
-                                                ],
-                                            ),
-                                        },
-                                    ),
-                                    value_source: Constant,
-                                },
-                            ],
-                        },
-                    ),
-                ],
-                inputs: [],
-                outputs: [
-                    Argument {
-                        name: "constant21_out1",
-                        ty: Tensor(
-                            TensorType {
-                                dtype: F32,
-                                rank: 2,
-                                static_shape: Some(
-                                    [
-                                        Some(
-                                            2,
-                                        ),
-                                        Some(
-                                            3,
-                                        ),
-                                    ],
-                                ),
-                            },
-                        ),
-                        value_source: Constant,
-                    },
-                ],
-                value_store: Some(
-                    ValueStore {
-                        tensor_store: TensorStore {
-                            data: {
-                                0: TensorDataRef {
-                                    shape: [
-                                        2,
-                                        3,
-                                    ],
-                                    dtype: F32,
-                                    source: Embedded(
-                                        b"\0\0\x80?\0\0\x80?\0\0\x80?\0\0\x80?\0\0\x80?\0\0\x80?",
-                                    ),
-                                },
-                            },
-                            next_id: 1,
-                        },
-                        constant_map: {
-                            "constant21_out1": 0,
-                        },
-                    },
-                ),
-            },
-            else_branch: OnnxGraph {
-                nodes: [
-                    Constant(
-                        ConstantNode {
                             name: "constant22",
                             inputs: [
                                 Argument {
@@ -728,7 +628,7 @@ fn if_op(graph: &OnnxGraph) {
                                     ],
                                     dtype: F32,
                                     source: Embedded(
-                                        b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+                                        b"\0\0\x80?\0\0\x80?\0\0\x80?\0\0\x80?\0\0\x80?\0\0\x80?",
                                     ),
                                 },
                             },
@@ -736,6 +636,106 @@ fn if_op(graph: &OnnxGraph) {
                         },
                         constant_map: {
                             "constant22_out1": 0,
+                        },
+                    },
+                ),
+            },
+            else_branch: OnnxGraph {
+                nodes: [
+                    Constant(
+                        ConstantNode {
+                            name: "constant23",
+                            inputs: [
+                                Argument {
+                                    name: "",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 2,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                    Some(
+                                                        3,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Static(
+                                        0,
+                                    ),
+                                },
+                            ],
+                            outputs: [
+                                Argument {
+                                    name: "constant23_out1",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 2,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                    Some(
+                                                        3,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Constant,
+                                },
+                            ],
+                        },
+                    ),
+                ],
+                inputs: [],
+                outputs: [
+                    Argument {
+                        name: "constant23_out1",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 2,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                        Some(
+                                            3,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Constant,
+                    },
+                ],
+                value_store: Some(
+                    ValueStore {
+                        tensor_store: TensorStore {
+                            data: {
+                                0: TensorDataRef {
+                                    shape: [
+                                        2,
+                                        3,
+                                    ],
+                                    dtype: F32,
+                                    source: Embedded(
+                                        b"\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+                                    ),
+                                },
+                            },
+                            next_id: 1,
+                        },
+                        constant_map: {
+                            "constant23_out1": 0,
                         },
                     },
                 ),
@@ -1608,6 +1608,7 @@ fn tile(graph: &OnnxGraph) {
     Tile "tile1"
       Inputs:
         tile_input: F32[2, 3]
+        _: I64[2] [static(16)]
       Outputs:
         tile1_out1: F32[2, 3]
       Config:
@@ -1693,3 +1694,4 @@ fn xor_op(graph: &OnnxGraph) {
         xor1_out1: Bool[2, 3, 4]
     "#);
 }
+

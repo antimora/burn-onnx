@@ -339,6 +339,11 @@ impl NodeProcessor for SplitProcessor {
             // For opset < 13, split sizes are an attribute
             let sizes = split_attr.clone().into_i64s();
             if !sizes.is_empty() {
+                if sizes.iter().any(|&s| s < 0) {
+                    return Err(ProcessError::Custom(
+                        "Split: split sizes must be non-negative".to_string(),
+                    ));
+                }
                 let usizes: Vec<usize> = sizes.into_iter().map(|s| s as usize).collect();
 
                 if usizes.len() != node.outputs.len() {
