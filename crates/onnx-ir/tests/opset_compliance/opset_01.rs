@@ -115,6 +115,33 @@ fn average_pool(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn batch_normalization(graph: &OnnxGraph) {
+    let node = find_node(graph, "batchnormalization");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    BatchNormalization "batchnormalization1"
+      Inputs:
+        batchnormalization_input: F32[1, 3, 4, 4]
+        _: F32[3] [static(0)]
+        _: F32[3] [static(1)]
+        _: F32[3] [static(2)]
+        _: F32[3] [static(3)]
+      Outputs:
+        batchnormalization1_out1: F32[1, 3, 4, 4]
+        batchnormalization1_out2: Scalar(F32)
+        batchnormalization1_out3: Scalar(F32)
+        batchnormalization1_out4: Scalar(F32)
+        batchnormalization1_out5: Scalar(F32)
+      Config:
+        Static(
+            BatchNormStaticConfig {
+                epsilon: 0.0,
+                momentum: 0.0,
+            },
+        )
+    "#);
+}
+
+#[rstest]
 fn cast(graph: &OnnxGraph) {
     let node = find_node(graph, "cast");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -188,11 +215,11 @@ fn concat(graph: &OnnxGraph) {
 fn constant(graph: &OnnxGraph) {
     let node = find_node(graph, "constant");
     insta::assert_snapshot!(format!("{node}"), @r#"
-    Constant "constant5"
+    Constant "constant9"
       Inputs:
-        _: I64[2] [static(4)]
+        _: I64[2] [static(8)]
       Outputs:
-        constant5_out1: I64[2] [constant]
+        constant9_out1: I64[2] [constant]
     "#);
 }
 
@@ -203,7 +230,7 @@ fn conv(graph: &OnnxGraph) {
     Conv2d "conv2d1"
       Inputs:
         conv_input: F32[1, 3, 5, 5]
-        _: F32[2, 3, 3, 3] [static(0)]
+        _: F32[2, 3, 3, 3] [static(4)]
       Outputs:
         conv2d1_out1: F32[1, 2, 3, 3]
       Config:
@@ -234,7 +261,7 @@ fn conv_transpose(graph: &OnnxGraph) {
     ConvTranspose2d "convtranspose2d1"
       Inputs:
         convtranspose_input: F32[1, 3, 5, 5]
-        _: F32[3, 2, 3, 3] [static(1)]
+        _: F32[3, 2, 3, 3] [static(5)]
       Outputs:
         convtranspose2d1_out1: F32[1, 3, 5, 5]
       Config:
@@ -377,8 +404,8 @@ fn gru(graph: &OnnxGraph) {
     Gru "gru1"
       Inputs:
         gru_input: F32[1, 2, 3]
-        _: F32[1, 12, 3] [static(2)]
-        _: F32[1, 12, 4] [static(3)]
+        _: F32[1, 12, 3] [static(6)]
+        _: F32[1, 12, 4] [static(7)]
       Outputs:
         gru1_out1: F32[?, ?, ?, ?]
       Config:
@@ -406,7 +433,7 @@ fn gather(graph: &OnnxGraph) {
     Gather "gather1"
       Inputs:
         gather_input: F32[3, 4]
-        constant5_out1: I64[2] [constant]
+        constant9_out1: I64[2] [constant]
       Outputs:
         gather1_out1: F32[?, ?]
       Config:
@@ -423,8 +450,8 @@ fn gemm(graph: &OnnxGraph) {
     Gemm "gemm1"
       Inputs:
         gemm_a: F32[2, 3]
-        constant6_out1: F32[3, 4] [constant]
-        constant7_out1: F32[4] [constant]
+        constant10_out1: F32[3, 4] [constant]
+        constant11_out1: F32[4] [constant]
       Outputs:
         gemm1_out1: F32[?, ?]
       Config:
@@ -517,7 +544,7 @@ fn if_op(graph: &OnnxGraph) {
                 nodes: [
                     Constant(
                         ConstantNode {
-                            name: "constant17",
+                            name: "constant21",
                             inputs: [
                                 Argument {
                                     name: "",
@@ -544,7 +571,7 @@ fn if_op(graph: &OnnxGraph) {
                             ],
                             outputs: [
                                 Argument {
-                                    name: "constant17_out1",
+                                    name: "constant21_out1",
                                     ty: Tensor(
                                         TensorType {
                                             dtype: F32,
@@ -570,7 +597,7 @@ fn if_op(graph: &OnnxGraph) {
                 inputs: [],
                 outputs: [
                     Argument {
-                        name: "constant17_out1",
+                        name: "constant21_out1",
                         ty: Tensor(
                             TensorType {
                                 dtype: F32,
@@ -608,7 +635,7 @@ fn if_op(graph: &OnnxGraph) {
                             next_id: 1,
                         },
                         constant_map: {
-                            "constant17_out1": 0,
+                            "constant21_out1": 0,
                         },
                     },
                 ),
@@ -617,7 +644,7 @@ fn if_op(graph: &OnnxGraph) {
                 nodes: [
                     Constant(
                         ConstantNode {
-                            name: "constant18",
+                            name: "constant22",
                             inputs: [
                                 Argument {
                                     name: "",
@@ -644,7 +671,7 @@ fn if_op(graph: &OnnxGraph) {
                             ],
                             outputs: [
                                 Argument {
-                                    name: "constant18_out1",
+                                    name: "constant22_out1",
                                     ty: Tensor(
                                         TensorType {
                                             dtype: F32,
@@ -670,7 +697,7 @@ fn if_op(graph: &OnnxGraph) {
                 inputs: [],
                 outputs: [
                     Argument {
-                        name: "constant18_out1",
+                        name: "constant22_out1",
                         ty: Tensor(
                             TensorType {
                                 dtype: F32,
@@ -708,7 +735,7 @@ fn if_op(graph: &OnnxGraph) {
                             next_id: 1,
                         },
                         constant_map: {
-                            "constant18_out1": 0,
+                            "constant22_out1": 0,
                         },
                     },
                 ),
@@ -725,8 +752,8 @@ fn instance_normalization(graph: &OnnxGraph) {
     InstanceNormalization "instancenormalization1"
       Inputs:
         instancenormalization_input: F32[1, 3, 4, 4]
-        _: F32[3] [static(7)]
-        _: F32[3] [static(8)]
+        _: F32[3] [static(11)]
+        _: F32[3] [static(12)]
       Outputs:
         instancenormalization1_out1: F32[1, 3, 4, 4]
       Config:
@@ -743,8 +770,8 @@ fn lstm(graph: &OnnxGraph) {
     Lstm "lstm1"
       Inputs:
         lstm_input: F32[1, 2, 3]
-        _: F32[1, 16, 3] [static(9)]
-        _: F32[1, 16, 4] [static(10)]
+        _: F32[1, 16, 3] [static(13)]
+        _: F32[1, 16, 4] [static(14)]
       Outputs:
         lstm1_out1: F32[?, ?, ?, ?]
       Config:
@@ -962,7 +989,7 @@ fn p_relu(graph: &OnnxGraph) {
     PRelu "prelu1"
       Inputs:
         prelu_input: F32[2, 3, 4]
-        _: F32[1] [static(11)]
+        _: F32[1] [static(15)]
       Outputs:
         prelu1_out1: F32[2, 3, 4]
     "#);
@@ -1646,7 +1673,7 @@ fn xor_op(graph: &OnnxGraph) {
     "#);
 }
 
-/// Ops that require min_opset > 1: BatchNormalization, Tile
+/// Ops that require min_opset > 1: Tile
 #[test]
 fn unsupported_ops_fail() {
     let result = load_model_result("opset_01_unsupported.onnx");

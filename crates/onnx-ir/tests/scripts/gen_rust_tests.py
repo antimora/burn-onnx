@@ -131,7 +131,7 @@ MIN_OPSET = {
     "MaxPool": 1,
     "GlobalAveragePool": 1,
     # Normalization
-    "BatchNormalization": 9,
+    "BatchNormalization": 1,
     "InstanceNormalization": 1,
     "LayerNormalization": 17,
     "GroupNormalization": 18,

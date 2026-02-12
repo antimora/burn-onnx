@@ -37,6 +37,33 @@ fn add(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn batch_normalization(graph: &OnnxGraph) {
+    let node = find_node(graph, "batchnormalization");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    BatchNormalization "batchnormalization1"
+      Inputs:
+        batchnormalization_input: F32[1, 3, 4, 4]
+        _: F32[3] [static(0)]
+        _: F32[3] [static(1)]
+        _: F32[3] [static(2)]
+        _: F32[3] [static(3)]
+      Outputs:
+        batchnormalization1_out1: F32[1, 3, 4, 4]
+        batchnormalization1_out2: Scalar(F32)
+        batchnormalization1_out3: Scalar(F32)
+        batchnormalization1_out4: Scalar(F32)
+        batchnormalization1_out5: Scalar(F32)
+      Config:
+        Static(
+            BatchNormStaticConfig {
+                epsilon: 0.0,
+                momentum: 0.0,
+            },
+        )
+    "#);
+}
+
+#[rstest]
 fn cast(graph: &OnnxGraph) {
     let node = find_node(graph, "cast");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -156,8 +183,8 @@ fn gemm(graph: &OnnxGraph) {
     Gemm "gemm1"
       Inputs:
         gemm_a: F32[2, 3]
-        constant1_out1: F32[3, 4] [constant]
-        constant2_out1: F32[4] [constant]
+        constant5_out1: F32[3, 4] [constant]
+        constant6_out1: F32[4] [constant]
       Outputs:
         gemm1_out1: F32[?, ?]
       Config:
@@ -194,8 +221,8 @@ fn instance_normalization(graph: &OnnxGraph) {
     InstanceNormalization "instancenormalization1"
       Inputs:
         instancenormalization_input: F32[1, 3, 4, 4]
-        _: F32[3] [static(2)]
-        _: F32[3] [static(3)]
+        _: F32[3] [static(6)]
+        _: F32[3] [static(7)]
       Outputs:
         instancenormalization1_out1: F32[1, 3, 4, 4]
       Config:
@@ -304,7 +331,7 @@ fn p_relu(graph: &OnnxGraph) {
     PRelu "prelu1"
       Inputs:
         prelu_input: F32[2, 3, 4]
-        _: F32[1] [static(4)]
+        _: F32[1] [static(8)]
       Outputs:
         prelu1_out1: F32[2, 3, 4]
     "#);
@@ -420,7 +447,7 @@ fn tile(graph: &OnnxGraph) {
     Tile "tile1"
       Inputs:
         tile_input: F32[2, 3]
-        _: I64[2] [static(5)]
+        _: I64[2] [static(9)]
       Outputs:
         tile1_out1: F32[2, 3]
       Config:
@@ -433,12 +460,5 @@ fn tile(graph: &OnnxGraph) {
             ),
         }
     "#);
-}
-
-/// Ops that require min_opset > 6: BatchNormalization
-#[test]
-fn unsupported_ops_fail() {
-    let result = load_model_result("opset_06_unsupported.onnx");
-    assert!(result.is_err(), "expected parse failure for unsupported ops at opset 6");
 }
 
