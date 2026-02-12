@@ -238,12 +238,10 @@ impl NodeProcessor for SliceProcessor {
                 .map(|v| SliceInput::Static(v.clone().into_i64s()));
 
             // Apply default axes if not provided
-            if axes.is_none() {
-                if let SliceInput::Static(ref starts_vec) = starts {
-                    axes = Some(SliceInput::Static(
-                        (0..starts_vec.len() as i64).collect(),
-                    ));
-                }
+            if axes.is_none()
+                && let SliceInput::Static(ref starts_vec) = starts
+            {
+                axes = Some(SliceInput::Static((0..starts_vec.len() as i64).collect()));
             }
 
             // Normalize negative axes

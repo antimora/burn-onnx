@@ -148,4 +148,3 @@ fn reduce_min(graph: &OnnxGraph) {
         }
     "#);
 }
-

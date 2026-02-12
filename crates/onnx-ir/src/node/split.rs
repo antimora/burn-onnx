@@ -108,9 +108,13 @@ impl NodeProcessor for SplitProcessor {
                 .map(|sizes| sizes.into_iter().map(|s| s as usize).collect())
         } else {
             // For opset < 13, split sizes are an attribute
-            node.attrs
-                .get("split")
-                .map(|v| v.clone().into_i64s().into_iter().map(|s| s as usize).collect())
+            node.attrs.get("split").map(|v| {
+                v.clone()
+                    .into_i64s()
+                    .into_iter()
+                    .map(|s| s as usize)
+                    .collect()
+            })
         };
 
         // Infer output types - all outputs have the same rank and element type as input
