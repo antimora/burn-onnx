@@ -10,6 +10,8 @@
 
 **Import ONNX models into the [Burn](https://burn.dev) deep learning framework.**
 
+[Repository](https://github.com/tracel-ai/burn-onnx) | [Burn Repository](https://github.com/tracel-ai/burn)
+
 </div>
 
 ## Overview

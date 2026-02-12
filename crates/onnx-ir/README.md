@@ -1,5 +1,7 @@
 # ONNX-IR
 
+Part of the [burn-onnx](https://github.com/tracel-ai/burn-onnx) project.
+
 ONNX-IR is a pure Rust library for parsing ONNX models into an intermediate representation (IR) that
 can be used to generate code for various ML/DL frameworks. It's a core component of the Burn model
 import system, providing a clean abstraction layer between ONNX protobuf structures and Burn's
