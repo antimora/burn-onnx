@@ -85,6 +85,11 @@ const MODELS: &[ModelInfo] = &[
         name: "YOLO",
         env: Some(("YOLO_MODEL", "yolov8n")),
     },
+    ModelInfo {
+        dir: "mediapipe-face-detector",
+        name: "MediaPipe Face Detector",
+        env: None,
+    },
 ];
 
 fn model_dir(model: &ModelInfo) -> PathBuf {
