@@ -31,7 +31,10 @@ impl NodeCodegen for onnx_ir::where_op::WhereNode {
                 if let ArgType::Scalar(_) = &x_arg.ty {
                     let x_name = arg_to_ident(x_arg);
                     quote! {
-                        let #output = #y_tensor.mask_fill(#cond, #x_name);
+                        let #output = {
+                            let cond = #cond;
+                            #y_tensor.expand(cond.dims()).mask_fill(cond, #x_name)
+                        };
                     }
                 } else {
                     // x is tensor or shape - use mask_where
@@ -246,7 +249,10 @@ mod tests {
             x: f32,
             y: Tensor<B, 2>,
         ) -> Tensor<B, 2> {
-            let output = y.mask_fill(condition, x);
+            let output = {
+                let cond = condition;
+                y.expand(cond.dims()).mask_fill(cond, x)
+            };
             output
         }
         ");
