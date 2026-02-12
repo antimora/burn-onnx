@@ -1,5 +1,7 @@
 # onnx-ir-derive
 
+Part of the [burn-onnx](https://github.com/tracel-ai/burn-onnx) project.
+
 Derive macros for [onnx-ir](https://github.com/tracel-ai/burn-onnx/blob/main/crates/onnx-ir/README.md).
 
 ## Overview
