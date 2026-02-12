@@ -69,7 +69,7 @@ onnx-ir = { version = "...", default-features = false }
 
 ## ONNX Compatibility
 
-This library supports **all ONNX opset versions** (1 through 21) for every supported operator. Each
+This library supports **all ONNX opset versions** (1 through 24) for every supported operator. Each
 operator handles its full version history, including attribute-to-input migrations and
 opset-dependent defaults. The opset compliance test suite verifies 461 operator-version combinations.
 

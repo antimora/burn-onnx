@@ -14,7 +14,7 @@ For an introduction to ONNX import in Burn, see
 
 - Perform best-effort conversion of ONNX models to Rust source code via Burn APIs.
 - Convert ONNX model weights to Burn state files.
-- Support ONNX models from all opset versions (1 through 21) for every supported operator.
+- Support ONNX models from all opset versions (1 through 24) for every supported operator.
 - Produce easy-to-understand and modifiable models.
 - Ensure the generated models are trainable using Burn APIs.
 
