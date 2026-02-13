@@ -10,7 +10,7 @@
 //! - **Opset 18**: Added optional constant_value input as alternative to attribute.
 //! - **Opset 19**: Added antialiasing support for edge mode (not supported in this implementation).
 //!
-//! **Implementation Note**: This implementation requires opset 11+ and supports constant, reflect,
+//! **Implementation Note**: This implementation supports constant, reflect,
 //! and edge mode padding on arbitrary dimensions. The axes input (opset 13+) is explicitly rejected.
 //!
 //! TODO: Missing type constraint validation

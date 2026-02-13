@@ -206,8 +206,8 @@ fn forward_burn_attention(
     }
 }
 
-/// Fallback codegen for features not supported by burn's attention API:
-/// softcap, qk_matmul intermediate outputs, float/int attention masks.
+/// Fallback codegen for qk_matmul intermediate output, which is not
+/// supported by burn's attention API.
 fn forward_custom(
     node: &onnx_ir::attention::AttentionNode,
     scope: &mut ScopeAtPosition<'_>,
@@ -1178,6 +1178,109 @@ mod tests {
                 (output, present_k, present_v, qk_output)
             };
             (output, present_k, present_v, qk_output)
+        }
+        ");
+    }
+
+    #[test]
+    fn test_attention_with_int_mask() {
+        let config = AttentionConfig {
+            is_causal: false,
+            kv_num_heads: None,
+            q_num_heads: None,
+            qk_matmul_output_mode: AttentionQkMatmulOutputMode::Matmul,
+            scale: None,
+            softcap: 0.0,
+            softmax_precision: None,
+        };
+        let node = AttentionNodeBuilder::new("attn1")
+            .input_tensor("query", 4, DType::F32)
+            .input_tensor("key", 4, DType::F32)
+            .input_tensor("value", 4, DType::F32)
+            .input_tensor("mask", 4, DType::I64)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            query: Tensor<B, 4>,
+            key: Tensor<B, 4>,
+            value: Tensor<B, 4>,
+            mask: Tensor<B, 4, Int>,
+        ) -> Tensor<B, 4> {
+            let (output,) = {
+                let q = query;
+                let k = key;
+                let v = value;
+                let output = burn::tensor::module::attention(
+                    q,
+                    k,
+                    v,
+                    None,
+                    Some(mask.float()),
+                    burn::tensor::ops::AttentionOptions {
+                        scale: None,
+                        softcap: None,
+                        is_causal: false,
+                    },
+                );
+                (output,)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_attention_causal_with_mask_ignores_mask() {
+        // Per ONNX spec: "is_causal masks scores above the diagonal, regardless of attn_mask"
+        let config = AttentionConfig {
+            is_causal: true,
+            kv_num_heads: None,
+            q_num_heads: None,
+            qk_matmul_output_mode: AttentionQkMatmulOutputMode::Matmul,
+            scale: None,
+            softcap: 0.0,
+            softmax_precision: None,
+        };
+        let node = AttentionNodeBuilder::new("attn1")
+            .input_tensor("query", 4, DType::F32)
+            .input_tensor("key", 4, DType::F32)
+            .input_tensor("value", 4, DType::F32)
+            .input_tensor("mask", 4, DType::F32)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            query: Tensor<B, 4>,
+            key: Tensor<B, 4>,
+            value: Tensor<B, 4>,
+            mask: Tensor<B, 4>,
+        ) -> Tensor<B, 4> {
+            let (output,) = {
+                let q = query;
+                let k = key;
+                let v = value;
+                let output = burn::tensor::module::attention(
+                    q,
+                    k,
+                    v,
+                    None,
+                    None,
+                    burn::tensor::ops::AttentionOptions {
+                        scale: None,
+                        softcap: None,
+                        is_causal: true,
+                    },
+                );
+                (output,)
+            };
+            output
         }
         ");
     }
