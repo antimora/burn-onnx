@@ -96,8 +96,14 @@ fn main() {
     // Get reference outputs
     let ref_regressors = test_data.regressors.val();
     let ref_classifiers = test_data.classificators.val();
-    println!("  Reference regressors shape: {:?}", ref_regressors.shape().dims);
-    println!("  Reference classifiers shape: {:?}", ref_classifiers.shape().dims);
+    println!(
+        "  Reference regressors shape: {:?}",
+        ref_regressors.shape().dims
+    );
+    println!(
+        "  Reference classifiers shape: {:?}",
+        ref_classifiers.shape().dims
+    );
 
     // Run inference
     println!("\nRunning model inference...");
@@ -142,7 +148,10 @@ fn main() {
             for i in 0..5.min(out_flat.dims()[0]) {
                 let m: f32 = out_flat.clone().slice(s![i..i + 1]).into_scalar();
                 let r: f32 = ref_flat.clone().slice(s![i..i + 1]).into_scalar();
-                println!("      [{i}] model={m:.6}, ref={r:.6}, diff={:.6}", (m - r).abs());
+                println!(
+                    "      [{i}] model={m:.6}, ref={r:.6}, diff={:.6}",
+                    (m - r).abs()
+                );
             }
         }
     }
