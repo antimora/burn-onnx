@@ -78,10 +78,25 @@ examples/
   node-specific behavior is declared in `NodeProcessor` implementations. If a general module needs
   to handle a particular node type differently, that logic belongs in the node's processor, not in
   the framework code
+- **Always produce partial `static_shape`**: `infer_types()` should always set `static_shape` to
+  `Some(vec![...])` on tensor outputs, using `None` for unknown dimensions and `Some(value)` for
+  known ones. Never leave `static_shape` as `None` when the output rank is known. Start with
+  `tensor.static_shape.clone().unwrap_or_else(|| vec![None; rank])` and fill in whatever dimensions
+  can be determined from inputs, weights, or config. This enables per-dimension merging via
+  `merge_static_shape()`
+- **Processor registration is mandatory**: Every node type must be registered in `registry.rs`.
+  Unregistered types fall through to `DefaultProcessor` (which does `same_as_input`), producing
+  wrong type info for ops that change tensor rank. Type inference pre-checks for unregistered ops
+  and reports them all before processing
+- **`ProcessError` has a `Display` impl**: Use it for user-facing messages. Avoid formatting with
+  `{:?}` which exposes variant names like `Custom("...")`
 - **Optional input handling**: ONNX uses empty string `""` for "optional input not provided". Use
   `node.get_input(index)` which returns `None` for out-of-bounds or optional inputs. In
   `lift_constants()` (which needs `&mut`), guard with `!node.inputs[N].is_optional()`. Never check
   `name.is_empty()` to detect optional inputs; use `is_optional()` instead
+- **Don't reject unknown ONNX attributes**: Processors should extract the attributes they need and
+  ignore the rest. Do not iterate over all attributes to reject unknown ones, as ONNX may add new
+  attributes in future opsets
 
 ### burn-onnx Patterns
 
@@ -96,6 +111,13 @@ examples/
 - Use `quote!` macro for code generation
 - Add `insta` snapshot tests for ALL code generation branches - each config option, each input type
   variant, optional vs required inputs should have test coverage
+- **Prefer existing Burn tensor APIs over manual loops**: Before implementing an operator with manual
+  loops or per-element tensor operations in generated code, check the Burn tensor API for existing
+  operations that do the same thing (e.g., `scatter` with `IndexingUpdateOp::Add`, `select_assign`,
+  `unfold4d`). Native tensor operations are orders of magnitude faster than generated element-wise
+  loops. When no exact Burn API exists, prefer compositions of tensor operations that stay on-device
+  over approaches that move data between CPU and GPU (e.g., `.into_data()` / `.from_data()`), as
+  each transfer is a synchronization point that kills performance
 - **Inline snapshots only** - use `assert_snapshot!(code, @r"...")` with embedded expected output,
   not external `.snap` files
 
@@ -106,6 +128,8 @@ examples/
 - Simplification comparison tests in `crates/onnx-tests/tests/simplify/`
 - Python scripts generate ONNX models for testing
 - Use `torch.manual_seed(42)` for reproducibility
+- Integration tests should cover at least one non-default configuration (e.g., non-unit strides,
+  padding, dilation) in addition to the basic case, to exercise the major codegen branches
 
 ### Bug Fixes
 
@@ -230,7 +254,9 @@ For newer ONNX ops (opset 21+), `torch.onnx.export` often can't emit the op dire
 - Incorrect tensor dimension handling
 - Not handling optional ONNX inputs
 - Forgetting to register new nodes in dispatch macro
-- Using `panic!` instead of returning `Result`
+- Using `panic!` instead of returning `Result`. Structural validation (e.g., "only 1D/2D supported,
+  got 3D") should use `ProcessError` in onnx-ir's `infer_types` or `extract_config`, not `panic!` in
+  burn-onnx codegen. Panics in codegen produce poor error messages and crash the build process
 
 ## Dependencies
 

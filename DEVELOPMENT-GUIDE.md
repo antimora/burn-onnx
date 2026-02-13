@@ -45,6 +45,9 @@ For an introduction to ONNX import in Burn, see
   features should happen in [`burn-onnx`](crates/burn-onnx/) during code generation, not in
   `onnx-ir` during configuration extraction. This allows `onnx-ir` to be reused by other projects
   that may have different feature support
+- **No `panic!` in codegen**: Structural validation (e.g., "only 1D/2D supported, got 3D") should
+  use `ProcessError` in onnx-ir's `infer_types` or `extract_config`, not `panic!` in burn-onnx
+  codegen. Panics in codegen produce poor error messages and crash the build process
 
 The conversion process involves three main stages:
 
@@ -222,7 +225,16 @@ For example, the squeeze operation in `crates/onnx-ir/src/node/squeeze.rs` conta
    - `scope.arg(argument)` - Automatically handles Tensor/Scalar/Shape with proper cloning
    - `arg_to_ident(argument)` - Converts argument to identifier for code generation
 
-4. Add unit tests using snapshot testing to verify the generated code. These tests typically use the
+4. **Prefer existing Burn tensor APIs over manual loops**: Before implementing an operator with
+   manual loops or per-element tensor operations in generated code, check the Burn tensor API for
+   existing operations that do the same thing (e.g., `scatter` with `IndexingUpdateOp::Add`,
+   `select_assign`, `unfold4d`). Native tensor operations are orders of magnitude faster than
+   generated element-wise loops. When no exact Burn API exists, prefer compositions of tensor
+   operations that stay on-device over approaches that move data between CPU and GPU (e.g.,
+   `.into_data()` / `.from_data()`), as each transfer is a synchronization point that kills
+   performance.
+
+5. Add unit tests using snapshot testing to verify the generated code. These tests typically use the
    `insta` crate and test helper functions to validate the generated code:
 
    ```rust
@@ -291,6 +303,9 @@ implement:
 5. **`spec()`** - Define opset and input/output requirements (optional)
 6. **`lift_constants()`** - Request constant lifting for inputs (optional)
 7. **`is_noop()`** - Return `true` if the node is a no-op (optional, default `false`)
+
+**Important**: Processors should extract the attributes they need and ignore the rest. Do not iterate
+over all attributes to reject unknown ones, as ONNX may add new attributes in future opsets.
 
 Example `build_node()` implementation:
 
@@ -486,6 +501,9 @@ Design principles: Each processor is self-contained, handling type inference, co
 node construction. Processors return strongly-typed `Node` enum variants, ensuring type safety
 throughout the pipeline.
 
+**Error formatting**: `ProcessError` has a `Display` impl for user-facing messages. Use `{}` (not
+`{:?}`) when formatting errors to avoid exposing Rust variant names like `Custom("...")` to users.
+
 ## Testing
 
 When implementing a new operator, there are several levels of testing to consider:
@@ -509,6 +527,8 @@ When implementing a new operator, there are several levels of testing to conside
   - Optional vs required inputs
   - Different tensor ranks and data types
   - Edge cases that trigger different code paths
+  - **Use inline snapshots only**: Use `assert_snapshot!(code, @r"...")` with embedded expected
+    output, not external `.snap` files
 
 ### Integration Testing
 
@@ -689,6 +709,8 @@ cargo test --test test_mod my_new_op::test_my_new_op
 - Include edge cases (empty tensors, single elements, large tensors)
 - Use appropriate numerical tolerance levels
 - Test error cases for invalid inputs
+- Cover at least one non-default configuration (e.g., non-unit strides, padding, dilation) in
+  addition to the basic case, to exercise the major codegen branches
 
 #### Debugging Failed Tests
 

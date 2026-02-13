@@ -47,12 +47,23 @@ examples/
 - Entry point: `ModelGen` builder
 - **Important**: Rejection of unsupported features happens HERE, not in onnx-ir. If Burn API doesn't
   support a configuration, burn-onnx should emit a clear error during code generation
+- **Important**: Structural validation (e.g., "only 1D/2D supported, got 3D") should use
+  `ProcessError` in onnx-ir's `infer_types` or `extract_config`, not `panic!` in burn-onnx codegen.
+  Panics in codegen produce poor error messages and crash the build process
 - **Important**: Translation from ONNX semantics to Burn semantics happens HERE. For example,
   resolving ONNX `auto_pad` into explicit padding values for Burn's API is a burn-onnx
   responsibility, not onnx-ir's
 - **Important**: Always generate the simplest and most efficient Burn Rust code possible. Avoid
   emitting dead code, no-op loops, or redundant operations when the result can be determined at
   codegen time
+- **Important**: Prefer existing Burn tensor APIs over manual loops. Before implementing an operator
+  with manual loops or per-element tensor operations in generated code, check the Burn tensor API for
+  existing operations that do the same thing (e.g., `scatter` with `IndexingUpdateOp::Add`,
+  `select_assign`, `unfold4d`). Native tensor operations are orders of magnitude faster than
+  generated element-wise loops. When no exact Burn API exists, prefer compositions of tensor
+  operations that stay on-device over approaches that move data between CPU and GPU (e.g.,
+  `.into_data()` / `.from_data()`), as each transfer is a synchronization point that kills
+  performance
 - **Important**: When in doubt about Burn APIs, search online for the latest documentation rather
   than guessing
 
@@ -100,6 +111,9 @@ examples/
   and reports them all before processing
 - **`ProcessError` has a `Display` impl**: Use it for user-facing messages. Avoid formatting with
   `{:?}` which exposes variant names like `Custom("...")`
+- **Don't reject unknown ONNX attributes**: Processors should extract the attributes they need and
+  ignore the rest. Do not iterate over all attributes to reject unknown ones, as ONNX may add new
+  attributes in future opsets
 
 ### burn-onnx Patterns
 
@@ -123,6 +137,8 @@ examples/
 - Integration tests in `crates/onnx-tests/tests/<op_name>/`
 - Simplification comparison tests in `crates/onnx-tests/tests/simplify/`
 - Use `torch.manual_seed(42)` or `np.random.seed(42)` for reproducibility
+- Integration tests should cover at least one non-default configuration (e.g., non-unit strides,
+  padding, dilation) in addition to the basic case, to exercise the major codegen branches
 
 ### Bug Fixes
 
