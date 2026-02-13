@@ -1,5 +1,5 @@
 [package]
-name = "burn-onnx-model-checks-yolo"
+name = "burn-onnx-model-checks-mediapipe-face-detector"
 version = "0.1.0"
 edition = "2024"
 publish = false
