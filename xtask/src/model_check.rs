@@ -84,6 +84,12 @@ const MODELS: &[ModelInfo] = &[
         blocked: false,
     },
     ModelInfo {
+        dir: "depth-anything-v2",
+        name: "Depth-Anything-v2",
+        env: None,
+        blocked: false,
+    },
+    ModelInfo {
         dir: "albert",
         name: "ALBERT",
         env: Some(("ALBERT_MODEL", "albert-base-v2")),
