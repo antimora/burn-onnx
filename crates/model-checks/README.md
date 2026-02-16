@@ -70,3 +70,17 @@ The build process will:
 - Check that the ONNX model exists (with helpful error messages if not)
 - Generate Rust code from the ONNX model using burn-onnx
 - Compile the generated code
+
+## Models
+
+| Directory | Model | Source | Related Issue |
+|-----------|-------|--------|---------------|
+| `albert/` | ALBERT | HuggingFace | |
+| `all-minilm-l6-v2/` | all-MiniLM-L6-v2 | HuggingFace | |
+| `clip-vit-b-32-text/` | CLIP ViT-B-32 (text) | HuggingFace | |
+| `clip-vit-b-32-vision/` | CLIP ViT-B-32 (vision) | HuggingFace | |
+| `mediapipe-face-detector/` | MediaPipe Face Detector (BlazeFace) | Google MediaPipe | [#1370](https://github.com/tracel-ai/burn/issues/1370) |
+| `modernbert-base/` | ModernBERT-base | HuggingFace | |
+| `rf-detr/` | RF-DETR Small | Roboflow | [#4052](https://github.com/tracel-ai/burn/issues/4052) |
+| `silero-vad/` | Silero VAD | Silero | |
+| `yolo/` | YOLO (v5/v8/v10/v11/v12) | Ultralytics | |
