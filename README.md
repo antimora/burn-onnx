@@ -16,7 +16,7 @@
 
 ## Overview
 
-`burn-onnx` converts ONNX models to native Burn code, allowing you to run models from PyTorch,
+`burn-onnx` converts ONNX models to native Burn Rust code, allowing you to run models from PyTorch,
 TensorFlow, and other frameworks on any Burn backend - from WebAssembly to CUDA.
 
 **Key features:**
