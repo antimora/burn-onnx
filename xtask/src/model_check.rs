@@ -107,6 +107,12 @@ const MODELS: &[ModelInfo] = &[
         env: None,
         blocked: false,
     },
+    ModelInfo {
+        dir: "qwen",
+        name: "Qwen",
+        env: Some(("QWEN_MODEL", "qwen2.5-0.5b")),
+        blocked: true,
+    },
 ];
 
 fn model_dir(model: &ModelInfo) -> PathBuf {
