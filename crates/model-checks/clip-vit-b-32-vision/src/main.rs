@@ -42,7 +42,10 @@ fn main() {
 
     // Check if artifacts exist
     if !artifacts_dir.exists() {
-        eprintln!("Error: artifacts directory not found at '{}'!", artifacts_dir.display());
+        eprintln!(
+            "Error: artifacts directory not found at '{}'!",
+            artifacts_dir.display()
+        );
         eprintln!("Please run get_model.py first to download the model and test data.");
         std::process::exit(1);
     }
@@ -57,10 +60,12 @@ fn main() {
 
     // Save model structure to file
     let model_txt_path = artifacts_dir.join("model.txt");
-    println!("\nSaving model structure to {}...", model_txt_path.display());
+    println!(
+        "\nSaving model structure to {}...",
+        model_txt_path.display()
+    );
     let model_str = format!("{}", model);
-    std::fs::write(&model_txt_path, &model_str)
-        .expect("Failed to write model structure to file");
+    std::fs::write(&model_txt_path, &model_str).expect("Failed to write model structure to file");
     println!("  Model structure saved");
 
     // Load test data from PyTorch file
@@ -69,7 +74,9 @@ fn main() {
     let start = Instant::now();
     let mut test_data = TestData::<MyBackend>::new(&device);
     let mut store = PytorchStore::from_file(&test_data_path);
-    test_data.load_from(&mut store).expect("Failed to load test data");
+    test_data
+        .load_from(&mut store)
+        .expect("Failed to load test data");
     let load_time = start.elapsed();
     println!("  Data loaded in {:.2?}", load_time);
 
@@ -78,7 +85,7 @@ fn main() {
     let pixel_values_shape = pixel_values.shape();
     println!(
         "  Loaded pixel_values with shape: {:?}",
-        pixel_values_shape.dims
+        pixel_values_shape.as_slice()
     );
 
     // Get the reference outputs from test data
@@ -86,7 +93,7 @@ fn main() {
     let ref_image_embeds_shape = reference_image_embeds.shape();
     println!(
         "  Loaded reference image_embeds with shape: {:?}",
-        ref_image_embeds_shape.dims
+        ref_image_embeds_shape.as_slice()
     );
 
     // Run inference with the loaded input
@@ -101,18 +108,19 @@ fn main() {
     // Display output shapes
     let image_embeds_shape = image_embeds.shape();
     println!("\n  Model output shapes:");
-    println!("    image_embeds: {:?}", image_embeds_shape.dims);
+    println!("    image_embeds: {:?}", image_embeds_shape.as_slice());
 
     // Verify expected output shapes match
-    if image_embeds_shape.dims == ref_image_embeds_shape.dims {
+    if image_embeds_shape.as_slice() == ref_image_embeds_shape.as_slice() {
         println!(
             "  ✓ image_embeds shape matches expected: {:?}",
-            ref_image_embeds_shape.dims
+            ref_image_embeds_shape.as_slice()
         );
     } else {
         println!(
             "  ⚠ Warning: Expected image_embeds shape {:?}, got {:?}",
-            ref_image_embeds_shape.dims, image_embeds_shape.dims
+            ref_image_embeds_shape.as_slice(),
+            image_embeds_shape.as_slice()
         );
     }
 
@@ -143,7 +151,7 @@ fn main() {
         let output_flat = image_embeds.clone().flatten::<1>(0, 1);
         let reference_flat = reference_image_embeds.clone().flatten::<1>(0, 1);
 
-        for i in 0..5.min(output_flat.dims()[0]) {
+        for i in 0..5.min(output_flat.shape()[0]) {
             let model_val: f32 = output_flat.clone().slice(s![i..i + 1]).into_scalar();
             let ref_val: f32 = reference_flat.clone().slice(s![i..i + 1]).into_scalar();
             println!(
@@ -155,7 +163,6 @@ fn main() {
             );
         }
     }
-
 
     println!("\n========================================");
     println!("Summary:");

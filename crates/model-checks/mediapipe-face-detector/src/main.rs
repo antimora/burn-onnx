@@ -91,18 +91,18 @@ fn main() {
     // Get the input tensor from test data
     let input = test_data.input.val();
     let input_shape = input.shape();
-    println!("  Input shape: {:?}", input_shape.dims);
+    println!("  Input shape: {:?}", input_shape.as_slice());
 
     // Get reference outputs
     let ref_regressors = test_data.regressors.val();
     let ref_classifiers = test_data.classificators.val();
     println!(
         "  Reference regressors shape: {:?}",
-        ref_regressors.shape().dims
+        ref_regressors.shape().as_slice()
     );
     println!(
         "  Reference classifiers shape: {:?}",
-        ref_classifiers.shape().dims
+        ref_classifiers.shape().as_slice()
     );
 
     // Run inference
@@ -113,8 +113,14 @@ fn main() {
     println!("  Inference completed in {:.2?}", inference_time);
 
     println!("\nModel outputs:");
-    println!("  regressors shape: {:?}", out_regressors.shape().dims);
-    println!("  classifiers shape: {:?}", out_classifiers.shape().dims);
+    println!(
+        "  regressors shape: {:?}",
+        out_regressors.shape().as_slice()
+    );
+    println!(
+        "  classifiers shape: {:?}",
+        out_classifiers.shape().as_slice()
+    );
 
     // Compare outputs
     println!("\nComparing outputs with reference data...");
@@ -145,7 +151,7 @@ fn main() {
             println!("\n    Sample values (first 5):");
             let out_flat = output.flatten::<1>(0, 2);
             let ref_flat = reference.flatten::<1>(0, 2);
-            for i in 0..5.min(out_flat.dims()[0]) {
+            for i in 0..5.min(out_flat.shape()[0]) {
                 let m: f32 = out_flat.clone().slice(s![i..i + 1]).into_scalar();
                 let r: f32 = ref_flat.clone().slice(s![i..i + 1]).into_scalar();
                 println!(
