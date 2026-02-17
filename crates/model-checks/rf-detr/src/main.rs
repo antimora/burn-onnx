@@ -97,18 +97,18 @@ fn main() {
     // Get the input tensor from test data
     let input = test_data.input.val();
     let input_shape = input.shape();
-    println!("  Loaded input tensor with shape: {:?}", input_shape.dims);
+    println!("  Loaded input tensor with shape: {:?}", input_shape.as_slice());
 
     // Get the reference outputs from test data
     let reference_dets = test_data.output_dets.val();
     let reference_labels = test_data.output_labels.val();
     println!(
         "  Loaded reference dets with shape: {:?}",
-        reference_dets.shape().dims
+        reference_dets.shape().as_slice()
     );
     println!(
         "  Loaded reference labels with shape: {:?}",
-        reference_labels.shape().dims
+        reference_labels.shape().as_slice()
     );
 
     // Run inference with the loaded input
@@ -120,8 +120,8 @@ fn main() {
 
     // Display output shapes
     println!("\nModel outputs:");
-    println!("  Dets shape: {:?}", output_dets.shape().dims);
-    println!("  Labels shape: {:?}", output_labels.shape().dims);
+    println!("  Dets shape: {:?}", output_dets.shape().as_slice());
+    println!("  Labels shape: {:?}", output_labels.shape().as_slice());
 
     // Compare outputs
     println!("\nComparing model outputs with reference data...");
@@ -154,7 +154,7 @@ fn main() {
         let output_flat = output_dets.clone().flatten::<1>(0, 2);
         let reference_flat = reference_dets.clone().flatten::<1>(0, 2);
 
-        for i in 0..5.min(output_flat.dims()[0]) {
+        for i in 0..5.min(output_flat.shape()[0]) {
             let model_val: f32 = output_flat.clone().slice(s![i..i + 1]).into_scalar();
             let ref_val: f32 = reference_flat.clone().slice(s![i..i + 1]).into_scalar();
             println!(
@@ -192,7 +192,7 @@ fn main() {
         let output_flat = output_labels.clone().flatten::<1>(0, 2);
         let reference_flat = reference_labels.clone().flatten::<1>(0, 2);
 
-        for i in 0..5.min(output_flat.dims()[0]) {
+        for i in 0..5.min(output_flat.shape()[0]) {
             let model_val: f32 = output_flat.clone().slice(s![i..i + 1]).into_scalar();
             let ref_val: f32 = reference_flat.clone().slice(s![i..i + 1]).into_scalar();
             println!(

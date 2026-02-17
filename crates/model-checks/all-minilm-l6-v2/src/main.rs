@@ -62,8 +62,8 @@ fn mean_pool<B: Backend>(
 
     // Get the shape to reshape to [batch, hidden]
     let shape = pooled.shape();
-    let batch_size = shape.dims[0];
-    let hidden_size = shape.dims[2];
+    let batch_size = shape[0];
+    let hidden_size = shape[2];
 
     pooled.reshape([batch_size, hidden_size])
 }
@@ -116,14 +116,14 @@ fn main() {
     let input_ids_shape = input_ids.shape();
     let attention_mask_shape = attention_mask.shape();
     let token_type_ids_shape = token_type_ids.shape();
-    println!("  Loaded input_ids with shape: {:?}", input_ids_shape.dims);
+    println!("  Loaded input_ids with shape: {:?}", input_ids_shape.as_slice());
     println!(
         "  Loaded attention_mask with shape: {:?}",
-        attention_mask_shape.dims
+        attention_mask_shape.as_slice()
     );
     println!(
         "  Loaded token_type_ids with shape: {:?}",
-        token_type_ids_shape.dims
+        token_type_ids_shape.as_slice()
     );
 
     // Get the reference outputs from test data
@@ -133,11 +133,11 @@ fn main() {
     let ref_pooled_shape = reference_pooled_embeddings.shape();
     println!(
         "  Loaded reference last_hidden_state with shape: {:?}",
-        ref_last_hidden_shape.dims
+        ref_last_hidden_shape.as_slice()
     );
     println!(
         "  Loaded reference pooled_embeddings with shape: {:?}",
-        ref_pooled_shape.dims
+        ref_pooled_shape.as_slice()
     );
 
     // Run inference with the loaded input
@@ -164,31 +164,31 @@ fn main() {
     let last_hidden_shape = last_hidden_state.shape();
     let pooled_shape = pooled_embeddings.shape();
     println!("\n  Model output shapes:");
-    println!("    last_hidden_state: {:?}", last_hidden_shape.dims);
-    println!("    pooled_embeddings: {:?}", pooled_shape.dims);
+    println!("    last_hidden_state: {:?}", last_hidden_shape.as_slice());
+    println!("    pooled_embeddings: {:?}", pooled_shape.as_slice());
 
     // Verify expected output shapes match
-    if last_hidden_shape.dims == ref_last_hidden_shape.dims {
+    if last_hidden_shape == ref_last_hidden_shape {
         println!(
             "  ✓ last_hidden_state shape matches expected: {:?}",
-            ref_last_hidden_shape.dims
+            ref_last_hidden_shape.as_slice()
         );
     } else {
         println!(
             "  ⚠ Warning: Expected last_hidden_state shape {:?}, got {:?}",
-            ref_last_hidden_shape.dims, last_hidden_shape.dims
+            ref_last_hidden_shape.as_slice(), last_hidden_shape.as_slice()
         );
     }
 
-    if pooled_shape.dims == ref_pooled_shape.dims {
+    if pooled_shape == ref_pooled_shape {
         println!(
             "  ✓ pooled_embeddings shape matches expected: {:?}",
-            ref_pooled_shape.dims
+            ref_pooled_shape.as_slice()
         );
     } else {
         println!(
             "  ⚠ Warning: Expected pooled_embeddings shape {:?}, got {:?}",
-            ref_pooled_shape.dims, pooled_shape.dims
+            ref_pooled_shape.as_slice(), pooled_shape.as_slice()
         );
     }
 
@@ -220,7 +220,7 @@ fn main() {
         let output_flat = last_hidden_state.clone().flatten::<1>(0, 2);
         let reference_flat = reference_last_hidden_state.clone().flatten::<1>(0, 2);
 
-        for i in 0..5.min(output_flat.dims()[0]) {
+        for i in 0..5.min(output_flat.shape()[0]) {
             let model_val: f32 = output_flat.clone().slice(s![i..i + 1]).into_scalar();
             let ref_val: f32 = reference_flat.clone().slice(s![i..i + 1]).into_scalar();
             println!(
@@ -258,7 +258,7 @@ fn main() {
         let output_flat = pooled_embeddings.clone().flatten::<1>(0, 1);
         let reference_flat = reference_pooled_embeddings.clone().flatten::<1>(0, 1);
 
-        for i in 0..5.min(output_flat.dims()[0]) {
+        for i in 0..5.min(output_flat.shape()[0]) {
             let model_val: f32 = output_flat.clone().slice(s![i..i + 1]).into_scalar();
             let ref_val: f32 = reference_flat.clone().slice(s![i..i + 1]).into_scalar();
             println!(

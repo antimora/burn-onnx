@@ -112,14 +112,14 @@ fn main() {
     let token_type_ids = test_data.token_type_ids.val();
 
     println!("  Loaded input tensors:");
-    println!("    input_ids shape: {:?}", input_ids.shape().dims);
+    println!("    input_ids shape: {:?}", input_ids.shape().as_slice());
     println!(
         "    attention_mask shape: {:?}",
-        attention_mask.shape().dims
+        attention_mask.shape().as_slice()
     );
     println!(
         "    token_type_ids shape: {:?}",
-        token_type_ids.shape().dims
+        token_type_ids.shape().as_slice()
     );
 
     // Get the reference outputs from test data
@@ -128,11 +128,11 @@ fn main() {
     println!("  Loaded reference outputs:");
     println!(
         "    last_hidden_state shape: {:?}",
-        reference_last_hidden.shape().dims
+        reference_last_hidden.shape().as_slice()
     );
     println!(
         "    pooler_output shape: {:?}",
-        reference_pooler.shape().dims
+        reference_pooler.shape().as_slice()
     );
 
     // Run inference with the loaded input
@@ -147,9 +147,9 @@ fn main() {
     println!("\n  Model output shapes:");
     println!(
         "    output 0 (last_hidden_state): {:?}",
-        outputs.0.shape().dims
+        outputs.0.shape().as_slice()
     );
-    println!("    output 1 (pooler_output): {:?}", outputs.1.shape().dims);
+    println!("    output 1 (pooler_output): {:?}", outputs.1.shape().as_slice());
 
     // Compare outputs
     println!("\nComparing model outputs with reference data...");

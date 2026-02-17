@@ -110,14 +110,14 @@ fn main() {
     // Get the input tensor from test data
     let input = test_data.input.val();
     let input_shape = input.shape();
-    println!("  Loaded input tensor with shape: {:?}", input_shape.dims);
+    println!("  Loaded input tensor with shape: {:?}", input_shape.as_slice());
 
     // Get the reference output from test data
     let reference_output = test_data.output.val();
     let reference_shape = reference_output.shape();
     println!(
         "  Loaded reference output with shape: {:?}",
-        reference_shape.dims
+        reference_shape.as_slice()
     );
 
     // Run inference with the loaded input
@@ -129,16 +129,16 @@ fn main() {
 
     // Display output shape
     let shape = output.shape();
-    println!("\n  Model output shape: {:?}", shape.dims);
+    println!("\n  Model output shape: {:?}", shape.as_slice());
 
     // Verify expected output shape (most YOLO models use [1, 84, 8400])
     let expected_shape = [1, 84, 8400];
-    if shape.dims == expected_shape {
+    if shape.as_slice() == expected_shape {
         println!("  ✓ Output shape matches expected: {:?}", expected_shape);
     } else {
         println!(
             "  ⚠ Note: Shape is {:?} (expected {:?} for most YOLO models)",
-            shape.dims, expected_shape
+            shape.as_slice(), expected_shape
         );
     }
 
@@ -168,7 +168,7 @@ fn main() {
         let output_flat = output.clone().flatten::<1>(0, 2);
         let reference_flat = reference_output.clone().flatten::<1>(0, 2);
 
-        for i in 0..5.min(output_flat.dims()[0]) {
+        for i in 0..5.min(output_flat.shape()[0]) {
             let model_val: f32 = output_flat.clone().slice(s![i..i + 1]).into_scalar();
             let ref_val: f32 = reference_flat.clone().slice(s![i..i + 1]).into_scalar();
             println!(
