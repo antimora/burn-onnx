@@ -133,6 +133,22 @@ const MODELS: &[ModelInfo] = &[
         blocked: false,
     },
     ModelInfo {
+        id: "smollm",
+        dir: "smollm",
+        name: "SmolLM 135M",
+        env: Some(("SMOLLM_MODEL", "smollm-135m")),
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
+        id: "smollm2",
+        dir: "smollm2",
+        name: "SmolLM2 135M",
+        env: Some(("SMOLLM2_MODEL", "smollm2-135m")),
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
         id: "qwen-1.5",
         dir: "qwen",
         name: "Qwen1.5 0.5B",
