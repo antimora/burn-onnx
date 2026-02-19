@@ -72,7 +72,7 @@ impl NodeCodegen for onnx_ir::modulo::ModNode {
             }
             (lhs_ty, ArgType::ScalarNative(_)) if lhs_ty.is_on_device() => {
                 let lhs = scope.arg(lhs_arg);
-                let rhs = Ident::new(&rhs_arg.name, Span::call_site());
+                let rhs = scope.arg(rhs_arg);
 
                 let mod_op = if self.config.fmod {
                     quote! { fmod_scalar }

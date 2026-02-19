@@ -39,7 +39,7 @@ impl NodeCodegen for onnx_ir::node::arithmetic::AddNode {
                 quote! { #lhs.add_scalar(#rhs) }
             }
             (ArgType::ScalarNative(_), rhs_ty) if rhs_ty.is_on_device() => {
-                quote! { #rhs.add_scalar(#lhs) }
+                quote! { #lhs + #rhs }
             }
             (ArgType::ScalarNative(_), ArgType::ScalarNative(_)) => quote! { #lhs + #rhs },
             (ArgType::Shape(_), ArgType::Shape(_)) => quote! {
@@ -62,7 +62,7 @@ impl NodeCodegen for onnx_ir::node::arithmetic::AddNode {
                         let mut result = #lhs;
                         let __scalar = #scalar_expr;
                         for result_item in result.iter_mut() {
-                            *result_item = result_item.saturating_add(__scalar as i64);
+                            *result_item = result_item.saturating_add(__scalar);
                         }
                         result
                     }
@@ -79,7 +79,7 @@ impl NodeCodegen for onnx_ir::node::arithmetic::AddNode {
                         let mut result = #rhs;
                         let __scalar = #scalar_expr;
                         for result_item in result.iter_mut() {
-                            *result_item = result_item.saturating_add(__scalar as i64);
+                            *result_item = result_item.saturating_add(__scalar);
                         }
                         result
                     }
@@ -242,7 +242,7 @@ mod tests {
             .build();
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, lhs: f32, rhs: Tensor<B, 2>) -> Tensor<B, 2> {
-            let output = rhs.add_scalar(lhs);
+            let output = lhs + rhs;
             output
         }
         ");
@@ -303,7 +303,7 @@ mod tests {
                 let mut result = lhs;
                 let __scalar = rhs as i64;
                 for result_item in result.iter_mut() {
-                    *result_item = result_item.saturating_add(__scalar as i64);
+                    *result_item = result_item.saturating_add(__scalar);
                 }
                 result
             };
@@ -325,7 +325,7 @@ mod tests {
                 let mut result = lhs;
                 let __scalar = rhs.into_scalar().elem::<i64>();
                 for result_item in result.iter_mut() {
-                    *result_item = result_item.saturating_add(__scalar as i64);
+                    *result_item = result_item.saturating_add(__scalar);
                 }
                 result
             };
@@ -347,7 +347,7 @@ mod tests {
                 let mut result = rhs;
                 let __scalar = lhs as i64;
                 for result_item in result.iter_mut() {
-                    *result_item = result_item.saturating_add(__scalar as i64);
+                    *result_item = result_item.saturating_add(__scalar);
                 }
                 result
             };
@@ -369,7 +369,7 @@ mod tests {
                 let mut result = rhs;
                 let __scalar = lhs.into_scalar().elem::<i64>();
                 for result_item in result.iter_mut() {
-                    *result_item = result_item.saturating_add(__scalar as i64);
+                    *result_item = result_item.saturating_add(__scalar);
                 }
                 result
             };

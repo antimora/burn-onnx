@@ -73,7 +73,7 @@ impl NodeCodegen for onnx_ir::node::arithmetic::DivNode {
                         let mut result = #lhs;
                         let __scalar = #scalar_expr;
                         for result_item in result.iter_mut() {
-                            *result_item = if __scalar as i64 != 0 { *result_item / (__scalar as i64) } else { *result_item };
+                            *result_item = if __scalar != 0 { *result_item / __scalar } else { *result_item };
                         }
                         result
                     }
@@ -90,7 +90,7 @@ impl NodeCodegen for onnx_ir::node::arithmetic::DivNode {
                         let mut result = #rhs;
                         let __scalar = #scalar_expr;
                         for result_item in result.iter_mut() {
-                            *result_item = if *result_item != 0 { (__scalar as i64) / *result_item } else { (__scalar as i64) };
+                            *result_item = if *result_item != 0 { __scalar / *result_item } else { __scalar };
                         }
                         result
                     }
@@ -333,8 +333,8 @@ mod tests {
                 let mut result = lhs;
                 let __scalar = rhs as i64;
                 for result_item in result.iter_mut() {
-                    *result_item = if __scalar as i64 != 0 {
-                        *result_item / (__scalar as i64)
+                    *result_item = if __scalar != 0 {
+                        *result_item / __scalar
                     } else {
                         *result_item
                     };
@@ -359,8 +359,8 @@ mod tests {
                 let mut result = lhs;
                 let __scalar = rhs.into_scalar().elem::<i64>();
                 for result_item in result.iter_mut() {
-                    *result_item = if __scalar as i64 != 0 {
-                        *result_item / (__scalar as i64)
+                    *result_item = if __scalar != 0 {
+                        *result_item / __scalar
                     } else {
                         *result_item
                     };
@@ -386,9 +386,9 @@ mod tests {
                 let __scalar = lhs as i64;
                 for result_item in result.iter_mut() {
                     *result_item = if *result_item != 0 {
-                        (__scalar as i64) / *result_item
+                        __scalar / *result_item
                     } else {
-                        (__scalar as i64)
+                        __scalar
                     };
                 }
                 result
@@ -412,9 +412,9 @@ mod tests {
                 let __scalar = lhs.into_scalar().elem::<i64>();
                 for result_item in result.iter_mut() {
                     *result_item = if *result_item != 0 {
-                        (__scalar as i64) / *result_item
+                        __scalar / *result_item
                     } else {
-                        (__scalar as i64)
+                        __scalar
                     };
                 }
                 result
