@@ -78,17 +78,162 @@ mod tests {
     use insta::assert_snapshot;
     use onnx_ir::comparison::GreaterOrEqualNodeBuilder;
 
+    // --- on_device + on_device ---
+
     #[test]
-    fn test_greater_equal_forward() {
+    fn test_tensor_tensor_same_rank() {
         let node = GreaterOrEqualNodeBuilder::new("ge1")
             .input_tensor("lhs", 2, DType::F32)
             .input_tensor("rhs", 2, DType::F32)
             .output_tensor("output", 2, DType::Bool)
             .build();
-        let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r"
+        assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, lhs: Tensor<B, 2>, rhs: Tensor<B, 2>) -> Tensor<B, 2, Bool> {
             let output = lhs.greater_equal(rhs);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_tensor_tensor_broadcast_lhs_higher() {
+        let node = GreaterOrEqualNodeBuilder::new("ge1")
+            .input_tensor("lhs", 3, DType::F32)
+            .input_tensor("rhs", 2, DType::F32)
+            .output_tensor("output", 3, DType::Bool)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: Tensor<B, 3>, rhs: Tensor<B, 2>) -> Tensor<B, 3, Bool> {
+            let output = lhs.greater_equal(rhs.unsqueeze_dims(&[0isize]));
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_tensor_tensor_broadcast_rhs_higher() {
+        let node = GreaterOrEqualNodeBuilder::new("ge1")
+            .input_tensor("lhs", 2, DType::F32)
+            .input_tensor("rhs", 3, DType::F32)
+            .output_tensor("output", 3, DType::Bool)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: Tensor<B, 2>, rhs: Tensor<B, 3>) -> Tensor<B, 3, Bool> {
+            let output = lhs.unsqueeze_dims(&[0isize]).greater_equal(rhs);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_tensor_scalar_tensor() {
+        let node = GreaterOrEqualNodeBuilder::new("ge1")
+            .input_tensor("lhs", 3, DType::F32)
+            .input_scalar_tensor("rhs", DType::F32)
+            .output_tensor("output", 3, DType::Bool)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: Tensor<B, 3>, rhs: Tensor<B, 1>) -> Tensor<B, 3, Bool> {
+            let output = lhs.greater_equal(rhs.unsqueeze_dims(&[0isize, 1isize]));
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_scalar_tensor_tensor() {
+        let node = GreaterOrEqualNodeBuilder::new("ge1")
+            .input_scalar_tensor("lhs", DType::F32)
+            .input_tensor("rhs", 3, DType::F32)
+            .output_tensor("output", 3, DType::Bool)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: Tensor<B, 1>, rhs: Tensor<B, 3>) -> Tensor<B, 3, Bool> {
+            let output = lhs.unsqueeze_dims(&[0isize, 1isize]).greater_equal(rhs);
+            output
+        }
+        ");
+    }
+
+    // --- on_device + ScalarNative ---
+
+    #[test]
+    fn test_tensor_scalar_native() {
+        let node = GreaterOrEqualNodeBuilder::new("ge1")
+            .input_tensor("lhs", 2, DType::F32)
+            .input_scalar("rhs", DType::F32)
+            .output_tensor("output", 2, DType::Bool)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: Tensor<B, 2>, rhs: f32) -> Tensor<B, 2, Bool> {
+            let output = lhs.greater_equal_elem(rhs);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_scalar_native_tensor() {
+        let node = GreaterOrEqualNodeBuilder::new("ge1")
+            .input_scalar("lhs", DType::F32)
+            .input_tensor("rhs", 2, DType::F32)
+            .output_tensor("output", 2, DType::Bool)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: f32, rhs: Tensor<B, 2>) -> Tensor<B, 2, Bool> {
+            let output = rhs.lower_equal_elem(lhs);
+            output
+        }
+        ");
+    }
+
+    // --- Shape + on_device ---
+
+    #[test]
+    fn test_shape_tensor() {
+        let node = GreaterOrEqualNodeBuilder::new("ge1")
+            .input_shape("lhs", 4)
+            .input_tensor("rhs", 1, DType::I64)
+            .output_tensor("output", 1, DType::Bool)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: [i64; 4], rhs: Tensor<B, 1, Int>) -> Tensor<B, 1, Bool> {
+            let output = Tensor::<
+                B,
+                1,
+                burn::tensor::Int,
+            >::from_data_dtype(
+                    burn::tensor::TensorData::from(&lhs as &[i64]),
+                    &*self.device,
+                    burn::tensor::DType::I64,
+                )
+                .greater_equal(rhs);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_tensor_shape() {
+        let node = GreaterOrEqualNodeBuilder::new("ge1")
+            .input_tensor("lhs", 1, DType::I64)
+            .input_shape("rhs", 4)
+            .output_tensor("output", 1, DType::Bool)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: Tensor<B, 1, Int>, rhs: [i64; 4]) -> Tensor<B, 1, Bool> {
+            let output = lhs
+                .greater_equal(
+                    Tensor::<
+                        B,
+                        1,
+                        burn::tensor::Int,
+                    >::from_data_dtype(
+                        burn::tensor::TensorData::from(&rhs as &[i64]),
+                        &*self.device,
+                        burn::tensor::DType::I64,
+                    ),
+                );
             output
         }
         ");
