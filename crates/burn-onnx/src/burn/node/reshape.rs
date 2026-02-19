@@ -27,7 +27,13 @@ impl NodeCodegen for onnx_ir::reshape::ReshapeNode {
 
                         // Check if output is a scalar
                         match &output_arg.ty {
-                            ArgType::ScalarNative(elem_type) | ArgType::ScalarTensor(elem_type) => {
+                            ArgType::ScalarTensor(_) => {
+                                // Keep on device as Tensor<B, 1>
+                                quote! {
+                                    let #output = #input.reshape([1]);
+                                }
+                            }
+                            ArgType::ScalarNative(elem_type) => {
                                 use onnx_ir::ir::DType;
                                 let elem_cast = match elem_type {
                                     DType::F32 => quote! { .elem::<f32>() },
@@ -57,7 +63,22 @@ impl NodeCodegen for onnx_ir::reshape::ReshapeNode {
                         let input_name = arg_to_ident(input_arg);
 
                         match &output_arg.ty {
-                            ArgType::ScalarNative(elem_type) | ArgType::ScalarTensor(elem_type) => {
+                            ArgType::ScalarTensor(_) => {
+                                if *input_rank != 1 {
+                                    panic!(
+                                        "Shape to scalar requires Shape(1), got Shape({})",
+                                        input_rank
+                                    );
+                                }
+                                // Shape [i64; 1] -> Tensor<B, 1, Int> on device
+                                quote! {
+                                    let #output = Tensor::<B, 1, Int>::from_data(
+                                        burn::tensor::TensorData::from([#input_name[0]]),
+                                        &*self.device,
+                                    );
+                                }
+                            }
+                            ArgType::ScalarNative(elem_type) => {
                                 if *input_rank != 1 {
                                     panic!(
                                         "Shape to scalar requires Shape(1), got Shape({})",
@@ -696,6 +717,50 @@ mod tests {
         pub fn forward(&self, x: f32) -> f32 {
             let y = x;
             y
+        }
+        ");
+    }
+
+    // Tensor -> ScalarTensor (keep on device)
+    #[test]
+    fn test_reshape_tensor_to_scalar_tensor() {
+        let config = ReshapeConfig {
+            shape: ReshapeInput::Static(vec![]),
+        };
+        let node = ReshapeNodeBuilder::new("reshape1")
+            .input_tensor("tensor", 1, DType::F32)
+            .output_scalar_tensor("output", DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, tensor: Tensor<B, 1>) -> Tensor<B, 1> {
+            let output = tensor.reshape([1]);
+            output
+        }
+        ");
+    }
+
+    // Shape -> ScalarTensor (put shape value on device)
+    #[test]
+    fn test_reshape_shape_to_scalar_tensor() {
+        let config = ReshapeConfig {
+            shape: ReshapeInput::Static(vec![]),
+        };
+        let node = ReshapeNodeBuilder::new("reshape1")
+            .input_shape("shape_in", 1)
+            .output_scalar_tensor("output", DType::I64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, shape_in: [i64; 1]) -> Tensor<B, 1, Int> {
+            let output = Tensor::<
+                B,
+                1,
+                Int,
+            >::from_data(burn::tensor::TensorData::from([shape_in[0]]), &*self.device);
+            output
         }
         ");
     }

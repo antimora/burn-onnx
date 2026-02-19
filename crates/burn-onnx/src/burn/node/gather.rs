@@ -30,20 +30,47 @@ fn forward_shape_gather(node: &onnx_ir::gather::GatherNode) -> proc_macro2::Toke
     let input_shape_name = arg_to_ident(input_arg);
     let output = arg_to_ident(output_arg);
 
+    // Helper: generate index resolution code for shape gather
+    let gen_index_resolve = |index: &proc_macro2::Ident| {
+        quote! {
+            let actual_idx = if #index < 0 {
+                (#input_shape_name.len() as i64 + #index) as usize
+            } else {
+                #index as usize
+            };
+        }
+    };
+
     match &output_arg.ty {
-        ArgType::ScalarNative(dtype) | ArgType::ScalarTensor(dtype) => {
-            // Gathering a single element from a shape produces a scalar
+        ArgType::ScalarTensor(_) => {
+            // Gathering a single element from a shape, keep on device as Tensor<B, 1, Int>
+            match &index_arg.ty {
+                ArgType::ScalarNative(_) | ArgType::ScalarTensor(_) => {
+                    let index = arg_to_ident(index_arg);
+                    let index_resolve = gen_index_resolve(&index);
+                    quote! {
+                        #index_resolve
+                        let #output = Tensor::<B, 1, Int>::from_data(
+                            burn::tensor::TensorData::from([#input_shape_name[actual_idx]]),
+                            &*self.device,
+                        );
+                    }
+                }
+                _ => panic!(
+                    "Gather from Shape to Scalar needs scalar index, got {:?}!",
+                    index_arg.ty
+                ),
+            }
+        }
+        ArgType::ScalarNative(dtype) => {
+            // Gathering a single element from a shape to native scalar
             let scalar_ty = scalar_type_tokens(dtype);
             match &index_arg.ty {
                 ArgType::ScalarNative(_) | ArgType::ScalarTensor(_) => {
                     let index = arg_to_ident(index_arg);
-                    // Handle negative indices properly for runtime scalars
+                    let index_resolve = gen_index_resolve(&index);
                     quote! {
-                        let actual_idx = if #index < 0 {
-                            (#input_shape_name.len() as i64 + #index) as usize
-                        } else {
-                            #index as usize
-                        };
+                        #index_resolve
                         let #output = #input_shape_name[actual_idx] as #scalar_ty;
                     }
                 }
