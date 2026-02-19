@@ -23,12 +23,19 @@ impl NodeCodegen for onnx_ir::node::bernoulli::BernoulliNode {
         // Convert to the output type based on the output tensor kind
         let output_ty = &self.outputs.first().unwrap().ty;
         let output_random = match output_ty {
-            ArgType::Tensor(t) => match &t.dtype {
-                dtype if dtype.is_bool() => input_random,
-                dtype if dtype.is_int() || dtype.is_uint() => quote! { #input_random.int() },
-                dtype if dtype.is_float() => quote! { #input_random.float() },
-                _ => input_random, // Fallback
-            },
+            ArgType::Tensor(t) => {
+                let dtype_tokens = t.dtype.to_tokens();
+                match &t.dtype {
+                    dtype if dtype.is_bool() => input_random,
+                    dtype if dtype.is_int() || dtype.is_uint() => {
+                        quote! { #input_random.int().cast(#dtype_tokens) }
+                    }
+                    dtype if dtype.is_float() => {
+                        quote! { #input_random.float().cast(#dtype_tokens) }
+                    }
+                    _ => input_random,
+                }
+            }
             _ => input_random,
         };
 
@@ -73,7 +80,11 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2, Int> {
-            let output = input.random_like(Distribution::Default).lower(input).int();
+            let output = input
+                .random_like(Distribution::Default)
+                .lower(input)
+                .int()
+                .cast(burn::tensor::DType::I32);
             output
         }
         ");
@@ -88,7 +99,11 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2> {
-            let output = input.random_like(Distribution::Default).lower(input).float();
+            let output = input
+                .random_like(Distribution::Default)
+                .lower(input)
+                .float()
+                .cast(burn::tensor::DType::F32);
             output
         }
         ");
@@ -103,7 +118,11 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2, Int> {
-            let output = input.random_like(Distribution::Default).lower(input).int();
+            let output = input
+                .random_like(Distribution::Default)
+                .lower(input)
+                .int()
+                .cast(burn::tensor::DType::I64);
             output
         }
         ");

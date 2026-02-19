@@ -40,23 +40,26 @@ mod tests {
         );
         let expected_bool = input_bool.to_data();
         let expected_int = input_int.to_data();
+        // The ONNX model casts to INT32 (TensorProto value 6), so cross-kind casts
+        // produce I32 tensors via .int().cast(I32), not the backend's default IntElem.
+        let expected_int_i32 = TensorData::from([[1i32], [1i32]]);
         let expected_float = input_float.to_data();
         let expected_scalar = 1;
 
         output1.to_data().assert_eq(&expected_bool, true);
-        output2.to_data().assert_eq(&expected_int, true);
+        output2.to_data().assert_eq(&expected_int_i32, true); // Bool -> I32
         output3
             .to_data()
             .assert_approx_eq::<FT>(&expected_float, Tolerance::default());
 
         output4.to_data().assert_eq(&expected_bool, true);
-        output5.to_data().assert_eq(&expected_int, true);
+        output5.to_data().assert_eq(&expected_int, true); // Int -> Int (noop)
         output6
             .to_data()
             .assert_approx_eq::<FT>(&expected_float, Tolerance::default());
 
         output7.to_data().assert_eq(&expected_bool, true);
-        output8.to_data().assert_eq(&expected_int, true);
+        output8.to_data().assert_eq(&expected_int_i32, true); // Float -> I32
         output9
             .to_data()
             .assert_approx_eq::<FT>(&expected_float, Tolerance::default());

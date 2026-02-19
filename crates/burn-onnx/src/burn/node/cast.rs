@@ -63,27 +63,36 @@ impl NodeCodegen for onnx_ir::cast::CastNode {
                 let input = scope.arg(input_arg);
                 let output = arg_to_ident(output_arg);
 
-                let target_kind = match &self.config.to {
-                    dtype if dtype.is_float() => TensorKind::Float,
-                    dtype if dtype.is_int() || dtype.is_uint() => TensorKind::Int,
-                    dtype if dtype.is_bool() => TensorKind::Bool,
-                    _ => panic!("Unsupported DType for Cast: {:?}", self.config.to),
-                };
+                let input_dtype = input_ty.elem_type();
+                let target_dtype = self.config.to;
+                let input_kind: TensorKind = input_dtype.into();
+                let target_kind: TensorKind = target_dtype.into();
+                let dtype_tokens = target_dtype.to_tokens();
 
-                let input_kind: TensorKind = input_ty.elem_type().into();
-
-                if input_kind == target_kind {
+                if input_dtype == target_dtype {
+                    // Exact same dtype: noop
                     quote! {
                         let #output = #input;
                     }
+                } else if input_kind == target_kind {
+                    // Same kind, different dtype (e.g. F32->F16, I64->I32): cast within kind
+                    quote! {
+                        let #output = #input.cast(#dtype_tokens);
+                    }
+                } else if target_kind == TensorKind::Bool {
+                    // Cross-kind to Bool: only one bool dtype, no cast needed
+                    quote! {
+                        let #output = #input.bool();
+                    }
                 } else {
-                    let cast_fn = match target_kind {
-                        TensorKind::Bool => quote! { bool() },
+                    // Cross-kind to Int or Float: convert kind, then cast to exact dtype
+                    let kind_fn = match target_kind {
                         TensorKind::Int => quote! { int() },
                         TensorKind::Float => quote! { float() },
+                        TensorKind::Bool => unreachable!(),
                     };
                     quote! {
-                        let #output = #input.#cast_fn;
+                        let #output = #input.#kind_fn.cast(#dtype_tokens);
                     }
                 }
             }
@@ -210,7 +219,7 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<B, 2, Int>) -> Tensor<B, 2> {
-            let output = input.float();
+            let output = input.float().cast(burn::tensor::DType::F32);
             output
         }
         ");
@@ -222,7 +231,7 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2, Int> {
-            let output = input.int();
+            let output = input.int().cast(burn::tensor::DType::I32);
             output
         }
         ");
@@ -271,6 +280,42 @@ mod tests {
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: f32) -> i64 {
             let output = input as i64;
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_cast_float32_to_float16() {
+        let node = create_cast_node_tensor("cast1", DType::F32, DType::F16);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2> {
+            let output = input.cast(burn::tensor::DType::F16);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_cast_int64_to_int32() {
+        let node = create_cast_node_tensor("cast1", DType::I64, DType::I32);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<B, 2, Int>) -> Tensor<B, 2, Int> {
+            let output = input.cast(burn::tensor::DType::I32);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_cast_bool_to_int64() {
+        let node = create_cast_node_tensor("cast1", DType::Bool, DType::I64);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<B, 2, Bool>) -> Tensor<B, 2, Int> {
+            let output = input.int().cast(burn::tensor::DType::I64);
             output
         }
         ");

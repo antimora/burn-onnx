@@ -16,7 +16,7 @@ include_models!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::{Tensor, ops::FloatElem};
+    use burn::tensor::{Tensor, TensorData, ops::FloatElem};
 
     use crate::backend::TestBackend;
     type FT = FloatElem<TestBackend>;
@@ -175,15 +175,13 @@ mod tests {
         // Create a 3x3 input tensor
         let input = Tensor::<TestBackend, 2>::zeros([3, 3], &device);
 
-        // Expected output is a 3x3 identity matrix as Int32
-        let expected = Tensor::<TestBackend, 2, burn::tensor::Int>::from_ints(
-            [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-            &device,
-        );
+        // The ONNX model specifies Int32 output via .int().cast(I32),
+        // so expected data must use explicit i32 dtype (not backend's default IntElem).
+        let expected = TensorData::from([[1i32, 0, 0], [0, 1, 0], [0, 0, 1]]);
 
         let output = model.forward(input);
 
-        output.to_data().assert_eq(&expected.to_data(), true);
+        output.to_data().assert_eq(&expected, true);
     }
 
     #[test]

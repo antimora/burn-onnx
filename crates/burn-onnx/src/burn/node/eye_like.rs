@@ -1,6 +1,6 @@
 use super::prelude::*;
 use onnx_ir::ir::ArgType;
-use quote::{ToTokens, quote};
+use quote::ToTokens as _;
 
 impl NodeCodegen for onnx_ir::node::eye_like::EyeLikeNode {
     fn inputs(&self) -> &[Argument] {
@@ -19,13 +19,18 @@ impl NodeCodegen for onnx_ir::node::eye_like::EyeLikeNode {
         // Convert mask to appropriate type based on output tensor kind
         let output_ty = &self.outputs.first().unwrap().ty;
         let conversion = match output_ty {
-            ArgType::Tensor(t) => match &t.dtype {
-                dtype if dtype.is_int() || dtype.is_uint() => quote! { .int() },
-                dtype if dtype.is_float() => quote! { .float() },
-                dtype if dtype.is_bool() => quote! {},
-                _ => quote! { .float() }, // Default to float
-            },
-            _ => quote! { .float() },
+            ArgType::Tensor(t) => {
+                let dtype_tokens = t.dtype.to_tokens();
+                match &t.dtype {
+                    dtype if dtype.is_int() || dtype.is_uint() => {
+                        quote! { .int().cast(#dtype_tokens) }
+                    }
+                    dtype if dtype.is_float() => quote! { .float().cast(#dtype_tokens) },
+                    dtype if dtype.is_bool() => quote! {},
+                    _ => panic!("Unsupported EyeLike output dtype: {:?}", t.dtype),
+                }
+            }
+            _ => panic!("EyeLike output must be a tensor"),
         };
 
         // Use diag_mask to create the diagonal matrix, then invert it
@@ -57,7 +62,8 @@ mod tests {
         pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2> {
             let output = Tensor::diag_mask(input.shape(), 0i64, &*self.device)
                 .bool_not()
-                .float();
+                .float()
+                .cast(burn::tensor::DType::F32);
             output
         }
         ");
@@ -74,7 +80,10 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<B, 2, Int>) -> Tensor<B, 2, Int> {
-            let output = Tensor::diag_mask(input.shape(), 1i64, &*self.device).bool_not().int();
+            let output = Tensor::diag_mask(input.shape(), 1i64, &*self.device)
+                .bool_not()
+                .int()
+                .cast(burn::tensor::DType::I32);
             output
         }
         ");

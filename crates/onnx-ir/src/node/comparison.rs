@@ -48,7 +48,8 @@ use onnx_ir_derive::NodeBuilder;
 
 use crate::ir::{Argument, DType, Node, RawNode};
 use crate::processor::{
-    InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
+    ArgPreference, InputPreferences, InputSpec, NodeProcessor, NodeSpec, OutputPreferences,
+    OutputSpec, ProcessError,
 };
 
 /// Node representation for Equal operation
@@ -108,6 +109,39 @@ impl NodeProcessor for ComparisonProcessor {
             inputs: InputSpec::Exact(2),
             outputs: OutputSpec::Exact(1),
         }
+    }
+
+    fn input_preferences(
+        &self,
+        node: &RawNode,
+        _opset: usize,
+    ) -> Result<Option<InputPreferences>, ProcessError> {
+        if node.inputs.len() != 2 {
+            return Ok(None);
+        }
+
+        let mut prefs = InputPreferences::new();
+
+        // When one input is on_device and the other is a scalar, prefer ScalarNative.
+        // This uses the more efficient `_elem` comparison methods and avoids dtype
+        // mismatch between ScalarTensor constants (loaded with ONNX dtype) and tensors
+        // produced by runtime casts (which use the backend's default element type).
+        if node.inputs[0].ty.is_on_device() && node.inputs[1].ty.is_scalar() {
+            prefs = prefs.add(&node.inputs[1].name, ArgPreference::ScalarNative);
+        }
+        if node.inputs[1].ty.is_on_device() && node.inputs[0].ty.is_scalar() {
+            prefs = prefs.add(&node.inputs[0].name, ArgPreference::ScalarNative);
+        }
+
+        // When one input is ScalarNative, prefer the other as ScalarNative too.
+        if node.inputs[0].ty.is_scalar_native() {
+            prefs = prefs.add(&node.inputs[1].name, ArgPreference::ScalarNative);
+        }
+        if node.inputs[1].ty.is_scalar_native() {
+            prefs = prefs.add(&node.inputs[0].name, ArgPreference::ScalarNative);
+        }
+
+        Ok(Some(prefs))
     }
 
     fn infer_types(

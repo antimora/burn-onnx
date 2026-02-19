@@ -221,12 +221,13 @@ macro_rules! impl_reduce_node {
                         match &input_arg.ty {
                             onnx_ir::ir::ArgType::Tensor(tensor) => {
                                 match tensor.dtype {
-                                    onnx_ir::ir::DType::I8
+                                    dtype @ (onnx_ir::ir::DType::I8
                                     | onnx_ir::ir::DType::I16
                                     | onnx_ir::ir::DType::I32
-                                    | onnx_ir::ir::DType::I64 => {
+                                    | onnx_ir::ir::DType::I64) => {
+                                        let dtype_tokens = dtype.to_tokens();
                                         // Cast to F32 before sqrt to avoid overflow/underflow
-                                        quote! { #input_square_reduced.float().cast(burn::tensor::DType::F32).sqrt().int() }
+                                        quote! { #input_square_reduced.float().cast(burn::tensor::DType::F32).sqrt().int().cast(#dtype_tokens) }
                                     }
                                     _ => {
                                         // Float types - cast to F32 before sqrt, then back
@@ -252,11 +253,12 @@ macro_rules! impl_reduce_node {
                         match &input_arg.ty {
                             onnx_ir::ir::ArgType::Tensor(tensor) => {
                                 match tensor.dtype {
-                                    onnx_ir::ir::DType::I8
+                                    dtype @ (onnx_ir::ir::DType::I8
                                     | onnx_ir::ir::DType::I16
                                     | onnx_ir::ir::DType::I32
-                                    | onnx_ir::ir::DType::I64 => {
-                                        quote! { #input_reduced.float().cast(burn::tensor::DType::F32).log().int() }
+                                    | onnx_ir::ir::DType::I64) => {
+                                        let dtype_tokens = dtype.to_tokens();
+                                        quote! { #input_reduced.float().cast(burn::tensor::DType::F32).log().int().cast(#dtype_tokens) }
                                     }
                                     _ => {
                                         quote! {
@@ -316,11 +318,12 @@ macro_rules! impl_reduce_node {
                         match &input_arg.ty {
                             onnx_ir::ir::ArgType::Tensor(tensor) => {
                                 match tensor.dtype {
-                                    onnx_ir::ir::DType::I8
+                                    dtype @ (onnx_ir::ir::DType::I8
                                     | onnx_ir::ir::DType::I16
                                     | onnx_ir::ir::DType::I32
-                                    | onnx_ir::ir::DType::I64 => {
-                                        quote! { #input_reduced.int() }
+                                    | onnx_ir::ir::DType::I64) => {
+                                        let dtype_tokens = dtype.to_tokens();
+                                        quote! { #input_reduced.int().cast(#dtype_tokens) }
                                     }
                                     _ => {
                                         quote! { #input_reduced.cast(input_dtype) }
