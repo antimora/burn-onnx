@@ -38,7 +38,7 @@ impl NodeCodegen for onnx_ir::matmulinteger::MatMulIntegerNode {
                 quote! { (#zp).cast(#output_dtype) }
             }
         } else {
-            quote! { Tensor::zeros_like(&#lhs) }
+            quote! { Tensor::zeros_like(&#lhs).cast(#output_dtype) }
         };
 
         let rhs_zp = if let Some(zp_input) = self.inputs.get(3) {
@@ -49,7 +49,7 @@ impl NodeCodegen for onnx_ir::matmulinteger::MatMulIntegerNode {
                 quote! { (#zp).cast(#output_dtype) }
             }
         } else {
-            quote! { Tensor::zeros_like(&#rhs) }
+            quote! { Tensor::zeros_like(&#rhs).cast(#output_dtype) }
         };
 
         // Centered inputs: cast to output dtype and subtract zero-points
@@ -126,8 +126,14 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, a: Tensor<B, 2, Int>, b: Tensor<B, 2, Int>) -> Tensor<B, 2, Int> {
-            let output = ((a).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&a)))
-                .matmul((b).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&b)));
+            let output = ((a)
+                .cast(burn::tensor::DType::I32)
+                .sub(Tensor::zeros_like(&a).cast(burn::tensor::DType::I32)))
+                .matmul(
+                    (b)
+                        .cast(burn::tensor::DType::I32)
+                        .sub(Tensor::zeros_like(&b).cast(burn::tensor::DType::I32)),
+                );
             output
         }
         ");
@@ -183,7 +189,11 @@ mod tests {
             let output = ((a)
                 .cast(burn::tensor::DType::I32)
                 .sub((a_zero_point).cast(burn::tensor::DType::I32).unsqueeze::<2usize>()))
-                .matmul((b).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&b)));
+                .matmul(
+                    (b)
+                        .cast(burn::tensor::DType::I32)
+                        .sub(Tensor::zeros_like(&b).cast(burn::tensor::DType::I32)),
+                );
             output
         }
         ");
@@ -199,9 +209,13 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, a: Tensor<B, 3, Int>, b: Tensor<B, 2, Int>) -> Tensor<B, 3, Int> {
-            let output = ((a).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&a)))
+            let output = ((a)
+                .cast(burn::tensor::DType::I32)
+                .sub(Tensor::zeros_like(&a).cast(burn::tensor::DType::I32)))
                 .matmul(
-                    ((b).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&b)))
+                    ((b)
+                        .cast(burn::tensor::DType::I32)
+                        .sub(Tensor::zeros_like(&b).cast(burn::tensor::DType::I32)))
                         .unsqueeze::<3usize>(),
                 );
             output
@@ -219,9 +233,15 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, a: Tensor<B, 2, Int>, b: Tensor<B, 3, Int>) -> Tensor<B, 3, Int> {
-            let output = ((a).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&a)))
+            let output = ((a)
+                .cast(burn::tensor::DType::I32)
+                .sub(Tensor::zeros_like(&a).cast(burn::tensor::DType::I32)))
                 .unsqueeze::<3usize>()
-                .matmul((b).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&b)));
+                .matmul(
+                    (b)
+                        .cast(burn::tensor::DType::I32)
+                        .sub(Tensor::zeros_like(&b).cast(burn::tensor::DType::I32)),
+                );
             output
         }
         ");
@@ -237,9 +257,13 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, a: Tensor<B, 2, Int>, b: Tensor<B, 1, Int>) -> Tensor<B, 1, Int> {
-            let output = ((a).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&a)))
+            let output = ((a)
+                .cast(burn::tensor::DType::I32)
+                .sub(Tensor::zeros_like(&a).cast(burn::tensor::DType::I32)))
                 .matmul(
-                    ((b).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&b)))
+                    ((b)
+                        .cast(burn::tensor::DType::I32)
+                        .sub(Tensor::zeros_like(&b).cast(burn::tensor::DType::I32)))
                         .unsqueeze_dims(&[-1isize]),
                 )
                 .squeeze_dim::<1usize>(1usize);
@@ -258,9 +282,15 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, a: Tensor<B, 1, Int>, b: Tensor<B, 2, Int>) -> Tensor<B, 1, Int> {
-            let output = ((a).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&a)))
+            let output = ((a)
+                .cast(burn::tensor::DType::I32)
+                .sub(Tensor::zeros_like(&a).cast(burn::tensor::DType::I32)))
                 .unsqueeze::<2usize>()
-                .matmul((b).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&b)))
+                .matmul(
+                    (b)
+                        .cast(burn::tensor::DType::I32)
+                        .sub(Tensor::zeros_like(&b).cast(burn::tensor::DType::I32)),
+                )
                 .squeeze_dim::<1usize>(0usize);
             output
         }
@@ -277,9 +307,13 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, a: Tensor<B, 3, Int>, b: Tensor<B, 1, Int>) -> Tensor<B, 2, Int> {
-            let output = ((a).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&a)))
+            let output = ((a)
+                .cast(burn::tensor::DType::I32)
+                .sub(Tensor::zeros_like(&a).cast(burn::tensor::DType::I32)))
                 .matmul(
-                    ((b).cast(burn::tensor::DType::I32).sub(Tensor::zeros_like(&b)))
+                    ((b)
+                        .cast(burn::tensor::DType::I32)
+                        .sub(Tensor::zeros_like(&b).cast(burn::tensor::DType::I32)))
                         .unsqueeze_dims(&[-1isize, 0isize]),
                 )
                 .squeeze_dim::<2usize>(2usize);
