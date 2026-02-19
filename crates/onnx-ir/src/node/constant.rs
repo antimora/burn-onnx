@@ -89,13 +89,9 @@ impl NodeProcessor for ConstantProcessor {
                 .any(|(_, ty)| matches!(ty, crate::processor::ArgPreference::Shape));
 
             // Check if any consumer wants ScalarNative (for shape ops, arange, conditions)
-            let wants_scalar_native = preferences.iter().any(|(_, ty)| {
-                matches!(
-                    ty,
-                    crate::processor::ArgPreference::ScalarNative
-                        | crate::processor::ArgPreference::Scalar
-                )
-            });
+            let wants_scalar_native = preferences
+                .iter()
+                .any(|(_, ty)| matches!(ty, crate::processor::ArgPreference::ScalarNative));
 
             match &base_type {
                 // Convert 1D tensor to Shape if requested and we have static shape info
