@@ -68,8 +68,8 @@ fn clip(graph: &OnnxGraph) {
     Clip "clip1"
       Inputs:
         clip_input: F32[2, 3, 4]
-        _: Scalar(F32) [static(0)]
-        _: Scalar(F32) [static(1)]
+        _: ScalarNative(F32) [static(0)]
+        _: ScalarNative(F32) [static(1)]
       Outputs:
         clip1_out1: F32[2, 3, 4]
       Config:
@@ -133,7 +133,7 @@ fn greater_or_equal(graph: &OnnxGraph) {
         greaterorequal_a: F32[2, 3, 4]
         greaterorequal_b: F32[2, 3, 4]
       Outputs:
-        greaterorequal1_out1: Bool[?, ?, ?]
+        greaterorequal1_out1: Bool[2, 3, 4]
     "#);
 }
 
@@ -146,7 +146,7 @@ fn less_or_equal(graph: &OnnxGraph) {
         lessorequal_a: F32[2, 3, 4]
         lessorequal_b: F32[2, 3, 4]
       Outputs:
-        lessorequal1_out1: Bool[?, ?, ?]
+        lessorequal1_out1: Bool[2, 3, 4]
     "#);
 }
 

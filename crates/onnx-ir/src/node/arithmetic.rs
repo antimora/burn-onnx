@@ -107,28 +107,37 @@ impl NodeProcessor for ArithmeticBinaryProcessor {
         // - new_shape = old_shape + offset
         // - half_shape = old_shape / 2
 
-        // Case 1: Shape op Constant => prefer Constant as Shape
+        // Case 1: Shape op Constant => prefer Constant as Shape (or ScalarNative for scalars)
         if node.inputs[0].ty.is_shape() {
-            prefs = prefs.add(&node.inputs[1].name, ArgPreference::Shape);
+            if node.inputs[1].ty.is_scalar() {
+                prefs = prefs.add(&node.inputs[1].name, ArgPreference::ScalarNative);
+            } else {
+                prefs = prefs.add(&node.inputs[1].name, ArgPreference::Shape);
+            }
         }
 
-        // Case 2: Constant op Shape => prefer Constant as Shape
+        // Case 2: Constant op Shape => prefer Constant as Shape (or ScalarNative for scalars)
         if node.inputs[1].ty.is_shape() {
-            prefs = prefs.add(&node.inputs[0].name, ArgPreference::Shape);
+            if node.inputs[0].ty.is_scalar() {
+                prefs = prefs.add(&node.inputs[0].name, ArgPreference::ScalarNative);
+            } else {
+                prefs = prefs.add(&node.inputs[0].name, ArgPreference::Shape);
+            }
         }
 
-        // Type propagation for Scalar arithmetic:
-        // When performing arithmetic on a Scalar with a constant, prefer the constant to be Scalar type.
-        // This preserves scalar semantics through arithmetic operations.
+        // Type propagation for ScalarNative arithmetic:
+        // When one input is ScalarNative, the other should also be ScalarNative
+        // to keep CPU-side arithmetic chains on CPU.
+        // ScalarTensor inputs don't need preferences (they're the performant default).
 
-        // Case 3: Scalar op Constant => prefer Constant as Scalar
-        if node.inputs[0].ty.is_scalar() {
-            prefs = prefs.add(&node.inputs[1].name, ArgPreference::Scalar);
+        // Case 3: ScalarNative op Constant => prefer Constant as ScalarNative
+        if node.inputs[0].ty.is_scalar_native() {
+            prefs = prefs.add(&node.inputs[1].name, ArgPreference::ScalarNative);
         }
 
-        // Case 4: Constant op Scalar => prefer Constant as Scalar
-        if node.inputs[1].ty.is_scalar() {
-            prefs = prefs.add(&node.inputs[0].name, ArgPreference::Scalar);
+        // Case 4: Constant op ScalarNative => prefer Constant as ScalarNative
+        if node.inputs[1].ty.is_scalar_native() {
+            prefs = prefs.add(&node.inputs[0].name, ArgPreference::ScalarNative);
         }
 
         Ok(Some(prefs))

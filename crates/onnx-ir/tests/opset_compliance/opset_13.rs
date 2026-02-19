@@ -105,8 +105,8 @@ fn clip(graph: &OnnxGraph) {
     Clip "clip1"
       Inputs:
         clip_input: F32[2, 3, 4]
-        _: Scalar(F32) [static(0)]
-        _: Scalar(F32) [static(1)]
+        _: ScalarNative(F32) [static(0)]
+        _: ScalarNative(F32) [static(1)]
       Outputs:
         clip1_out1: F32[2, 3, 4]
       Config:
@@ -200,7 +200,7 @@ fn equal(graph: &OnnxGraph) {
         equal_a: F32[2, 3, 4]
         equal_b: F32[2, 3, 4]
       Outputs:
-        equal1_out1: Bool[?, ?, ?]
+        equal1_out1: Bool[2, 3, 4]
     "#);
 }
 
@@ -367,7 +367,7 @@ fn greater(graph: &OnnxGraph) {
         greater_a: F32[2, 3, 4]
         greater_b: F32[2, 3, 4]
       Outputs:
-        greater1_out1: Bool[?, ?, ?]
+        greater1_out1: Bool[2, 3, 4]
     "#);
 }
 
@@ -400,7 +400,7 @@ fn if_op(graph: &OnnxGraph) {
     insta::assert_snapshot!(format!("{node}"), @r#"
     If "if1"
       Inputs:
-        if_condition: Scalar(Bool)
+        if_condition: ScalarNative(Bool)
       Outputs:
         if1_out1: F32[2, 3]
       Config:
@@ -618,7 +618,7 @@ fn is_na_n(graph: &OnnxGraph) {
       Inputs:
         isnan_input: F32[2, 3]
       Outputs:
-        isnan1_out1: Bool[?, ?]
+        isnan1_out1: Bool[2, 3]
     "#);
 }
 
@@ -631,7 +631,7 @@ fn less(graph: &OnnxGraph) {
         less_a: F32[2, 3, 4]
         less_b: F32[2, 3, 4]
       Outputs:
-        less1_out1: Bool[?, ?, ?]
+        less1_out1: Bool[2, 3, 4]
     "#);
 }
 
@@ -777,7 +777,7 @@ fn pad(graph: &OnnxGraph) {
       Inputs:
         pad_input: F32[2, 3]
         _: I64[4] [static(10)]
-        _: Scalar(F32) [static(11)]
+        _: ScalarNative(F32) [static(11)]
       Outputs:
         pad1_out1: F32[2, 3]
       Config:
@@ -1172,7 +1172,7 @@ fn size(graph: &OnnxGraph) {
       Inputs:
         size_input: F32[2, 3, 4]
       Outputs:
-        size1_out1: Scalar(I64)
+        size1_out1: ScalarNative(I64)
     "#);
 }
 

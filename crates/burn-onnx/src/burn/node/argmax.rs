@@ -34,9 +34,14 @@ impl NodeCodegen for onnx_ir::node::argmax::ArgMaxNode {
                     }
                 }
             }
-            onnx_ir::ir::ArgType::Scalar(_) => {
-                // 1D tensor with keepdims=false -> scalar output
-                // ArgMax always outputs Int64 indices
+            onnx_ir::ir::ArgType::ScalarTensor(_) => {
+                // 1D tensor with keepdims=false -> keep as Tensor<B, 1> on device
+                quote! {
+                    let #output = #input.argmax(#axis).reshape([1]);
+                }
+            }
+            onnx_ir::ir::ArgType::ScalarNative(_) => {
+                // 1D tensor with keepdims=false -> extract to native scalar
                 quote! {
                     let argmax_result = #input.argmax(#axis);
                     let #output = argmax_result.into_scalar().elem::<i64>();
@@ -90,9 +95,26 @@ mod tests {
     }
 
     #[test]
-    fn test_argmax_scalar_output() {
+    fn test_argmax_scalar_tensor_output() {
         let config = ArgMaxConfig::new(0, false);
         let node = ArgMaxNodeBuilder::new("argmax3")
+            .input_tensor("input", 1, DType::F32)
+            .output_scalar_tensor("output", DType::I64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<B, 1>) -> Tensor<B, 1, Int> {
+            let output = input.argmax(0).reshape([1]);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_argmax_scalar_native_output() {
+        let config = ArgMaxConfig::new(0, false);
+        let node = ArgMaxNodeBuilder::new("argmax4")
             .input_tensor("input", 1, DType::F32)
             .output_scalar("output", DType::I64)
             .config(config)

@@ -18,8 +18,8 @@ impl NodeCodegen for onnx_ir::node::neg::NegNode {
         let input = scope.arg(input_arg);
 
         let neg_expr = match &input_arg.ty {
-            ArgType::Tensor(_) => quote! { #input.neg() },
-            ArgType::Scalar(_) => quote! { -#input },
+            ArgType::Tensor(_) | ArgType::ScalarTensor(_) => quote! { #input.neg() },
+            ArgType::ScalarNative(_) => quote! { -#input },
             _ => panic!("Neg only supports tensor or scalar inputs"),
         };
 

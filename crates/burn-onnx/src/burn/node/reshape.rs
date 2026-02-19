@@ -27,7 +27,13 @@ impl NodeCodegen for onnx_ir::reshape::ReshapeNode {
 
                         // Check if output is a scalar
                         match &output_arg.ty {
-                            ArgType::Scalar(elem_type) => {
+                            ArgType::ScalarTensor(_) => {
+                                // Keep on device as Tensor<B, 1>
+                                quote! {
+                                    let #output = #input.reshape([1]);
+                                }
+                            }
+                            ArgType::ScalarNative(elem_type) => {
                                 use onnx_ir::ir::DType;
                                 let elem_cast = match elem_type {
                                     DType::F32 => quote! { .elem::<f32>() },
@@ -57,21 +63,29 @@ impl NodeCodegen for onnx_ir::reshape::ReshapeNode {
                         let input_name = arg_to_ident(input_arg);
 
                         match &output_arg.ty {
-                            ArgType::Scalar(elem_type) => {
+                            ArgType::ScalarTensor(_) => {
                                 if *input_rank != 1 {
                                     panic!(
                                         "Shape to scalar requires Shape(1), got Shape({})",
                                         input_rank
                                     );
                                 }
-                                use onnx_ir::ir::DType;
-                                let cast_expr = match elem_type {
-                                    DType::I64 => quote! { #input_name[0] as i64 },
-                                    DType::I32 => quote! { #input_name[0] as i32 },
-                                    _ => panic!(
-                                        "Shape to Scalar only supports Int32/Int64 output types"
-                                    ),
-                                };
+                                // Shape [i64; 1] -> Tensor<B, 1, Int> on device
+                                quote! {
+                                    let #output = Tensor::<B, 1, Int>::from_data(
+                                        burn::tensor::TensorData::from([#input_name[0]]),
+                                        &*self.device,
+                                    );
+                                }
+                            }
+                            ArgType::ScalarNative(elem_type) => {
+                                if *input_rank != 1 {
+                                    panic!(
+                                        "Shape to scalar requires Shape(1), got Shape({})",
+                                        input_rank
+                                    );
+                                }
+                                let cast_expr = shape_to_native(quote! { #input_name }, elem_type);
                                 quote! {
                                     let #output = #cast_expr;
                                 }
@@ -109,8 +123,8 @@ impl NodeCodegen for onnx_ir::reshape::ReshapeNode {
                             }
                         }
                     }
-                    ArgType::Scalar(_) => {
-                        // Scalar input - convert scalar to tensor or pass through
+                    ArgType::ScalarNative(input_dtype) => {
+                        // Native scalar input - convert to tensor or pass through
                         let input_name = arg_to_ident(input_arg);
 
                         match &output_arg.ty {
@@ -139,24 +153,58 @@ impl NodeCodegen for onnx_ir::reshape::ReshapeNode {
                                         ).reshape(#shape_values);
                                     }
                                 } else {
-                                    // Bool
+                                    // Bool output
+                                    let bool_expr = if input_dtype.is_bool() {
+                                        quote! { #input_name }
+                                    } else {
+                                        quote! { #input_name != 0 }
+                                    };
                                     quote! {
                                         let #output = Tensor::<B, #output_rank, Bool>::from_data_dtype(
-                                            burn::tensor::TensorData::from([#input_name != 0]),
+                                            burn::tensor::TensorData::from([#bool_expr]),
                                             &*self.device,
                                             #dtype_tokens
                                         ).reshape(#shape_values);
                                     }
                                 }
                             }
-                            ArgType::Scalar(_) => {
-                                // Scalar to scalar - just pass through
+                            ArgType::ScalarNative(_) => {
                                 quote! {
                                     let #output = #input_name;
                                 }
                             }
+                            ArgType::ScalarTensor(_) => {
+                                panic!("Reshape: ScalarNative to ScalarTensor not supported")
+                            }
                             _ => {
                                 panic!("Reshape: scalar input to {:?} not supported", output_arg.ty)
+                            }
+                        }
+                    }
+                    ArgType::ScalarTensor(_) => {
+                        // ScalarTensor is already a Tensor<B, 1> on device
+                        let input = scope.arg(input_arg);
+
+                        match &output_arg.ty {
+                            ArgType::Tensor(_) => {
+                                let shape_values = shape_values.to_tokens();
+                                quote! {
+                                    let #output = #input.reshape(#shape_values);
+                                }
+                            }
+                            ArgType::ScalarTensor(_) => {
+                                quote! {
+                                    let #output = #input;
+                                }
+                            }
+                            ArgType::ScalarNative(elem_type) => {
+                                let elem_cast = on_device_to_native(input, elem_type);
+                                quote! {
+                                    let #output = #elem_cast;
+                                }
+                            }
+                            _ => {
+                                panic!("Reshape: ScalarTensor to {:?} not supported", output_arg.ty)
                             }
                         }
                     }
@@ -195,7 +243,7 @@ impl NodeCodegen for onnx_ir::reshape::ReshapeNode {
                             let #output = #input.reshape([#(#array_init),*]);
                         }
                     }
-                    ArgType::Scalar(_) => {
+                    ArgType::ScalarNative(_) | ArgType::ScalarTensor(_) => {
                         panic!("Reshape: shape argument cannot be scalar")
                     }
                 }
@@ -703,6 +751,50 @@ mod tests {
         pub fn forward(&self, x: f32) -> f32 {
             let y = x;
             y
+        }
+        ");
+    }
+
+    // Tensor -> ScalarTensor (keep on device)
+    #[test]
+    fn test_reshape_tensor_to_scalar_tensor() {
+        let config = ReshapeConfig {
+            shape: ReshapeInput::Static(vec![]),
+        };
+        let node = ReshapeNodeBuilder::new("reshape1")
+            .input_tensor("tensor", 1, DType::F32)
+            .output_scalar_tensor("output", DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, tensor: Tensor<B, 1>) -> Tensor<B, 1> {
+            let output = tensor.reshape([1]);
+            output
+        }
+        ");
+    }
+
+    // Shape -> ScalarTensor (put shape value on device)
+    #[test]
+    fn test_reshape_shape_to_scalar_tensor() {
+        let config = ReshapeConfig {
+            shape: ReshapeInput::Static(vec![]),
+        };
+        let node = ReshapeNodeBuilder::new("reshape1")
+            .input_shape("shape_in", 1)
+            .output_scalar_tensor("output", DType::I64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, shape_in: [i64; 1]) -> Tensor<B, 1, Int> {
+            let output = Tensor::<
+                B,
+                1,
+                Int,
+            >::from_data(burn::tensor::TensorData::from([shape_in[0]]), &*self.device);
+            output
         }
         ");
     }

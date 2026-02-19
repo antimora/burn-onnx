@@ -77,25 +77,31 @@ impl NodeProcessor for ModuloProcessor {
         let mut prefs = InputPreferences::new();
 
         // Type propagation for Shape arithmetic (same as Add/Sub/Mul/Div)
-        // Case 1: Shape op Constant => prefer Constant as Shape
+        // Case 1: Shape op Constant => prefer Constant as Shape (or ScalarNative for scalars)
         if node.inputs[0].ty.is_shape() {
-            prefs = prefs.add(&node.inputs[1].name, ArgPreference::Shape);
+            if node.inputs[1].ty.is_scalar() {
+                prefs = prefs.add(&node.inputs[1].name, ArgPreference::ScalarNative);
+            } else {
+                prefs = prefs.add(&node.inputs[1].name, ArgPreference::Shape);
+            }
         }
 
-        // Case 2: Constant op Shape => prefer Constant as Shape
+        // Case 2: Constant op Shape => prefer Constant as Shape (or ScalarNative for scalars)
         if node.inputs[1].ty.is_shape() {
-            prefs = prefs.add(&node.inputs[0].name, ArgPreference::Shape);
+            if node.inputs[0].ty.is_scalar() {
+                prefs = prefs.add(&node.inputs[0].name, ArgPreference::ScalarNative);
+            } else {
+                prefs = prefs.add(&node.inputs[0].name, ArgPreference::Shape);
+            }
         }
 
-        // Type propagation for Scalar arithmetic
-        // Case 3: Scalar op Constant => prefer Constant as Scalar
-        if node.inputs[0].ty.is_scalar() {
-            prefs = prefs.add(&node.inputs[1].name, ArgPreference::Scalar);
+        // Type propagation for ScalarNative arithmetic
+        if node.inputs[0].ty.is_scalar_native() {
+            prefs = prefs.add(&node.inputs[1].name, ArgPreference::ScalarNative);
         }
 
-        // Case 4: Constant op Scalar => prefer Constant as Scalar
-        if node.inputs[1].ty.is_scalar() {
-            prefs = prefs.add(&node.inputs[0].name, ArgPreference::Scalar);
+        if node.inputs[1].ty.is_scalar_native() {
+            prefs = prefs.add(&node.inputs[0].name, ArgPreference::ScalarNative);
         }
 
         Ok(Some(prefs))

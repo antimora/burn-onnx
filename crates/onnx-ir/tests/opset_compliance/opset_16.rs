@@ -20,7 +20,7 @@ fn greater_or_equal(graph: &OnnxGraph) {
         greaterorequal_a: F32[2, 3, 4]
         greaterorequal_b: F32[2, 3, 4]
       Outputs:
-        greaterorequal1_out1: Bool[?, ?, ?]
+        greaterorequal1_out1: Bool[2, 3, 4]
     "#);
 }
 
@@ -56,7 +56,7 @@ fn if_op(graph: &OnnxGraph) {
     insta::assert_snapshot!(format!("{node}"), @r#"
     If "if1"
       Inputs:
-        if_condition: Scalar(Bool)
+        if_condition: ScalarNative(Bool)
       Outputs:
         if1_out1: F32[2, 3]
       Config:
@@ -291,7 +291,7 @@ fn less_or_equal(graph: &OnnxGraph) {
         lessorequal_a: F32[2, 3, 4]
         lessorequal_b: F32[2, 3, 4]
       Outputs:
-        lessorequal1_out1: Bool[?, ?, ?]
+        lessorequal1_out1: Bool[2, 3, 4]
     "#);
 }
 

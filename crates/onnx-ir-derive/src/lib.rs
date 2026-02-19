@@ -203,10 +203,17 @@ pub fn node_builder_derive(input: TokenStream) -> TokenStream {
                 self
             }
 
-            /// Add a scalar input
+            /// Add a scalar input (native Rust type, rank 0)
             pub fn input_scalar(mut self, name: &str, dtype: burn_tensor::DType) -> Self {
                 use crate::ir::{Argument, ArgType};
-                self.inputs.push(Argument::new(name, ArgType::Scalar(dtype)));
+                self.inputs.push(Argument::new(name, ArgType::ScalarNative(dtype)));
+                self
+            }
+
+            /// Add a scalar tensor input (1D tensor on device, rank 1)
+            pub fn input_scalar_tensor(mut self, name: &str, dtype: burn_tensor::DType) -> Self {
+                use crate::ir::{Argument, ArgType};
+                self.inputs.push(Argument::new(name, ArgType::ScalarTensor(dtype)));
                 self
             }
 
@@ -238,10 +245,17 @@ pub fn node_builder_derive(input: TokenStream) -> TokenStream {
                 self
             }
 
-            /// Add a scalar output
+            /// Add a scalar output (native Rust type, rank 0)
             pub fn output_scalar(mut self, name: &str, dtype: burn_tensor::DType) -> Self {
                 use crate::ir::{Argument, ArgType};
-                self.outputs.push(Argument::new(name, ArgType::Scalar(dtype)));
+                self.outputs.push(Argument::new(name, ArgType::ScalarNative(dtype)));
+                self
+            }
+
+            /// Add a scalar tensor output (1D tensor on device, rank 1)
+            pub fn output_scalar_tensor(mut self, name: &str, dtype: burn_tensor::DType) -> Self {
+                use crate::ir::{Argument, ArgType};
+                self.outputs.push(Argument::new(name, ArgType::ScalarTensor(dtype)));
                 self
             }
 

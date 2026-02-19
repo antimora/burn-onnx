@@ -117,10 +117,10 @@ fn batch_normalization(graph: &OnnxGraph) {
         _: F32[3] [static(3)]
       Outputs:
         batchnormalization1_out1: F32[1, 3, 4, 4]
-        batchnormalization1_out2: Scalar(F32)
-        batchnormalization1_out3: Scalar(F32)
-        batchnormalization1_out4: Scalar(F32)
-        batchnormalization1_out5: Scalar(F32)
+        batchnormalization1_out2: ScalarNative(F32)
+        batchnormalization1_out3: ScalarNative(F32)
+        batchnormalization1_out4: ScalarNative(F32)
+        batchnormalization1_out5: ScalarNative(F32)
       Config:
         Static(
             BatchNormStaticConfig {
@@ -172,7 +172,7 @@ fn equal(graph: &OnnxGraph) {
         equal_a: F32[2, 3, 4]
         equal_b: F32[2, 3, 4]
       Outputs:
-        equal1_out1: Bool[?, ?, ?]
+        equal1_out1: Bool[2, 3, 4]
     "#);
 }
 
@@ -235,7 +235,7 @@ fn greater(graph: &OnnxGraph) {
         greater_a: F32[2, 3, 4]
         greater_b: F32[2, 3, 4]
       Outputs:
-        greater1_out1: Bool[?, ?, ?]
+        greater1_out1: Bool[2, 3, 4]
     "#);
 }
 
@@ -278,7 +278,7 @@ fn less(graph: &OnnxGraph) {
         less_a: F32[2, 3, 4]
         less_b: F32[2, 3, 4]
       Outputs:
-        less1_out1: Bool[?, ?, ?]
+        less1_out1: Bool[2, 3, 4]
     "#);
 }
 

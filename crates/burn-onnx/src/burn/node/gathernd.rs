@@ -16,10 +16,33 @@ impl NodeCodegen for onnx_ir::gathernd::GatherNDNode {
 
         let batch_dims_lit = proc_macro2::Literal::usize_unsuffixed(self.config.batch_dims);
 
-        let is_scalar = matches!(&self.outputs[0].ty, ArgType::Scalar(_));
+        let is_scalar = self.outputs[0].ty.is_scalar();
 
         if is_scalar {
+            let is_native = matches!(&self.outputs[0].ty, ArgType::ScalarNative(_));
             // Scalar output: k == r, each index tuple fully specifies a single element
+            let extract_expr = if is_native {
+                let dtype = match &self.outputs[0].ty {
+                    ArgType::ScalarNative(d) => d,
+                    _ => unreachable!(),
+                };
+                let select_expr = quote! {
+                    data_flat.select(0, Tensor::<B, 1, Int>::from_data(
+                        burn::tensor::TensorData::from([offset as i32].as_slice()),
+                        &*self.device,
+                    ))
+                };
+                on_device_to_native(select_expr, dtype)
+            } else {
+                // ScalarTensor: keep as Tensor<B, 1> on device
+                quote! {
+                    data_flat.select(0, Tensor::<B, 1, Int>::from_data(
+                        burn::tensor::TensorData::from([offset as i32].as_slice()),
+                        &*self.device,
+                    ))
+                }
+            };
+
             quote! {
                 let #output = {
                     let data_dims = #data.dims();
@@ -42,10 +65,7 @@ impl NodeCodegen for onnx_ir::gathernd::GatherNDNode {
                     }
 
                     let data_flat = #data.reshape([data_dims.iter().product::<usize>()]);
-                    data_flat.select(0, Tensor::<B, 1, Int>::from_data(
-                        burn::tensor::TensorData::from([offset as i32].as_slice()),
-                        &*self.device,
-                    )).into_scalar()
+                    #extract_expr
                 };
             }
         } else {
@@ -559,6 +579,7 @@ mod tests {
                         ),
                     )
                     .into_scalar()
+                    .elem::<f32>()
             };
             output
         }

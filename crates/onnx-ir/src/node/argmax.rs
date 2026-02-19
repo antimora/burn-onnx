@@ -85,7 +85,7 @@ impl NodeProcessor for ArgMaxProcessor {
             });
         } else if tensor.rank == 1 {
             // keepdims=false on 1D tensor: output is scalar
-            node.outputs[0].ty = ArgType::Scalar(DType::I64);
+            node.outputs[0].ty = ArgType::ScalarTensor(DType::I64);
         } else {
             // keepdims=false on nD tensor (n > 1): output rank is input rank - 1
             node.outputs[0].ty = ArgType::Tensor(TensorType {
@@ -370,12 +370,12 @@ mod tests {
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
-        // Should output scalar (rank 0)
+        // Should output ScalarTensor (stays on device)
         match &node.outputs[0].ty {
-            ArgType::Scalar(elem_type) => {
+            ArgType::ScalarTensor(elem_type) => {
                 assert_eq!(*elem_type, crate::ir::DType::I64);
             }
-            other => panic!("Expected scalar output, got {:?}", other),
+            other => panic!("Expected ScalarTensor output, got {:?}", other),
         }
     }
 }
