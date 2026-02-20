@@ -32,6 +32,7 @@ fn main() {
     let model_name = MODEL_NAME;
     let display_name = match model_name {
         "smollm-135m" => "SmolLM 135M",
+        "smollm2-135m" => "SmolLM2 135M",
         _ => model_name,
     };
 
@@ -61,6 +62,7 @@ fn main() {
         eprintln!();
         eprintln!("Available models:");
         eprintln!("  - smollm-135m");
+        eprintln!("  - smollm2-135m");
         std::process::exit(1);
     }
 

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    let supported_models = vec!["smollm-135m"];
+    let supported_models = vec!["smollm-135m", "smollm2-135m"];
 
     let model_name = env::var("SMOLLM_MODEL").unwrap_or_else(|_| {
         eprintln!("Error: SMOLLM_MODEL environment variable is not set.");
@@ -56,7 +56,7 @@ fn main() {
         .run_from_script();
 
     let (seq_length, vocab_size) = match model_name.as_str() {
-        "smollm-135m" => (32usize, 49152usize),
+        "smollm-135m" | "smollm2-135m" => (32usize, 49152usize),
         _ => unreachable!(),
     };
 

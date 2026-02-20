@@ -27,6 +27,12 @@ SUPPORTED_MODELS = {
         'seq_length': 32,
         'vocab_size': 49152,
     },
+    'smollm2-135m': {
+        'hf_name': 'HuggingFaceTB/SmolLM2-135M',
+        'display_name': 'SmolLM2 135M',
+        'seq_length': 32,
+        'vocab_size': 49152,
+    },
 }
 
 

@@ -83,6 +83,5 @@ The build process will:
 | `modernbert-base/` | ModernBERT-base | HuggingFace | |
 | `rf-detr/` | RF-DETR Small | Roboflow | [#4052](https://github.com/tracel-ai/burn/issues/4052) |
 | `silero-vad/` | Silero VAD | Silero | |
-| `smollm/` | SmolLM 135M | HuggingFace | |
-| `smollm2/` | SmolLM2 135M | HuggingFace | |
+| `smollm/` | SmolLM / SmolLM2 (135M) | HuggingFace | |
 | `yolo/` | YOLO (v5/v8/v10/v11/v12) | Ultralytics | |
