@@ -1,7 +1,10 @@
-#![cfg_attr(not(test), no_std)]
+#![no_std]
 #![recursion_limit = "135"]
+
+extern crate alloc;
+
+#[cfg(test)]
+extern crate std;
 
 pub mod model;
 pub mod web;
-
-extern crate alloc;
