@@ -9,9 +9,9 @@ represents a different model that we test to ensure burn-onnx can correctly:
 
 ## Purpose
 
-The model-checks serve as integration tests to verify that burn-onnx works correctly with
-real-world models. These tests help catch regressions and ensure compatibility with various ONNX
-operators and model architectures.
+The model-checks serve as integration tests to verify that burn-onnx works correctly with real-world
+models. These tests help catch regressions and ensure compatibility with various ONNX operators and
+model architectures.
 
 ## Structure
 
@@ -73,15 +73,17 @@ The build process will:
 
 ## Models
 
-| Directory | Model | Source | Related Issue |
-|-----------|-------|--------|---------------|
-| `albert/` | ALBERT | HuggingFace | |
-| `all-minilm-l6-v2/` | all-MiniLM-L6-v2 | HuggingFace | |
-| `clip-vit-b-32-text/` | CLIP ViT-B-32 (text) | HuggingFace | |
-| `clip-vit-b-32-vision/` | CLIP ViT-B-32 (vision) | HuggingFace | |
-| `mediapipe-face-detector/` | MediaPipe Face Detector (BlazeFace) | Google MediaPipe | [#1370](https://github.com/tracel-ai/burn/issues/1370) |
-| `modernbert-base/` | ModernBERT-base | HuggingFace | |
-| `rf-detr/` | RF-DETR Small | Roboflow | [#4052](https://github.com/tracel-ai/burn/issues/4052) |
-| `silero-vad/` | Silero VAD | Silero | |
-| `smollm/` | SmolLM / SmolLM2 (135M) | HuggingFace | |
-| `yolo/` | YOLO (v5/v8/v10/v11/v12) | Ultralytics | |
+| Directory                  | Model                               | Source              |
+| -------------------------- | ----------------------------------- | ------------------- |
+| `albert/`                  | ALBERT                              | HuggingFace         |
+| `all-minilm-l6-v2/`        | all-MiniLM-L6-v2                    | HuggingFace         |
+| `clip-vit-b-32-text/`      | CLIP ViT-B-32 (text)                | HuggingFace         |
+| `clip-vit-b-32-vision/`    | CLIP ViT-B-32 (vision)              | HuggingFace         |
+| `depth-anything-v2/`       | Depth-Anything-v2-Small             | HuggingFace         |
+| `depth-pro/`               | Apple Depth Pro                     | Apple / HuggingFace |
+| `mediapipe-face-detector/` | MediaPipe Face Detector (BlazeFace) | Google MediaPipe    |
+| `modernbert-base/`         | ModernBERT-base                     | HuggingFace         |
+| `rf-detr/`                 | RF-DETR Small                       | Roboflow            |
+| `silero-vad/`              | Silero VAD                          | Silero              |
+| `smollm/`                  | SmolLM / SmolLM2 (135M)             | HuggingFace         |
+| `yolo/`                    | YOLO (v5/v8/v10/v11/v12)            | Ultralytics         |

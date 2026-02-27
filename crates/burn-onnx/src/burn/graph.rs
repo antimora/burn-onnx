@@ -1,9 +1,10 @@
 use super::{BurnImports, Scope, ToTokens};
 use crate::burn::node::NodeCodegen;
+use crate::burn::partition::{Partition, try_partition};
 use burn_store::{BurnpackWriter, TensorSnapshot};
 use onnx_ir::{Node, ir::ArgType};
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use std::{collections::HashMap, path::PathBuf};
 
 /// Burn graph intermediate representation of modules and tensor operations.
@@ -67,85 +68,41 @@ impl BurnGraph {
     }
 
     /// Collect all tensor snapshots from nodes recursively.
+    ///
+    /// When partitioned into submodules, snapshot paths are prefixed with the submodule
+    /// field name (e.g. "submodule1.linear1.weight") so that `load_from` routes weights
+    /// to the correct nested module.
     fn collect_all_snapshots(&self) -> Vec<TensorSnapshot> {
+        let partition = try_partition(&self.nodes, &self.graph_input_args, &self.graph_output_args);
+
+        if let Some(partition) = partition {
+            self.collect_snapshots_partitioned(&partition)
+        } else {
+            self.collect_snapshots_flat()
+        }
+    }
+
+    fn collect_snapshots_flat(&self) -> Vec<TensorSnapshot> {
+        let mut snapshots = Vec::new();
+        let mut field_name_counts: HashMap<String, usize> = HashMap::new();
+        collect_snapshots_from_nodes(&self.nodes, "", &mut field_name_counts, &mut snapshots);
+        snapshots
+    }
+
+    fn collect_snapshots_partitioned(&self, partition: &Partition) -> Vec<TensorSnapshot> {
         let mut snapshots = Vec::new();
         let mut field_name_counts: HashMap<String, usize> = HashMap::new();
 
-        // Helper to recursively collect snapshots from subgraphs
-        fn collect_subgraph_snapshots_recursive(
-            subgraph: &onnx_ir::OnnxGraph,
-            field_name_counts: &mut HashMap<String, usize>,
-            snapshots: &mut Vec<TensorSnapshot>,
-        ) {
-            for node in &subgraph.nodes {
-                if let Some(field) = NodeCodegen::field(node) {
-                    let base_name = field.name.to_string();
-                    let count = field_name_counts.entry(base_name.clone()).or_insert(0);
-                    *count += 1;
-
-                    // Create unique name if needed
-                    let unique_name = if *count > 1 {
-                        format!("{}_{}", base_name, count)
-                    } else {
-                        base_name
-                    };
-
-                    // Collect snapshots for this node
-                    let node_snapshots = NodeCodegen::collect_snapshots(node, &unique_name);
-                    snapshots.extend(node_snapshots);
-                }
-
-                // Recursively collect from nested If/Loop nodes
-                if let Node::If(nested_if_node) = node {
-                    collect_subgraph_snapshots_recursive(
-                        &nested_if_node.config.then_branch,
-                        field_name_counts,
-                        snapshots,
-                    );
-                    collect_subgraph_snapshots_recursive(
-                        &nested_if_node.config.else_branch,
-                        field_name_counts,
-                        snapshots,
-                    );
-                } else if let Node::Loop(nested_loop_node) = node {
-                    collect_subgraph_snapshots_recursive(
-                        &nested_loop_node.config.body,
-                        field_name_counts,
-                        snapshots,
-                    );
-                }
-            }
+        for (chunk_idx, range) in partition.chunks.iter().enumerate() {
+            let prefix = format!("submodule{}", chunk_idx + 1);
+            let chunk_nodes = &self.nodes[range.clone()];
+            collect_snapshots_from_nodes(
+                chunk_nodes,
+                &prefix,
+                &mut field_name_counts,
+                &mut snapshots,
+            );
         }
-
-        // Collect from main graph nodes
-        for node in &self.nodes {
-            if let Some(field) = NodeCodegen::field(node) {
-                let field_name = field.name.to_string();
-                let node_snapshots = NodeCodegen::collect_snapshots(node, &field_name);
-                snapshots.extend(node_snapshots);
-            }
-
-            // Collect from subgraphs in If/Loop nodes
-            if let Node::If(if_node) = node {
-                collect_subgraph_snapshots_recursive(
-                    &if_node.config.then_branch,
-                    &mut field_name_counts,
-                    &mut snapshots,
-                );
-                collect_subgraph_snapshots_recursive(
-                    &if_node.config.else_branch,
-                    &mut field_name_counts,
-                    &mut snapshots,
-                );
-            } else if let Node::Loop(loop_node) = node {
-                collect_subgraph_snapshots_recursive(
-                    &loop_node.config.body,
-                    &mut field_name_counts,
-                    &mut snapshots,
-                );
-            }
-        }
-
         snapshots
     }
 
@@ -167,9 +124,21 @@ impl BurnGraph {
 
     /// Generate tokens representing the graph with Burn modules and tensor operations.
     pub fn codegen(mut self) -> TokenStream {
-        self.build_scope();
-
         self.register_imports();
+
+        // Check if we should partition into submodules
+        let partition = try_partition(&self.nodes, &self.graph_input_args, &self.graph_output_args);
+
+        if let Some(partition) = partition {
+            self.codegen_partitioned(partition)
+        } else {
+            self.codegen_flat()
+        }
+    }
+
+    /// Generate flat code (no submodules) for small graphs.
+    fn codegen_flat(mut self) -> TokenStream {
+        self.build_scope();
 
         let codegen_imports = self.imports.codegen();
         let codegen_struct = self.codegen_struct();
@@ -217,6 +186,283 @@ impl BurnGraph {
                 #maybe_blank
 
                 #codegen_forward
+            }
+        }
+    }
+
+    /// Generate partitioned code with submodule structs.
+    fn codegen_partitioned(self, partition: Partition) -> TokenStream {
+        let maybe_blank = match self.blank_spaces {
+            true => quote! { _blank_!(); },
+            false => quote! {},
+        };
+
+        let codegen_imports = self.imports.codegen();
+        let maybe_top_file_comment = match &self.top_comment {
+            Some(comment) => {
+                let c = comment.clone();
+                quote! { _comment_!(#c); }
+            }
+            None => quote! {},
+        };
+
+        let num_chunks = partition.chunks.len();
+        let mut submodule_defs = Vec::with_capacity(num_chunks);
+        let mut submodule_field_decls = Vec::with_capacity(num_chunks);
+        let mut submodule_field_inits = Vec::with_capacity(num_chunks);
+        let mut submodule_field_names = Vec::with_capacity(num_chunks);
+        let mut forward_calls = Vec::with_capacity(num_chunks);
+
+        // Count how many times each tensor is consumed across all chunk inputs.
+        // This tells us when we need .clone() in the top-level forward.
+        let mut remaining_uses: HashMap<String, usize> = HashMap::new();
+        for inputs in &partition.chunk_inputs {
+            for arg in inputs {
+                *remaining_uses.entry(arg.name.clone()).or_insert(0) += 1;
+            }
+        }
+
+        for (chunk_idx, range) in partition.chunks.iter().enumerate() {
+            let struct_name = format_ident!("Submodule{}", chunk_idx + 1);
+            let field_name = format_ident!("submodule{}", chunk_idx + 1);
+            let chunk_nodes = &self.nodes[range.clone()];
+            let chunk_inputs = &partition.chunk_inputs[chunk_idx];
+            let chunk_outputs = &partition.chunk_outputs[chunk_idx];
+
+            // Build scope for this chunk
+            let mut scope = Scope::default();
+
+            // Register chunk inputs as variables at position 0
+            for arg in chunk_inputs {
+                if matches!(arg.ty, ArgType::Tensor(_) | ArgType::ScalarTensor(_)) {
+                    scope.tensor_register_variable(arg, 0);
+                }
+            }
+
+            // Register node outputs and future uses (positions are local to this chunk)
+            for (local_pos, node) in chunk_nodes.iter().enumerate() {
+                for arg in node.outputs() {
+                    if matches!(arg.ty, ArgType::Tensor(_) | ArgType::ScalarTensor(_)) {
+                        scope.tensor_register_variable(arg, local_pos + 1);
+                    }
+                }
+                for arg in node.inputs() {
+                    if (arg.is_dynamic() || arg.is_constant())
+                        && matches!(arg.ty, ArgType::Tensor(_) | ArgType::ScalarTensor(_))
+                    {
+                        scope.tensor_register_future_use(arg, local_pos);
+                    }
+                }
+            }
+
+            // Register chunk outputs as future uses at the end
+            let chunk_len = chunk_nodes.len();
+            for arg in chunk_outputs {
+                if matches!(arg.ty, ArgType::Tensor(_) | ArgType::ScalarTensor(_)) {
+                    scope.tensor_register_future_use(arg, chunk_len);
+                }
+            }
+
+            // Collect fields from this chunk's nodes
+            let chunk_fields = collect_fields_for_nodes(chunk_nodes);
+
+            // Generate the submodule struct body
+            let struct_fields: Vec<_> = chunk_fields
+                .iter()
+                .map(|(name, ty, _)| quote! { #name: #ty, })
+                .collect();
+
+            // Generate new() body
+            let field_init_code: TokenStream = chunk_fields
+                .iter()
+                .filter_map(|(_, _, init)| init.clone())
+                .collect();
+            let field_names_for_init: Vec<_> = chunk_fields
+                .iter()
+                .map(|(name, _, _)| name.clone())
+                .collect();
+
+            // Generate forward() body
+            let input_params = crate::burn::codegen_fn_params(chunk_inputs);
+            let output_type = crate::burn::codegen_return_type(chunk_outputs);
+            let output_return = crate::burn::codegen_return_expr(chunk_outputs);
+
+            let mut forward_body = quote! {};
+            for (local_pos, node) in chunk_nodes.iter().enumerate() {
+                let mut scope_at_pos = scope.at_position(local_pos);
+                let code = NodeCodegen::forward(node, &mut scope_at_pos);
+                forward_body.extend(code);
+            }
+
+            let submodule_def = quote! {
+                #[derive(Module, Debug)]
+                pub struct #struct_name<B: Backend> {
+                    #(#struct_fields)*
+                    phantom: core::marker::PhantomData<B>,
+                    device: burn::module::Ignored<B::Device>,
+                }
+
+                impl<B: Backend> #struct_name<B> {
+                    #[allow(unused_variables)]
+                    pub fn new(device: &B::Device) -> Self {
+                        #field_init_code
+                        Self {
+                            #(#field_names_for_init,)*
+                            phantom: core::marker::PhantomData,
+                            device: burn::module::Ignored(device.clone()),
+                        }
+                    }
+
+                    #[allow(clippy::let_and_return, clippy::approx_constant)]
+                    pub fn forward(&self, #input_params) -> #output_type {
+                        #forward_body
+                        #output_return
+                    }
+                }
+            };
+            submodule_defs.push(submodule_def);
+
+            // Top-level Model field for this submodule
+            submodule_field_decls.push(quote! { #field_name: #struct_name<B>, });
+            submodule_field_inits.push(quote! { let #field_name = #struct_name::new(device); });
+            submodule_field_names.push(field_name.clone());
+
+            // Generate the forward call in the top-level forward().
+            // Clone tensors that are consumed by later chunks.
+            let input_args: Vec<_> = chunk_inputs
+                .iter()
+                .map(|arg| {
+                    let name = crate::burn::arg_ident(arg);
+                    let remaining = remaining_uses.get(&arg.name).copied().unwrap_or(0);
+                    if remaining > 1 {
+                        // Will be used again by a later chunk
+                        remaining_uses.insert(arg.name.clone(), remaining - 1);
+                        quote! { #name.clone() }
+                    } else {
+                        remaining_uses.remove(&arg.name);
+                        quote! { #name }
+                    }
+                })
+                .collect();
+
+            if chunk_outputs.len() == 1 {
+                let out_name = crate::burn::arg_ident(&chunk_outputs[0]);
+                forward_calls.push(quote! {
+                    let #out_name = self.#field_name.forward(#(#input_args),*);
+                });
+            } else {
+                let out_names: Vec<_> = chunk_outputs.iter().map(crate::burn::arg_ident).collect();
+                forward_calls.push(quote! {
+                    let (#(#out_names),*) = self.#field_name.forward(#(#input_args),*);
+                });
+            }
+        }
+
+        // Top-level Model forward signature
+        let input_def = crate::burn::codegen_fn_params(&self.graph_input_args);
+        let output_type_def = crate::burn::codegen_return_type(&self.graph_output_args);
+        let output_return_def = crate::burn::codegen_return_expr(&self.graph_output_args);
+
+        // Boundary conversions for the top-level forward
+        let mut input_conversions = quote! {};
+        for arg in &self.graph_input_args {
+            if let Some(dtype) = self.boundary_input_conversions.get(&arg.name) {
+                let name = crate::burn::arg_ident(arg);
+                let dtype_tokens = dtype.to_tokens();
+                if dtype.is_float() {
+                    input_conversions.extend(quote! {
+                        let #name = Tensor::<B, 1>::from_data_dtype(
+                            burn::tensor::TensorData::from([#name]),
+                            &*self.device,
+                            #dtype_tokens
+                        );
+                    });
+                } else if dtype.is_int() || dtype.is_uint() {
+                    input_conversions.extend(quote! {
+                        let #name = Tensor::<B, 1, Int>::from_data_dtype(
+                            burn::tensor::TensorData::from([#name]),
+                            &*self.device,
+                            #dtype_tokens
+                        );
+                    });
+                } else if dtype.is_bool() {
+                    input_conversions.extend(quote! {
+                        let #name = Tensor::<B, 1, Bool>::from_data_dtype(
+                            burn::tensor::TensorData::from([#name]),
+                            &*self.device,
+                            #dtype_tokens
+                        );
+                    });
+                } else {
+                    panic!(
+                        "Unsupported dtype {:?} for graph boundary ScalarNative -> ScalarTensor conversion",
+                        dtype
+                    );
+                }
+            }
+        }
+
+        let mut boundary_conversions = quote! {};
+        for arg in &self.graph_output_args {
+            if let Some(dtype) = self.boundary_output_conversions.get(&arg.name) {
+                let name = crate::burn::arg_ident(arg);
+                let convert = crate::burn::on_device_to_native(quote! { #name }, dtype);
+                boundary_conversions.extend(quote! {
+                    let #name = #convert;
+                });
+            }
+        }
+
+        let codegen_default = match &self.default {
+            Some(default) => {
+                let d = default.clone();
+                quote! { #d #maybe_blank }
+            }
+            None => quote! {},
+        };
+
+        quote! {
+            // @generated
+            // This file is automatically generated by burn-onnx
+
+            #maybe_top_file_comment
+            #codegen_imports
+            #maybe_blank
+            #maybe_blank
+
+            #(#submodule_defs)*
+            #maybe_blank
+
+            #[derive(Module, Debug)]
+            pub struct Model<B: Backend> {
+                #(#submodule_field_decls)*
+                phantom: core::marker::PhantomData<B>,
+                device: burn::module::Ignored<B::Device>,
+            }
+            #maybe_blank
+
+            #codegen_default
+
+            impl<B: Backend> Model<B> {
+                #[allow(unused_variables)]
+                pub fn new(device: &B::Device) -> Self {
+                    #(#submodule_field_inits)*
+                    Self {
+                        #(#submodule_field_names,)*
+                        phantom: core::marker::PhantomData,
+                        device: burn::module::Ignored(device.clone()),
+                    }
+                }
+
+                #maybe_blank
+
+                #[allow(clippy::let_and_return, clippy::approx_constant)]
+                pub fn forward(&self, #input_def) -> #output_type_def {
+                    #input_conversions
+                    #(#forward_calls)*
+                    #boundary_conversions
+                    #output_return_def
+                }
             }
         }
     }
@@ -345,108 +591,8 @@ impl BurnGraph {
     }
 
     /// Recursively collect all fields from nodes, including subgraph nodes in If/Loop/Scan
-    fn collect_all_fields(&self) -> Vec<(proc_macro2::Ident, TokenStream, Option<TokenStream>)> {
-        // Track field name usage to make them unique
-        let mut field_name_counts: HashMap<String, usize> = HashMap::new();
-        let mut all_fields: Vec<(proc_macro2::Ident, TokenStream, Option<TokenStream>)> =
-            Vec::new();
-
-        // Helper to recursively collect fields from a subgraph and its nested subgraphs
-        fn collect_subgraph_fields_recursive(
-            subgraph: &onnx_ir::OnnxGraph,
-            field_name_counts: &mut HashMap<String, usize>,
-            all_fields: &mut Vec<(proc_macro2::Ident, TokenStream, Option<TokenStream>)>,
-        ) {
-            for onnx_node in &subgraph.nodes {
-                let burn_node = onnx_node;
-                // Collect this node's field if it has one
-                if let Some(mut field) = NodeCodegen::field(burn_node) {
-                    // Make field name unique by appending a counter if needed
-                    let base_name = field.name.to_string();
-                    let count = field_name_counts.entry(base_name.clone()).or_insert(0);
-                    *count += 1;
-
-                    // Only append counter if this name has been seen before
-                    if *count > 1 {
-                        // Need to create a new renamed field
-                        let new_name_str = format!("{}_{}", base_name, count);
-                        let new_name =
-                            syn::Ident::new(&new_name_str, proc_macro2::Span::call_site());
-
-                        // Update the field name
-                        field.name = new_name.clone();
-
-                        // Also need to update field.init to use the renamed variable
-                        let init_str = field.init.to_string();
-                        let old_let = format!("let {} :", base_name);
-                        let new_let = format!("let {} :", new_name_str);
-                        let updated_init_str = init_str.replace(&old_let, &new_let);
-
-                        // Also handle "let base_name ="
-                        let old_let2 = format!("let {} =", base_name);
-                        let new_let2 = format!("let {} =", new_name_str);
-                        let updated_init_str = updated_init_str.replace(&old_let2, &new_let2);
-
-                        // Parse back to TokenStream
-                        let updated_init: TokenStream = updated_init_str
-                            .parse()
-                            .unwrap_or_else(|_| field.init.clone());
-                        field.init = updated_init;
-                    }
-                    all_fields.push((field.name.clone(), field.ty.clone(), Some(field.init)));
-                }
-
-                // Recursively collect from nested If/Loop nodes
-                if let Node::If(nested_if_node) = burn_node {
-                    collect_subgraph_fields_recursive(
-                        &nested_if_node.config.then_branch,
-                        field_name_counts,
-                        all_fields,
-                    );
-                    collect_subgraph_fields_recursive(
-                        &nested_if_node.config.else_branch,
-                        field_name_counts,
-                        all_fields,
-                    );
-                } else if let Node::Loop(nested_loop_node) = burn_node {
-                    collect_subgraph_fields_recursive(
-                        &nested_loop_node.config.body,
-                        field_name_counts,
-                        all_fields,
-                    );
-                }
-            }
-        }
-
-        for node in &self.nodes {
-            // Collect this node's field if it has one
-            if let Some(field) = NodeCodegen::field(node) {
-                all_fields.push((field.name, field.ty, Some(field.init)));
-            }
-
-            // Recursively collect fields from If/Loop node subgraphs
-            // Note: Subgraph fields are NOT deduplicated - each branch has unique fields
-            if let Node::If(if_node) = node {
-                collect_subgraph_fields_recursive(
-                    &if_node.config.then_branch,
-                    &mut field_name_counts,
-                    &mut all_fields,
-                );
-                collect_subgraph_fields_recursive(
-                    &if_node.config.else_branch,
-                    &mut field_name_counts,
-                    &mut all_fields,
-                );
-            } else if let Node::Loop(loop_node) = node {
-                collect_subgraph_fields_recursive(
-                    &loop_node.config.body,
-                    &mut field_name_counts,
-                    &mut all_fields,
-                );
-            }
-        }
-
-        all_fields
+    fn collect_all_fields(&self) -> Vec<FieldTuple> {
+        collect_fields_for_nodes(&self.nodes)
     }
 
     fn codegen_struct(&self) -> TokenStream {
@@ -682,5 +828,292 @@ impl BurnGraph {
                 arg.ty = ArgType::ScalarNative(dtype);
             }
         }
+    }
+}
+
+// ============================================================================
+// Free functions shared by flat and partitioned codegen paths
+// ============================================================================
+
+type FieldTuple = (proc_macro2::Ident, TokenStream, Option<TokenStream>);
+
+/// Collect fields from a slice of nodes (including If/Loop subgraph fields).
+fn collect_fields_for_nodes(nodes: &[Node]) -> Vec<FieldTuple> {
+    let mut field_name_counts: HashMap<String, usize> = HashMap::new();
+    let mut all_fields: Vec<FieldTuple> = Vec::new();
+
+    fn collect_subgraph_fields_recursive(
+        subgraph: &onnx_ir::OnnxGraph,
+        field_name_counts: &mut HashMap<String, usize>,
+        all_fields: &mut Vec<FieldTuple>,
+    ) {
+        for node in &subgraph.nodes {
+            if let Some(mut field) = NodeCodegen::field(node) {
+                let base_name = field.name.to_string();
+                let count = field_name_counts.entry(base_name.clone()).or_insert(0);
+                *count += 1;
+
+                if *count > 1 {
+                    let new_name_str = format!("{}_{}", base_name, count);
+                    let new_name = syn::Ident::new(&new_name_str, proc_macro2::Span::call_site());
+                    field.name = new_name;
+
+                    let init_str = field.init.to_string();
+                    let updated = init_str
+                        .replace(
+                            &format!("let {} :", base_name),
+                            &format!("let {} :", new_name_str),
+                        )
+                        .replace(
+                            &format!("let {} =", base_name),
+                            &format!("let {} =", new_name_str),
+                        );
+                    field.init = updated.parse().unwrap_or_else(|_| field.init.clone());
+                }
+                all_fields.push((field.name.clone(), field.ty.clone(), Some(field.init)));
+            }
+
+            if let Node::If(nested) = node {
+                collect_subgraph_fields_recursive(
+                    &nested.config.then_branch,
+                    field_name_counts,
+                    all_fields,
+                );
+                collect_subgraph_fields_recursive(
+                    &nested.config.else_branch,
+                    field_name_counts,
+                    all_fields,
+                );
+            } else if let Node::Loop(nested) = node {
+                collect_subgraph_fields_recursive(
+                    &nested.config.body,
+                    field_name_counts,
+                    all_fields,
+                );
+            }
+        }
+    }
+
+    for node in nodes {
+        if let Some(field) = NodeCodegen::field(node) {
+            all_fields.push((field.name, field.ty, Some(field.init)));
+        }
+
+        if let Node::If(if_node) = node {
+            collect_subgraph_fields_recursive(
+                &if_node.config.then_branch,
+                &mut field_name_counts,
+                &mut all_fields,
+            );
+            collect_subgraph_fields_recursive(
+                &if_node.config.else_branch,
+                &mut field_name_counts,
+                &mut all_fields,
+            );
+        } else if let Node::Loop(loop_node) = node {
+            collect_subgraph_fields_recursive(
+                &loop_node.config.body,
+                &mut field_name_counts,
+                &mut all_fields,
+            );
+        }
+    }
+
+    all_fields
+}
+
+/// Collect tensor snapshots from a slice of nodes, optionally prefixing paths.
+///
+/// When `prefix` is non-empty, snapshot paths become "prefix.field.weight" etc.
+fn collect_snapshots_from_nodes(
+    nodes: &[Node],
+    prefix: &str,
+    field_name_counts: &mut HashMap<String, usize>,
+    snapshots: &mut Vec<TensorSnapshot>,
+) {
+    fn collect_subgraph_snapshots_recursive(
+        subgraph: &onnx_ir::OnnxGraph,
+        prefix: &str,
+        field_name_counts: &mut HashMap<String, usize>,
+        snapshots: &mut Vec<TensorSnapshot>,
+    ) {
+        for node in &subgraph.nodes {
+            if let Some(field) = NodeCodegen::field(node) {
+                let base_name = field.name.to_string();
+                let count = field_name_counts.entry(base_name.clone()).or_insert(0);
+                *count += 1;
+
+                let unique_name = if *count > 1 {
+                    format!("{}_{}", base_name, count)
+                } else {
+                    base_name
+                };
+
+                let full_name = if prefix.is_empty() {
+                    unique_name
+                } else {
+                    format!("{}.{}", prefix, unique_name)
+                };
+                let node_snapshots = NodeCodegen::collect_snapshots(node, &full_name);
+                snapshots.extend(node_snapshots);
+            }
+
+            if let Node::If(nested) = node {
+                collect_subgraph_snapshots_recursive(
+                    &nested.config.then_branch,
+                    prefix,
+                    field_name_counts,
+                    snapshots,
+                );
+                collect_subgraph_snapshots_recursive(
+                    &nested.config.else_branch,
+                    prefix,
+                    field_name_counts,
+                    snapshots,
+                );
+            } else if let Node::Loop(nested) = node {
+                collect_subgraph_snapshots_recursive(
+                    &nested.config.body,
+                    prefix,
+                    field_name_counts,
+                    snapshots,
+                );
+            }
+        }
+    }
+
+    for node in nodes {
+        if let Some(field) = NodeCodegen::field(node) {
+            let field_name = field.name.to_string();
+            let full_name = if prefix.is_empty() {
+                field_name
+            } else {
+                format!("{}.{}", prefix, field_name)
+            };
+            let node_snapshots = NodeCodegen::collect_snapshots(node, &full_name);
+            snapshots.extend(node_snapshots);
+        }
+
+        if let Node::If(if_node) = node {
+            collect_subgraph_snapshots_recursive(
+                &if_node.config.then_branch,
+                prefix,
+                field_name_counts,
+                snapshots,
+            );
+            collect_subgraph_snapshots_recursive(
+                &if_node.config.else_branch,
+                prefix,
+                field_name_counts,
+                snapshots,
+            );
+        } else if let Node::Loop(loop_node) = node {
+            collect_subgraph_snapshots_recursive(
+                &loop_node.config.body,
+                prefix,
+                field_name_counts,
+                snapshots,
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::tensor::DType;
+    use onnx_ir::node::abs::AbsNodeBuilder;
+    use rust_format::{Config, Formatter, PostProcess, PrettyPlease};
+
+    fn format_tokens(tokens: TokenStream) -> String {
+        let config = Config::new_str().post_proc(PostProcess::ReplaceMarkersAndDocBlocks);
+        let formatter = PrettyPlease::from_config(config);
+        formatter
+            .format_tokens(tokens)
+            .unwrap_or_else(|_| "FORMATTING FAILED".to_string())
+    }
+
+    /// Build a chain of N abs nodes: input -> t0 -> t1 -> ... -> t{N-1}
+    fn build_abs_chain(n: usize) -> BurnGraph {
+        let mut graph = BurnGraph::default();
+
+        for i in 0..n {
+            let in_name = if i == 0 {
+                "input".to_string()
+            } else {
+                format!("t{}", i - 1)
+            };
+            let out_name = format!("t{}", i);
+
+            let node = AbsNodeBuilder::new(&format!("abs{}", i))
+                .input_tensor(&in_name, 2, DType::F32)
+                .output_tensor(&out_name, 2, DType::F32)
+                .build();
+
+            graph.register(Node::Abs(node));
+        }
+
+        let last_out = format!("t{}", n - 1);
+        graph.register_input_output(vec!["input".to_string()], vec![last_out], &[], &[]);
+
+        graph
+    }
+
+    #[test]
+    fn small_graph_uses_flat_codegen() {
+        let graph = build_abs_chain(5);
+        let code = format_tokens(graph.codegen());
+
+        // Should have a single Model struct, no Submodule structs
+        assert!(code.contains("pub struct Model<B: Backend>"));
+        assert!(!code.contains("Submodule"));
+    }
+
+    #[test]
+    fn large_graph_uses_partitioned_codegen() {
+        let graph = build_abs_chain(250);
+        let code = format_tokens(graph.codegen());
+
+        // Should have Submodule structs and a Model that delegates
+        assert!(code.contains("pub struct Submodule1<B: Backend>"));
+        assert!(code.contains("pub struct Model<B: Backend>"));
+        assert!(code.contains("submodule1: Submodule1<B>"));
+
+        // Submodules should have their own forward methods
+        assert!(code.contains("self.submodule1.forward("));
+
+        // The Model forward should still take `input` and return the final tensor
+        assert!(code.contains("pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2>"));
+    }
+
+    #[test]
+    fn partitioned_graph_snapshot() {
+        // Use a graph just above the threshold (200 nodes) for a manageable snapshot
+        let graph = build_abs_chain(200);
+        let code = format_tokens(graph.codegen());
+
+        // Verify the overall structure by checking key patterns
+        // (Full snapshot would be too long; check structural invariants instead)
+
+        // Must have at least 2 submodules
+        assert!(code.contains("Submodule1"));
+        assert!(code.contains("Submodule2"));
+
+        // Each submodule must have #[derive(Module, Debug)]
+        let module_derive_count = code.matches("#[derive(Module, Debug)]").count();
+        // At least 3: one per submodule + one for Model
+        assert!(
+            module_derive_count >= 3,
+            "Expected at least 3 #[derive(Module, Debug)], got {}",
+            module_derive_count
+        );
+
+        // Model::new should create submodules
+        assert!(code.contains("Submodule1::new(device)"));
+        assert!(code.contains("Submodule2::new(device)"));
+
+        // No duplicate struct definitions
+        let submodule1_count = code.matches("pub struct Submodule1").count();
+        assert_eq!(submodule1_count, 1, "Submodule1 defined more than once");
     }
 }
