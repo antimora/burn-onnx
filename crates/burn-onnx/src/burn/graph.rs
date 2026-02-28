@@ -8,7 +8,7 @@ use quote::{format_ident, quote};
 use std::{collections::HashMap, path::PathBuf};
 
 /// Burn graph intermediate representation of modules and tensor operations.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct BurnGraph {
     nodes: Vec<Node>,
     scope: Scope,
@@ -18,12 +18,32 @@ pub struct BurnGraph {
     blank_spaces: bool,
     graph_input_args: Vec<onnx_ir::Argument>,
     graph_output_args: Vec<onnx_ir::Argument>,
+    /// Whether to partition large graphs into submodules (default: true)
+    partition: bool,
     /// Graph I/O args that were converted from ScalarTensor to ScalarNative at the
     /// boundary. Maps arg name -> DType. Used to insert conversion code:
     /// - Outputs: `.into_scalar().elem::<T>()` before the return
     /// - Inputs: `Tensor::from_data([name as T], &*self.device)` after the params
     boundary_output_conversions: HashMap<String, onnx_ir::ir::DType>,
     boundary_input_conversions: HashMap<String, onnx_ir::ir::DType>,
+}
+
+impl Default for BurnGraph {
+    fn default() -> Self {
+        Self {
+            nodes: Vec::new(),
+            scope: Scope::default(),
+            imports: BurnImports::default(),
+            top_comment: None,
+            default: None,
+            blank_spaces: false,
+            graph_input_args: Vec::new(),
+            graph_output_args: Vec::new(),
+            partition: true,
+            boundary_output_conversions: HashMap::new(),
+            boundary_input_conversions: HashMap::new(),
+        }
+    }
 }
 
 impl BurnGraph {
@@ -73,7 +93,11 @@ impl BurnGraph {
     /// field name (e.g. "submodule1.linear1.weight") so that `load_from` routes weights
     /// to the correct nested module.
     fn collect_all_snapshots(&self) -> Vec<TensorSnapshot> {
-        let partition = try_partition(&self.nodes, &self.graph_input_args, &self.graph_output_args);
+        let partition = if self.partition {
+            try_partition(&self.nodes, &self.graph_input_args, &self.graph_output_args)
+        } else {
+            None
+        };
 
         if let Some(partition) = partition {
             self.collect_snapshots_partitioned(&partition)
@@ -91,11 +115,12 @@ impl BurnGraph {
 
     fn collect_snapshots_partitioned(&self, partition: &Partition) -> Vec<TensorSnapshot> {
         let mut snapshots = Vec::new();
-        let mut field_name_counts: HashMap<String, usize> = HashMap::new();
 
         for (chunk_idx, range) in partition.chunks.iter().enumerate() {
             let prefix = format!("submodule{}", chunk_idx + 1);
             let chunk_nodes = &self.nodes[range.clone()];
+            // Each chunk gets its own counter to match collect_fields_for_nodes (per-chunk)
+            let mut field_name_counts: HashMap<String, usize> = HashMap::new();
             collect_snapshots_from_nodes(
                 chunk_nodes,
                 &prefix,
@@ -122,12 +147,21 @@ impl BurnGraph {
         self
     }
 
+    /// Enable or disable submodule partitioning for large models.
+    pub fn with_partition(mut self, partition: bool) -> Self {
+        self.partition = partition;
+        self
+    }
+
     /// Generate tokens representing the graph with Burn modules and tensor operations.
     pub fn codegen(mut self) -> TokenStream {
         self.register_imports();
 
-        // Check if we should partition into submodules
-        let partition = try_partition(&self.nodes, &self.graph_input_args, &self.graph_output_args);
+        let partition = if self.partition {
+            try_partition(&self.nodes, &self.graph_input_args, &self.graph_output_args)
+        } else {
+            None
+        };
 
         if let Some(partition) = partition {
             self.codegen_partitioned(partition)
@@ -363,55 +397,8 @@ impl BurnGraph {
         let output_type_def = crate::burn::codegen_return_type(&self.graph_output_args);
         let output_return_def = crate::burn::codegen_return_expr(&self.graph_output_args);
 
-        // Boundary conversions for the top-level forward
-        let mut input_conversions = quote! {};
-        for arg in &self.graph_input_args {
-            if let Some(dtype) = self.boundary_input_conversions.get(&arg.name) {
-                let name = crate::burn::arg_ident(arg);
-                let dtype_tokens = dtype.to_tokens();
-                if dtype.is_float() {
-                    input_conversions.extend(quote! {
-                        let #name = Tensor::<B, 1>::from_data_dtype(
-                            burn::tensor::TensorData::from([#name]),
-                            &*self.device,
-                            #dtype_tokens
-                        );
-                    });
-                } else if dtype.is_int() || dtype.is_uint() {
-                    input_conversions.extend(quote! {
-                        let #name = Tensor::<B, 1, Int>::from_data_dtype(
-                            burn::tensor::TensorData::from([#name]),
-                            &*self.device,
-                            #dtype_tokens
-                        );
-                    });
-                } else if dtype.is_bool() {
-                    input_conversions.extend(quote! {
-                        let #name = Tensor::<B, 1, Bool>::from_data_dtype(
-                            burn::tensor::TensorData::from([#name]),
-                            &*self.device,
-                            #dtype_tokens
-                        );
-                    });
-                } else {
-                    panic!(
-                        "Unsupported dtype {:?} for graph boundary ScalarNative -> ScalarTensor conversion",
-                        dtype
-                    );
-                }
-            }
-        }
-
-        let mut boundary_conversions = quote! {};
-        for arg in &self.graph_output_args {
-            if let Some(dtype) = self.boundary_output_conversions.get(&arg.name) {
-                let name = crate::burn::arg_ident(arg);
-                let convert = crate::burn::on_device_to_native(quote! { #name }, dtype);
-                boundary_conversions.extend(quote! {
-                    let #name = #convert;
-                });
-            }
-        }
+        let input_conversions = self.codegen_boundary_input_conversions();
+        let boundary_conversions = self.codegen_boundary_output_conversions();
 
         let codegen_default = match &self.default {
             Some(default) => {
@@ -651,45 +638,7 @@ impl BurnGraph {
         let output_type_def = crate::burn::codegen_return_type(&self.graph_output_args);
         let output_return_def = crate::burn::codegen_return_expr(&self.graph_output_args);
 
-        // Insert ScalarNative -> ScalarTensor conversions for graph inputs.
-        // The user passes native scalars but internal nodes expect Tensor<B, 1>.
-        let mut input_conversions = quote! {};
-        for arg in &self.graph_input_args {
-            if let Some(dtype) = self.boundary_input_conversions.get(&arg.name) {
-                let name = crate::burn::arg_ident(arg);
-                let dtype_tokens = dtype.to_tokens();
-                if dtype.is_float() {
-                    input_conversions.extend(quote! {
-                        let #name = Tensor::<B, 1>::from_data_dtype(
-                            burn::tensor::TensorData::from([#name]),
-                            &*self.device,
-                            #dtype_tokens
-                        );
-                    });
-                } else if dtype.is_int() || dtype.is_uint() {
-                    input_conversions.extend(quote! {
-                        let #name = Tensor::<B, 1, Int>::from_data_dtype(
-                            burn::tensor::TensorData::from([#name]),
-                            &*self.device,
-                            #dtype_tokens
-                        );
-                    });
-                } else if dtype.is_bool() {
-                    input_conversions.extend(quote! {
-                        let #name = Tensor::<B, 1, Bool>::from_data_dtype(
-                            burn::tensor::TensorData::from([#name]),
-                            &*self.device,
-                            #dtype_tokens
-                        );
-                    });
-                } else {
-                    panic!(
-                        "Unsupported dtype {:?} for graph boundary ScalarNative -> ScalarTensor conversion",
-                        dtype
-                    );
-                }
-            }
-        }
+        let input_conversions = self.codegen_boundary_input_conversions();
 
         let mut body = quote! {};
         for (index, node) in self.nodes.iter().enumerate() {
@@ -698,18 +647,7 @@ impl BurnGraph {
             body.extend(code);
         }
 
-        // Insert ScalarTensor -> ScalarNative conversions at graph boundary.
-        // Internal nodes produce Tensor<B, 1> but the graph signature expects native types.
-        let mut boundary_conversions = quote! {};
-        for arg in &self.graph_output_args {
-            if let Some(dtype) = self.boundary_output_conversions.get(&arg.name) {
-                let name = crate::burn::arg_ident(arg);
-                let convert = crate::burn::on_device_to_native(quote! { #name }, dtype);
-                boundary_conversions.extend(quote! {
-                    let #name = #convert;
-                });
-            }
-        }
+        let boundary_conversions = self.codegen_boundary_output_conversions();
 
         // TODO Return the result without a `let` binding from a block,
         // otherwise let_and_return error will be triggered by clippy.
@@ -809,6 +747,63 @@ impl BurnGraph {
         // Convert ScalarTensor to ScalarNative at graph boundary so user-facing
         // forward() signatures use native types (f32, i64, etc.) not Tensor<B, 1>
         self.convert_graph_boundary_scalars();
+    }
+
+    /// Generate ScalarNative -> ScalarTensor input conversion code for graph boundary.
+    fn codegen_boundary_input_conversions(&self) -> TokenStream {
+        let mut tokens = quote! {};
+        for arg in &self.graph_input_args {
+            if let Some(dtype) = self.boundary_input_conversions.get(&arg.name) {
+                let name = crate::burn::arg_ident(arg);
+                let dtype_tokens = dtype.to_tokens();
+                if dtype.is_float() {
+                    tokens.extend(quote! {
+                        let #name = Tensor::<B, 1>::from_data_dtype(
+                            burn::tensor::TensorData::from([#name]),
+                            &*self.device,
+                            #dtype_tokens
+                        );
+                    });
+                } else if dtype.is_int() || dtype.is_uint() {
+                    tokens.extend(quote! {
+                        let #name = Tensor::<B, 1, Int>::from_data_dtype(
+                            burn::tensor::TensorData::from([#name]),
+                            &*self.device,
+                            #dtype_tokens
+                        );
+                    });
+                } else if dtype.is_bool() {
+                    tokens.extend(quote! {
+                        let #name = Tensor::<B, 1, Bool>::from_data_dtype(
+                            burn::tensor::TensorData::from([#name]),
+                            &*self.device,
+                            #dtype_tokens
+                        );
+                    });
+                } else {
+                    panic!(
+                        "Unsupported dtype {:?} for graph boundary ScalarNative -> ScalarTensor conversion",
+                        dtype
+                    );
+                }
+            }
+        }
+        tokens
+    }
+
+    /// Generate ScalarTensor -> ScalarNative output conversion code for graph boundary.
+    fn codegen_boundary_output_conversions(&self) -> TokenStream {
+        let mut tokens = quote! {};
+        for arg in &self.graph_output_args {
+            if let Some(dtype) = self.boundary_output_conversions.get(&arg.name) {
+                let name = crate::burn::arg_ident(arg);
+                let convert = crate::burn::on_device_to_native(quote! { #name }, dtype);
+                tokens.extend(quote! {
+                    let #name = #convert;
+                });
+            }
+        }
+        tokens
     }
 
     /// Convert ScalarTensor to ScalarNative at graph I/O boundary.
@@ -1083,6 +1078,22 @@ mod tests {
         assert!(code.contains("self.submodule1.forward("));
 
         // The Model forward should still take `input` and return the final tensor
+        assert!(code.contains("pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2>"));
+    }
+
+    #[test]
+    fn large_graph_with_partition_disabled_uses_flat_codegen() {
+        let graph = build_abs_chain(250);
+        let code = format_tokens(graph.with_partition(false).codegen());
+
+        // Should use flat codegen despite exceeding MIN_GRAPH_SIZE
+        assert!(code.contains("pub struct Model<B: Backend>"));
+        assert!(
+            !code.contains("Submodule"),
+            "partition(false) should prevent submodules"
+        );
+
+        // Forward should be directly on Model, not delegated
         assert!(code.contains("pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2>"));
     }
 
