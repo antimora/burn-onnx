@@ -20,6 +20,8 @@ pub struct BurnGraph {
     graph_output_args: Vec<onnx_ir::Argument>,
     /// Whether to partition large graphs into submodules (default: true)
     partition: bool,
+    /// Cached partition result (computed once, reused by snapshot collection and codegen)
+    cached_partition: Option<Option<Partition>>,
     /// Graph I/O args that were converted from ScalarTensor to ScalarNative at the
     /// boundary. Maps arg name -> DType. Used to insert conversion code:
     /// - Outputs: `.into_scalar().elem::<T>()` before the return
@@ -40,6 +42,7 @@ impl Default for BurnGraph {
             graph_input_args: Vec::new(),
             graph_output_args: Vec::new(),
             partition: true,
+            cached_partition: None,
             boundary_output_conversions: HashMap::new(),
             boundary_input_conversions: HashMap::new(),
         }
@@ -92,18 +95,29 @@ impl BurnGraph {
     /// When partitioned into submodules, snapshot paths are prefixed with the submodule
     /// field name (e.g. "submodule1.linear1.weight") so that `load_from` routes weights
     /// to the correct nested module.
-    fn collect_all_snapshots(&self) -> Vec<TensorSnapshot> {
-        let partition = if self.partition {
-            try_partition(&self.nodes, &self.graph_input_args, &self.graph_output_args)
-        } else {
-            None
-        };
+    fn collect_all_snapshots(&mut self) -> Vec<TensorSnapshot> {
+        let partition = self.compute_partition();
 
         if let Some(partition) = partition {
             self.collect_snapshots_partitioned(&partition)
         } else {
             self.collect_snapshots_flat()
         }
+    }
+
+    /// Compute the partition once and cache it for reuse by both snapshot
+    /// collection and codegen, avoiding redundant work and ensuring consistency.
+    fn compute_partition(&mut self) -> Option<Partition> {
+        if let Some(ref cached) = self.cached_partition {
+            return cached.clone();
+        }
+        let result = if self.partition {
+            try_partition(&self.nodes, &self.graph_input_args, &self.graph_output_args)
+        } else {
+            None
+        };
+        self.cached_partition = Some(result.clone());
+        result
     }
 
     fn collect_snapshots_flat(&self) -> Vec<TensorSnapshot> {
@@ -157,11 +171,7 @@ impl BurnGraph {
     pub fn codegen(mut self) -> TokenStream {
         self.register_imports();
 
-        let partition = if self.partition {
-            try_partition(&self.nodes, &self.graph_input_args, &self.graph_output_args)
-        } else {
-            None
-        };
+        let partition = self.compute_partition();
 
         if let Some(partition) = partition {
             self.codegen_partitioned(partition)
@@ -266,9 +276,14 @@ impl BurnGraph {
             // Build scope for this chunk
             let mut scope = Scope::default();
 
-            // Register chunk inputs as variables at position 0
+            // Register chunk inputs as variables at position 0.
+            // Mirror build_scope: also register boundary-converted inputs (ScalarNative
+            // that were originally ScalarTensor) as tensor variables, since the top-level
+            // forward converts them to Tensor<B, 1> before calling submodule.forward().
             for arg in chunk_inputs {
-                if matches!(arg.ty, ArgType::Tensor(_) | ArgType::ScalarTensor(_)) {
+                if matches!(arg.ty, ArgType::Tensor(_) | ArgType::ScalarTensor(_))
+                    || self.boundary_input_conversions.contains_key(&arg.name)
+                {
                     scope.tensor_register_variable(arg, 0);
                 }
             }
@@ -979,11 +994,20 @@ fn collect_snapshots_from_nodes(
 
     for node in nodes {
         if let Some(field) = NodeCodegen::field(node) {
-            let field_name = field.name.to_string();
-            let full_name = if prefix.is_empty() {
-                field_name
+            let base_name = field.name.to_string();
+            let count = field_name_counts.entry(base_name.clone()).or_insert(0);
+            *count += 1;
+
+            let unique_name = if *count > 1 {
+                format!("{}_{}", base_name, count)
             } else {
-                format!("{}.{}", prefix, field_name)
+                base_name
+            };
+
+            let full_name = if prefix.is_empty() {
+                unique_name
+            } else {
+                format!("{}.{}", prefix, unique_name)
             };
             let node_snapshots = NodeCodegen::collect_snapshots(node, &full_name);
             snapshots.extend(node_snapshots);

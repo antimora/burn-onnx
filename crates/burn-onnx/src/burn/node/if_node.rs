@@ -75,6 +75,12 @@ fn find_unsqueeze_dims(
                 dims.push(t_idx as isize);
             } else {
                 // Shapes don't align cleanly, fall through to default
+                log::warn!(
+                    "If branch shapes don't align cleanly (branch {:?} vs target {:?}), \
+                     falling back to trailing unsqueeze dims",
+                    b_shape,
+                    t_shape
+                );
                 break;
             }
         }
@@ -116,10 +122,15 @@ impl NodeCodegen for onnx_ir::node::if_node::IfNode {
                 let cond_tensor = scope.arg(cond_arg);
                 quote! { #cond_tensor.into_scalar().elem::<bool>() }
             }
-            ArgType::Shape(_) => {
-                // Shape comparison result: [i64; N] with 0/1 values. Use first element.
+            ArgType::Shape(rank) => {
+                // Shape comparison result: [i64; N] with 0/1 values.
                 let name = arg_to_ident(cond_arg);
-                quote! { #name[0] != 0 }
+                if *rank == 0 {
+                    // Empty shape: no elements to test, treat as false.
+                    quote! { false }
+                } else {
+                    quote! { #name[0] != 0 }
+                }
             }
         };
 

@@ -49,7 +49,7 @@ fn main() {
     // Initialize the model
     println!("Initializing Depth Pro model...");
     let start = Instant::now();
-    let device = Default::default();
+    let device = model_checks_common::best_device!();
     let model: depth_pro::Model<MyBackend> = depth_pro::Model::default();
     let init_time = start.elapsed();
     println!("  Model initialized in {:.2?}", init_time);

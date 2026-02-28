@@ -67,23 +67,41 @@ def download_model(artifacts_dir):
 
 
 def get_input_info(model):
-    """Extract input information from ONNX model."""
+    """Extract input information from ONNX model.
+
+    For dynamic dimensions, uses the ONNX dim_param name (e.g. "batch_size",
+    "height") to pick a concrete value from DYNAMIC_DIM_DEFAULTS. Falls back
+    to 1 for unrecognized names.
+    """
+    # Map dim_param names/patterns to concrete values for test data generation
+    dynamic_dim_defaults = {
+        "batch_size": 1, "batch": 1,
+        "height": INPUT_H, "width": INPUT_W,
+        "channels": 3, "num_channels": 3,
+    }
+
     inputs = []
     for input_info in model.graph.input:
         shape = []
         for dim in input_info.type.tensor_type.shape.dim:
             if dim.HasField("dim_value"):
                 shape.append(dim.dim_value)
+            elif dim.HasField("dim_param"):
+                param = dim.dim_param.lower()
+                resolved = dynamic_dim_defaults.get(param)
+                if resolved is None:
+                    # Try substring matching for names like "pixel_values_height"
+                    for key, val in dynamic_dim_defaults.items():
+                        if key in param:
+                            resolved = val
+                            break
+                if resolved is None:
+                    print(f"  Warning: unknown dynamic dim '{dim.dim_param}', defaulting to 1")
+                    resolved = 1
+                shape.append(resolved)
             else:
-                # DepthPro uses [batch, channels, height, width]
-                if len(shape) == 0:
-                    shape.append(1)  # batch
-                elif len(shape) == 1:
-                    shape.append(3)  # channels
-                elif len(shape) == 2:
-                    shape.append(INPUT_H)  # height
-                elif len(shape) == 3:
-                    shape.append(INPUT_W)  # width
+                print(f"  Warning: dim has neither dim_value nor dim_param, defaulting to 1")
+                shape.append(1)
         inputs.append(
             {
                 "name": input_info.name,

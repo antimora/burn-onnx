@@ -89,7 +89,7 @@ fn main() {
     // Initialize the model (using default which includes the converted weights)
     println!("Initializing all-MiniLM-L6-v2 model...");
     let start = Instant::now();
-    let device = Default::default();
+    let device = model_checks_common::best_device!();
     let model: all_minilm_l6_v2::Model<MyBackend> = all_minilm_l6_v2::Model::default();
     let init_time = start.elapsed();
     println!("  Model initialized in {:.2?}", init_time);

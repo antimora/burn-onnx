@@ -366,7 +366,7 @@ fn is_last_two_dims_swap(transpose: &RawNode) -> Option<bool> {
     Some(true)
 }
 
-struct Prescale {
+struct AttentionPrescale {
     q_real: Argument,
     scale: f64,
 }
@@ -374,7 +374,7 @@ struct Prescale {
 /// Standard pattern: K comes through Transpose that swaps last two dims.
 /// Returns (Q_arg, K_arg, prescale) where K is from before the transpose.
 /// Q_arg is always the direct MatMul input (possibly Q_scaled). If Q or K
-/// come from Mul(tensor, constant), Prescale provides the unwrapped Q and
+/// come from Mul(tensor, constant), AttentionPrescale provides the unwrapped Q and
 /// combined scale.
 ///
 /// Also handles the symmetric pre-scaled variant (DepthPro):
@@ -389,7 +389,7 @@ fn try_standard_k_pattern(
     nodes: &[RawNode],
     producer: &HashMap<String, usize>,
     consumer: &HashMap<String, Vec<usize>>,
-) -> Option<(Argument, Argument, Option<Prescale>)> {
+) -> Option<(Argument, Argument, Option<AttentionPrescale>)> {
     let k_producer_idx = *producer.get(&qk_matmul.inputs[1].name)?;
     let k_producer = &nodes[k_producer_idx];
 
@@ -440,13 +440,13 @@ fn try_standard_k_pattern(
             q_mul.inputs[1].clone()
         };
         let effective_scale = k_scale.map_or(q_scale_val, |ks| q_scale_val * ks);
-        Some(Prescale {
+        Some(AttentionPrescale {
             q_real,
             scale: effective_scale,
         })
     } else {
         // K-only scale (no Q Mul to unwrap): pass Q through unchanged
-        k_scale.map(|ks| Prescale {
+        k_scale.map(|ks| AttentionPrescale {
             q_real: q_input.clone(),
             scale: ks,
         })

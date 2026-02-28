@@ -105,7 +105,7 @@ fn main() {
 
     // Initialize the model
     println!("Initializing Silero VAD model...");
-    let device = Default::default();
+    let device = model_checks_common::best_device!();
     let model: Model<MyBackend> = Model::default();
     println!("  Model initialized\n");
 

@@ -15,7 +15,7 @@ const MAX_CHUNK_SIZE: usize = 256;
 const MAX_CUT_WIDTH: usize = 64;
 
 /// A partition of the node list into chunks, each becoming a submodule.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Partition {
     /// Ranges of node indices for each chunk. E.g. [(0..50), (50..120), (120..200)]
     pub chunks: Vec<std::ops::Range<usize>>,
@@ -158,15 +158,9 @@ fn find_partition_points(cut_widths: &[usize], node_count: usize) -> Vec<usize> 
             points.push(pos);
             last_cut = pos;
         } else {
-            // No acceptable cut in this window. Try forcing at the MAX_CHUNK_SIZE boundary
-            // if there's a candidate nearby
-            let forced_pos = window_end.min(node_count.saturating_sub(MIN_CHUNK_SIZE));
-            if forced_pos > last_cut + MIN_CHUNK_SIZE {
-                points.push(forced_pos);
-                last_cut = forced_pos;
-            } else {
-                break;
-            }
+            // No acceptable cut in this window (all positions exceed MAX_CUT_WIDTH).
+            // Stop partitioning to avoid creating chunks with excessively wide interfaces.
+            break;
         }
     }
 

@@ -71,6 +71,34 @@ The build process will:
 - Generate Rust code from the ONNX model using burn-onnx
 - Compile the generated code
 
+## Backend and Device Selection
+
+All model checks support multiple backends via Cargo features:
+
+```bash
+cargo run                              # default (ndarray, CPU)
+cargo run --features wgpu              # WebGPU
+cargo run --features metal             # Metal (macOS)
+cargo run --features tch               # LibTorch
+cargo run --no-default-features --features tch   # LibTorch only
+```
+
+For the `tch` backend, the best GPU device is selected automatically:
+
+- **macOS**: MPS (Metal Performance Shaders)
+- **Linux / Windows**: CUDA (GPU 0)
+
+Override with the `BURN_DEVICE` environment variable:
+
+```bash
+BURN_DEVICE=cpu cargo run --features tch     # force CPU
+BURN_DEVICE=mps cargo run --features tch     # force MPS
+BURN_DEVICE=cuda cargo run --features tch    # CUDA GPU 0
+BURN_DEVICE=cuda:1 cargo run --features tch  # CUDA GPU 1
+```
+
+Other backends (wgpu, metal) already select the best GPU by default; ndarray is CPU-only.
+
 ## Models
 
 | Directory                  | Model                               | Source              |

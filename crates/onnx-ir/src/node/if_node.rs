@@ -84,7 +84,9 @@ impl NodeProcessor for IfProcessor {
         let is_bool_like = match condition {
             ArgType::ScalarTensor(dtype) | ArgType::ScalarNative(dtype) => dtype.is_bool(),
             ArgType::Tensor(tensor) => tensor.dtype.is_bool(),
-            ArgType::Shape(_) => true,
+            // Shape comparison results (e.g., Equal on shapes) use 0/1 as false/true.
+            // Require rank >= 1 so that codegen can safely read the first element.
+            ArgType::Shape(rank) => *rank >= 1,
         };
 
         if !is_bool_like {
