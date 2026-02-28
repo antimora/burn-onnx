@@ -111,6 +111,7 @@ Other backends (wgpu, metal) already select the best GPU by default; ndarray is 
 | `depth-pro/`               | Apple Depth Pro                     | Apple / HuggingFace |
 | `mediapipe-face-detector/` | MediaPipe Face Detector (BlazeFace) | Google MediaPipe    |
 | `modernbert-base/`         | ModernBERT-base                     | HuggingFace         |
+| `qwen/`                    | Qwen 1.5/2.5/3 (0.5B-0.6B)         | HuggingFace         |
 | `rf-detr/`                 | RF-DETR Small                       | Roboflow            |
 | `silero-vad/`              | Silero VAD                          | Silero              |
 | `smollm/`                  | SmolLM / SmolLM2 (135M)             | HuggingFace         |
