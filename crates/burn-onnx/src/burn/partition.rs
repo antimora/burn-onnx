@@ -100,13 +100,17 @@ fn compute_cut_widths(nodes: &[Node], graph_output_names: &[String]) -> Vec<usiz
     let mut running: i64 = 0;
     for p in 0..=n {
         running += delta[p];
-        widths[p] = running as usize;
+        debug_assert!(
+            running >= 0,
+            "cut width went negative at position {p}, running = {running}"
+        );
+        widths[p] = running.max(0) as usize;
     }
 
     widths
 }
 
-/// Find optimal partition points given cut widths.
+/// Find partition points using a greedy heuristic on cut widths.
 ///
 /// Returns the positions at which to split (exclusive end of one chunk, start of next).
 /// Returns empty if the graph is too small to partition.
@@ -131,6 +135,10 @@ fn find_partition_points(cut_widths: &[usize], node_count: usize) -> Vec<usize> 
     }
 
     if candidates.is_empty() {
+        log::warn!(
+            "Graph has {node_count} nodes but no partition points with \
+             cut width <= {MAX_CUT_WIDTH} were found; falling back to flat codegen"
+        );
         return vec![];
     }
 
@@ -162,6 +170,10 @@ fn find_partition_points(cut_widths: &[usize], node_count: usize) -> Vec<usize> 
             // No acceptable cut in this window. Skip ahead and keep looking
             // rather than giving up entirely (flat codegen causes very slow
             // compilation for large models).
+            log::debug!(
+                "No acceptable partition point in nodes [{window_start}..{window_end}], \
+                 skipping to next window"
+            );
             last_cut = window_end;
         }
     }
@@ -249,7 +261,7 @@ fn compute_chunk_interfaces(
 
 /// Reorder constant nodes so each appears just before its first consumer.
 ///
-/// Constants have no dependencies, so moving them forward in the list is always safe.
+/// Constants have no data dependencies on other nodes, so repositioning them is always safe.
 /// This prevents clusters of constants from creating partition boundaries with wide
 /// interfaces (constants are struct fields and shouldn't be passed through `forward()`).
 pub(crate) fn reorder_constants_to_consumers(nodes: &mut Vec<Node>) {

@@ -72,10 +72,18 @@ macro_rules! best_device {
                 Some("cpu") => LibTorchDevice::Cpu,
                 Some("mps") => LibTorchDevice::Mps,
                 Some(s) if s.starts_with("cuda") => {
-                    let idx = s
-                        .strip_prefix("cuda:")
-                        .and_then(|i| i.parse().ok())
-                        .unwrap_or(0);
+                    let idx = match s.strip_prefix("cuda:") {
+                        Some(i) => match i.parse() {
+                            Ok(n) => n,
+                            Err(_) => {
+                                eprintln!(
+                                    "Warning: invalid CUDA index '{i}', defaulting to cuda:0"
+                                );
+                                0
+                            }
+                        },
+                        None => 0,
+                    };
                     LibTorchDevice::Cuda(idx)
                 }
                 _ => {

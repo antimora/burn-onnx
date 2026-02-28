@@ -886,7 +886,13 @@ fn collect_fields_for_nodes(nodes: &[Node]) -> Vec<FieldTuple> {
                             &format!("let {} =", base_name),
                             &format!("let {} =", new_name_str),
                         );
-                    field.init = updated.parse().unwrap_or_else(|_| field.init.clone());
+                    field.init = updated.parse().unwrap_or_else(|e| {
+                        log::warn!(
+                            "Failed to parse renamed field init for '{}': {e}",
+                            new_name_str
+                        );
+                        field.init.clone()
+                    });
                 }
                 all_fields.push((field.name.clone(), field.ty.clone(), Some(field.init)));
             }

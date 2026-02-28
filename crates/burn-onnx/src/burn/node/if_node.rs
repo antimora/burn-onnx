@@ -68,13 +68,14 @@ fn find_unsqueeze_dims(
         // missing from the branch shape.
         let mut dims = Vec::new();
         let mut b_idx = 0;
+        let mut misaligned = false;
         for (t_idx, t_dim) in t_shape.iter().enumerate() {
             if b_idx < b_shape.len() && b_shape[b_idx] == *t_dim {
                 b_idx += 1;
             } else if *t_dim == Some(1) {
                 dims.push(t_idx as isize);
             } else {
-                // Shapes don't align cleanly, fall through to default
+                misaligned = true;
                 log::warn!(
                     "If branch shapes don't align cleanly (branch {:?} vs target {:?}), \
                      falling back to trailing unsqueeze dims",
@@ -84,8 +85,18 @@ fn find_unsqueeze_dims(
                 break;
             }
         }
-        if dims.len() == target_rank - branch_rank {
+        if !misaligned && dims.len() == target_rank - branch_rank {
             return dims;
+        }
+        if !misaligned {
+            log::warn!(
+                "If branch shape alignment produced {} dims but expected {} \
+                 (branch {:?} vs target {:?}), falling back to trailing unsqueeze dims",
+                dims.len(),
+                target_rank - branch_rank,
+                b_shape,
+                t_shape,
+            );
         }
     }
 

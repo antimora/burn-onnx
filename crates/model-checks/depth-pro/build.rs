@@ -21,13 +21,17 @@ fn main() {
         eprintln!("Please run the following command to download and prepare the model:");
         eprintln!("  uv run get_model.py");
         eprintln!();
-        eprintln!("This will download the Apple Depth Pro model and convert it to ONNX format.");
+        eprintln!("This will download the Apple Depth Pro ONNX model and generate test data.");
         std::process::exit(1);
     }
 
     // Generate the model code from the ONNX file
     ModelGen::new()
-        .input(onnx_path.to_str().unwrap())
+        .input(
+            onnx_path
+                .to_str()
+                .expect("ONNX model path must be valid UTF-8"),
+        )
         .out_dir("model/")
         .run_from_script();
 }

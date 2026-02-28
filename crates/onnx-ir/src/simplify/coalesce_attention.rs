@@ -133,15 +133,19 @@ fn try_match_sdpa(
         try_standard_k_pattern(qk_matmul, nodes, producer, consumer)
     {
         // Pre-scaled pattern: extract prescale and unwrap Q from its Mul.
-        // Only use when no post-scale was already found. Note: if a post-scale
-        // exists AND K has a prescale, the K prescale is dropped. No known model
-        // combines both, so this is acceptable for now.
+        // Only use when no post-scale was already found.
         if scale_value.is_none()
             && let Some(prescale) = prescale
         {
             scale_value = Some(prescale.scale);
             (prescale.q_real, k, vec![])
         } else {
+            if scale_value.is_some() && prescale.is_some() {
+                log::warn!(
+                    "Attention pattern has both post-scale and pre-scale; \
+                     pre-scale will be ignored"
+                );
+            }
             (q, k, vec![])
         }
     }
