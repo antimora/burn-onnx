@@ -106,7 +106,8 @@ fn main() {
     // Initialize the model
     println!("Initializing Silero VAD model...");
     let device = model_checks_common::best_device!();
-    let model: Model<MyBackend> = Model::default();
+    let weights_path = concat!(env!("OUT_DIR"), "/model/silero_vad.bpk");
+    let model: Model<MyBackend> = Model::from_file(weights_path, &device);
     println!("  Model initialized\n");
 
     // Warmup run (compiles GPU shaders, allocates buffers)

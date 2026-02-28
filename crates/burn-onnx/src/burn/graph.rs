@@ -1,6 +1,8 @@
 use super::{BurnImports, Scope, ToTokens};
 use crate::burn::node::NodeCodegen;
-use crate::burn::partition::{Partition, try_partition};
+use crate::burn::partition::{
+    MIN_GRAPH_SIZE, Partition, reorder_constants_to_consumers, try_partition,
+};
 use burn_store::{BurnpackWriter, TensorSnapshot};
 use onnx_ir::{Node, ir::ArgType};
 use proc_macro2::TokenStream;
@@ -112,6 +114,12 @@ impl BurnGraph {
             return cached.clone();
         }
         let result = if self.partition {
+            // Move constants to just before their first consumer so they land
+            // in the same chunk, avoiding wide forward() interfaces.
+            // Only reorder for graphs large enough to actually partition.
+            if self.nodes.len() >= MIN_GRAPH_SIZE {
+                reorder_constants_to_consumers(&mut self.nodes);
+            }
             try_partition(&self.nodes, &self.graph_input_args, &self.graph_output_args)
         } else {
             None

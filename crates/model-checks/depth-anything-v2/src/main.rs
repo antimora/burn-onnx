@@ -53,7 +53,9 @@ fn main() {
     println!("Initializing Depth-Anything-v2 model...");
     let start = Instant::now();
     let device = model_checks_common::best_device!();
-    let model: depth_anything_v2::Model<MyBackend> = depth_anything_v2::Model::default();
+    let weights_path = concat!(env!("OUT_DIR"), "/model/depth-anything-v2_opset16.bpk");
+    let model: depth_anything_v2::Model<MyBackend> =
+        depth_anything_v2::Model::from_file(weights_path, &device);
     let init_time = start.elapsed();
     println!("  Model initialized in {:.2?}", init_time);
 

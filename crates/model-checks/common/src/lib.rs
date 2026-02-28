@@ -80,9 +80,13 @@ macro_rules! best_device {
                 }
                 _ => {
                     #[cfg(target_os = "macos")]
-                    { LibTorchDevice::Mps }
+                    {
+                        LibTorchDevice::Mps
+                    }
                     #[cfg(not(target_os = "macos"))]
-                    { LibTorchDevice::Cuda(0) }
+                    {
+                        LibTorchDevice::Cuda(0)
+                    }
                 }
             }
         }

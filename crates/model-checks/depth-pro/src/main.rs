@@ -50,7 +50,8 @@ fn main() {
     println!("Initializing Depth Pro model...");
     let start = Instant::now();
     let device = model_checks_common::best_device!();
-    let model: depth_pro::Model<MyBackend> = depth_pro::Model::default();
+    let weights_path = concat!(env!("OUT_DIR"), "/model/depth-pro.bpk");
+    let model: depth_pro::Model<MyBackend> = depth_pro::Model::from_file(weights_path, &device);
     let init_time = start.elapsed();
     println!("  Model initialized in {:.2?}", init_time);
 

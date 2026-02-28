@@ -88,7 +88,9 @@ fn main() {
     println!("Initializing ModernBERT-base model...");
     let start = Instant::now();
     let device = model_checks_common::best_device!();
-    let model: modernbert_base::Model<MyBackend> = modernbert_base::Model::default();
+    let weights_path = concat!(env!("OUT_DIR"), "/model/modernbert-base_opset16.bpk");
+    let model: modernbert_base::Model<MyBackend> =
+        modernbert_base::Model::from_file(weights_path, &device);
     let init_time = start.elapsed();
     println!("  Model initialized in {:.2?}", init_time);
 

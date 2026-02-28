@@ -1,8 +1,9 @@
 use onnx_ir::{Argument, Node};
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// Minimum number of nodes before we consider partitioning at all.
-const MIN_GRAPH_SIZE: usize = 200;
+pub(crate) const MIN_GRAPH_SIZE: usize = 200;
 
 /// Minimum number of nodes in a single chunk (avoid tiny submodules).
 const MIN_CHUNK_SIZE: usize = 64;
@@ -158,9 +159,10 @@ fn find_partition_points(cut_widths: &[usize], node_count: usize) -> Vec<usize> 
             points.push(pos);
             last_cut = pos;
         } else {
-            // No acceptable cut in this window (all positions exceed MAX_CUT_WIDTH).
-            // Stop partitioning to avoid creating chunks with excessively wide interfaces.
-            break;
+            // No acceptable cut in this window. Skip ahead and keep looking
+            // rather than giving up entirely (flat codegen causes very slow
+            // compilation for large models).
+            last_cut = window_end;
         }
     }
 
@@ -243,6 +245,97 @@ fn compute_chunk_interfaces(
     }
 
     (chunk_inputs, chunk_outputs)
+}
+
+/// Reorder constant nodes so each appears just before its first consumer.
+///
+/// Constants have no dependencies, so moving them forward in the list is always safe.
+/// This prevents clusters of constants from creating partition boundaries with wide
+/// interfaces (constants are struct fields and shouldn't be passed through `forward()`).
+pub(crate) fn reorder_constants_to_consumers(nodes: &mut Vec<Node>) {
+    let n = nodes.len();
+    if n == 0 {
+        return;
+    }
+
+    // Identify constant nodes and map their output names to node index.
+    let mut is_constant = vec![false; n];
+    let mut const_output_to_idx: HashMap<String, usize> = HashMap::new();
+
+    for (i, node) in nodes.iter().enumerate() {
+        if matches!(node, Node::Constant(_)) {
+            is_constant[i] = true;
+            for arg in node.outputs() {
+                if !arg.name.is_empty() {
+                    const_output_to_idx.insert(arg.name.clone(), i);
+                }
+            }
+        }
+    }
+
+    if const_output_to_idx.is_empty() {
+        return;
+    }
+
+    // Find the first consumer for each constant.
+    let mut const_first_consumer: HashMap<usize, usize> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        for arg in node.inputs() {
+            if let Some(&const_idx) = const_output_to_idx.get(&arg.name) {
+                const_first_consumer.entry(const_idx).or_insert(i);
+            }
+        }
+    }
+
+    // Group constants by their first consumer node index.
+    let mut consumer_to_constants: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut orphan_constants: Vec<usize> = Vec::new();
+
+    for (i, &is_const) in is_constant.iter().enumerate() {
+        if !is_const {
+            continue;
+        }
+        match const_first_consumer.get(&i) {
+            Some(&consumer) if consumer != i + 1 => {
+                // Only reorder if the constant isn't already right before its consumer
+                consumer_to_constants.entry(consumer).or_default().push(i);
+            }
+            _ => {
+                // Already in place or orphan
+                orphan_constants.push(i);
+            }
+        }
+    }
+
+    if consumer_to_constants.is_empty() {
+        return; // Nothing to move
+    }
+
+    // Track which constants are being relocated.
+    let relocated: HashSet<usize> = consumer_to_constants.values().flatten().copied().collect();
+
+    // Build new node order: orphan constants and non-relocated nodes keep their
+    // relative order; relocated constants are inserted before their first consumer.
+    let mut new_order: Vec<usize> = Vec::with_capacity(n);
+    for i in 0..n {
+        if relocated.contains(&i) {
+            continue; // Will be inserted before its consumer
+        }
+        // Before inserting this non-constant node, prepend any constants that target it.
+        if let Some(consts) = consumer_to_constants.get(&i) {
+            new_order.extend(consts);
+        }
+        new_order.push(i);
+    }
+
+    debug_assert_eq!(new_order.len(), n);
+
+    // Apply the reordering.
+    let mut slots: Vec<Option<Node>> = nodes.drain(..).map(Some).collect();
+    *nodes = new_order
+        .into_iter()
+        .map(|i| slots[i].take().expect("node used twice"))
+        .collect();
 }
 
 /// Try to partition a graph's nodes into submodule chunks.

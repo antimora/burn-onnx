@@ -60,7 +60,9 @@ fn main() {
     println!("Initializing CLIP model...");
     let start = Instant::now();
     let device = model_checks_common::best_device!();
-    let model: clip_vit_b_32_text::Model<MyBackend> = clip_vit_b_32_text::Model::default();
+    let weights_path = concat!(env!("OUT_DIR"), "/model/clip-vit-b-32-text_opset16.bpk");
+    let model: clip_vit_b_32_text::Model<MyBackend> =
+        clip_vit_b_32_text::Model::from_file(weights_path, &device);
     let init_time = start.elapsed();
     println!("  Model initialized in {:.2?}", init_time);
 
