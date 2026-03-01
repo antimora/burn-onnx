@@ -21,9 +21,7 @@ fn main() {
         eprintln!("Please run the following command to download and prepare the model:");
         eprintln!("  uv run get_model.py");
         eprintln!();
-        eprintln!(
-            "This will download the RTMW3D-x model and convert it to ONNX format."
-        );
+        eprintln!("This will download the RTMW3D-x model and convert it to ONNX format.");
         std::process::exit(1);
     }
 
