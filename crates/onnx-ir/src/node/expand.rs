@@ -134,10 +134,21 @@ impl NodeProcessor for ExpandProcessor {
                             match &node.outputs[0].ty {
                                 ArgType::Tensor(TensorType { rank, .. }) if *rank > 0 => *rank,
                                 _ => {
-                                    return Err(ProcessError::Custom(format!(
-                                        "Cannot determine output rank for Expand node {} with fully dynamic shape tensor",
-                                        node.name
-                                    )));
+                                    // Fallback: use the input tensor's rank.
+                                    // Per ONNX spec, output rank = max(input_rank, len(shape)).
+                                    // When len(shape) is unknown, input_rank is a safe lower
+                                    // bound and correct for same-rank broadcasting (common case).
+                                    match &node.inputs[0].ty {
+                                        ArgType::Tensor(t) => t.rank,
+                                        ArgType::ScalarTensor(_) | ArgType::ScalarNative(_) => 1,
+                                        other => {
+                                            return Err(ProcessError::Custom(format!(
+                                                "Cannot determine output rank for Expand node {} \
+                                                 with fully dynamic shape tensor and input type {:?}",
+                                                node.name, other
+                                            )));
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -654,6 +665,40 @@ mod tests {
             .output_tensor_f32("output", 3, None)
             .build();
         assert!(!ExpandProcessor.is_noop(&node));
+    }
+
+    #[test]
+    fn test_expand_with_fully_dynamic_shape_tensor() {
+        // Shape input is a 1D Int64 tensor with static_shape = None (fully dynamic).
+        // This happens in SDXL UNet where the shape comes from a Where/ConstantOfShape chain
+        // with no ONNX value_info. The fallback uses the input tensor's rank.
+        let shape_type = ArgType::Tensor(TensorType {
+            dtype: DType::I64,
+            rank: 1,
+            static_shape: None,
+        });
+        let mut node = create_test_node(2, None, Some(shape_type)).build();
+
+        // Clear the output rank so the ONNX-value_info fallback also fails
+        node.outputs[0].ty = ArgType::Tensor(TensorType {
+            dtype: DType::F32,
+            rank: 0,
+            static_shape: None,
+        });
+
+        let processor = ExpandProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 16, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(tensor) => {
+                assert_eq!(tensor.dtype, DType::F32);
+                // Falls back to input rank (2) when shape length is unknown
+                assert_eq!(tensor.rank, 2);
+                assert_eq!(tensor.static_shape, None);
+            }
+            _ => panic!("Expected tensor output"),
+        }
     }
 
     // TODO: Add test for invalid shape values - Test negative values other than -1 (e.g., -2, -3) should return error - Missing constraint validation test
