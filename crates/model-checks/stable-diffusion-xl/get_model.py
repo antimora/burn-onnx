@@ -246,10 +246,11 @@ def main():
     artifacts_dir = get_artifacts_dir(MODEL_NAME)
 
     onnx_path = artifacts_dir / "sdxl-unet.onnx"
+    onnx_data_path = artifacts_dir / "model.onnx_data"
     test_data_path = artifacts_dir / "test_data.pt"
     model_info_path = artifacts_dir / "model-python.txt"
 
-    if onnx_path.exists() and test_data_path.exists() and model_info_path.exists():
+    if onnx_path.exists() and onnx_data_path.exists() and test_data_path.exists() and model_info_path.exists():
         print(f"\n  All files already exist:")
         print(f"  Model: {onnx_path}")
         print(f"  Test data: {test_data_path}")

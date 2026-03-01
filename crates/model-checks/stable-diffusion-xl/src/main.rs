@@ -113,8 +113,8 @@ fn main() {
     let ref_shape: [usize; 4] = reference_out.shape().dims();
     println!("  reference out_sample shape: {:?}", ref_shape);
 
-    // Timestep is Int64 in ONNX, stored as float in test data. Cast to int.
-    let timestep_int: Tensor<MyBackend, 1, Int> = timestep.int();
+    // Timestep is Int64 in ONNX, stored as float in test data. Cast explicitly.
+    let timestep_int: Tensor<MyBackend, 1, Int> = timestep.int().cast(DType::I64);
 
     // Run inference
     println!("\nRunning model inference with test input...");

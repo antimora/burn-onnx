@@ -134,13 +134,14 @@ impl NodeProcessor for ExpandProcessor {
                             match &node.outputs[0].ty {
                                 ArgType::Tensor(TensorType { rank, .. }) if *rank > 0 => *rank,
                                 _ => {
-                                    // Fallback: use the input tensor's rank.
+                                    // Fallback: use the input tensor's rank as the output rank.
                                     // Per ONNX spec, output rank = max(input_rank, len(shape)).
-                                    // When len(shape) is unknown, input_rank is a safe lower
-                                    // bound and correct for same-rank broadcasting (common case).
+                                    // When len(shape) is unknown, this assumes same-rank
+                                    // broadcasting (len(shape) <= input_rank), which is correct
+                                    // for the known real-world case (SDXL UNet: 1D timestep
+                                    // expanded to 1D [batch_size]).
                                     match &node.inputs[0].ty {
                                         ArgType::Tensor(t) => t.rank,
-                                        ArgType::ScalarTensor(_) | ArgType::ScalarNative(_) => 1,
                                         other => {
                                             return Err(ProcessError::Custom(format!(
                                                 "Cannot determine output rank for Expand node {} \
@@ -699,6 +700,33 @@ mod tests {
             }
             _ => panic!("Expected tensor output"),
         }
+    }
+
+    #[test]
+    fn test_expand_scalar_input_fully_dynamic_shape_errors() {
+        // Scalar input with fully dynamic shape (static_shape = None) should error
+        // because we cannot determine len(shape) and input rank is meaningless for scalars.
+        let shape_type = ArgType::Tensor(TensorType {
+            dtype: DType::I64,
+            rank: 1,
+            static_shape: None,
+        });
+        let mut node = TestNodeBuilder::new(NodeType::Expand, "test_expand")
+            .input_scalar_f32("input")
+            .add_input("shape", shape_type)
+            .output_tensor_f32("output", 0, None)
+            .build();
+
+        node.outputs[0].ty = ArgType::Tensor(TensorType {
+            dtype: DType::F32,
+            rank: 0,
+            static_shape: None,
+        });
+
+        let processor = ExpandProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 16, &prefs);
+        assert!(matches!(result, Err(ProcessError::Custom(_))));
     }
 
     // TODO: Add test for invalid shape values - Test negative values other than -1 (e.g., -2, -3) should return error - Missing constraint validation test
