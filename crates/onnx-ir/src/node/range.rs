@@ -140,10 +140,6 @@ impl NodeProcessor for RangeProcessor {
         // Spec supports float and double, but tests only use int64.
         // Add tests: range_float32, range_float64
 
-        // TODO: Missing test coverage for negative delta (descending range)
-        // Tests only cover positive delta (ascending). Spec allows negative delta.
-        // Add test: range_negative_delta (e.g., start=10, limit=0, delta=-2)
-
         // TODO: Missing validation for empty range cases
         // When start >= limit with positive delta, or start <= limit with negative delta,
         // the range should be empty. No test validates this. Add test: range_empty
