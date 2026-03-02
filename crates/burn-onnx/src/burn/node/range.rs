@@ -136,4 +136,28 @@ mod tests {
         }
         ");
     }
+
+    #[test]
+    fn test_range_empty() {
+        // start >= limit with positive delta produces empty range
+        let config = RangeConfig::new(
+            RangeInput::Static(10),
+            RangeInput::Static(0),
+            RangeInput::Static(2),
+        );
+        let node = RangeNodeBuilder::new("range1")
+            .output_tensor("output", 1, DType::I64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self) -> Tensor<B, 1, Int> {
+            let output = Tensor::arange(0..0i64, &*self.device)
+                .cast(burn::tensor::DType::I64)
+                .mul_scalar(2i64)
+                .add_scalar(10i64);
+            output
+        }
+        ");
+    }
 }
