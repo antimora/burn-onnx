@@ -71,6 +71,7 @@ impl NodeCodegen for onnx_ir::node::range::RangeNode {
                         let __start = #start;
                         let __limit = #limit;
                         let __delta = #delta;
+                        assert!(__delta != 0);
                         let __n = ((__limit - __start) as f64 / __delta as f64)
                             .ceil().max(0.0) as i64;
                         Tensor::arange(0..__n, &*self.device)
@@ -89,6 +90,7 @@ mod tests {
     use super::super::test_helpers::*;
     use burn::tensor::DType;
     use insta::assert_snapshot;
+    use onnx_ir::ir::RuntimeInputRef;
     use onnx_ir::node::range::{RangeConfig, RangeInput, RangeNodeBuilder};
 
     #[test]
@@ -132,6 +134,48 @@ mod tests {
                 .cast(burn::tensor::DType::I64)
                 .mul_scalar(-2i64)
                 .add_scalar(10i64);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_range_runtime() {
+        let config = RangeConfig::new(
+            RangeInput::Runtime(RuntimeInputRef {
+                name: "start".to_string(),
+                input_index: 0,
+            }),
+            RangeInput::Runtime(RuntimeInputRef {
+                name: "limit".to_string(),
+                input_index: 1,
+            }),
+            RangeInput::Runtime(RuntimeInputRef {
+                name: "delta".to_string(),
+                input_index: 2,
+            }),
+        );
+        let node = RangeNodeBuilder::new("range1")
+            .input_scalar("start", DType::I64)
+            .input_scalar("limit", DType::I64)
+            .input_scalar("delta", DType::I64)
+            .output_tensor("output", 1, DType::I64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, start: i64, limit: i64, delta: i64) -> Tensor<B, 1, Int> {
+            let output = {
+                let __start = start;
+                let __limit = limit;
+                let __delta = delta;
+                assert!(__delta != 0);
+                let __n = ((__limit - __start) as f64 / __delta as f64).ceil().max(0.0) as i64;
+                Tensor::arange(0..__n, &*self.device)
+                    .cast(burn::tensor::DType::I64)
+                    .mul_scalar(__delta)
+                    .add_scalar(__start)
+            };
             output
         }
         ");

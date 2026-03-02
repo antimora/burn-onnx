@@ -130,12 +130,16 @@ impl NodeProcessor for RangeProcessor {
             }
         }
 
-        // Validate that all inputs are scalars (rank 0 or 1)
+        // Validate that all inputs are scalars (ONNX requires 0-D or 1-element 1-D)
         for input in &node.inputs {
-            if !input.ty.is_scalar() && input.ty.rank() > 1 {
+            let is_valid = input.ty.is_scalar()
+                || matches!(&input.ty, ArgType::Tensor(t) if t.rank == 0)
+                || matches!(&input.ty, ArgType::Tensor(t) if t.rank == 1
+                    && t.static_shape.as_ref().is_some_and(|s| s == &[Some(1)]));
+            if !is_valid {
                 return Err(ProcessError::TypeMismatch {
-                    expected: "scalar input (rank 0 or 1)".to_string(),
-                    actual: format!("{} has rank {}", input.name, input.ty.rank()),
+                    expected: "scalar input (0-D or 1-element 1-D tensor)".to_string(),
+                    actual: format!("{} has type {:?}", input.name, input.ty),
                 });
             }
         }
@@ -276,9 +280,25 @@ mod tests {
     }
 
     #[test]
-    fn test_range_non_scalar_input() {
+    fn test_range_non_scalar_input_rank2() {
         let node = TestNodeBuilder::new(NodeType::Range, "test_range")
             .input_tensor_i64("start", 2, None) // rank 2, not scalar
+            .input_scalar_i64("limit")
+            .input_scalar_i64("delta")
+            .output_tensor_i64("output", 0, None)
+            .build();
+        let mut node = node;
+        let processor = RangeProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 16, &prefs);
+        assert!(matches!(result, Err(ProcessError::TypeMismatch { .. })));
+    }
+
+    #[test]
+    fn test_range_non_scalar_input_rank1_multi_element() {
+        // Rank 1 with shape [5] is not a valid scalar for Range
+        let node = TestNodeBuilder::new(NodeType::Range, "test_range")
+            .input_tensor_i64("start", 1, Some(vec![5]))
             .input_scalar_i64("limit")
             .input_scalar_i64("delta")
             .output_tensor_i64("output", 0, None)
