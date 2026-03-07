@@ -1,4 +1,5 @@
 use super::{BurnImports, Scope, ToTokens};
+use crate::LoadStrategy;
 use crate::burn::node::NodeCodegen;
 use crate::burn::partition::{
     MIN_GRAPH_SIZE, Partition, reorder_constants_to_consumers, try_partition,
@@ -62,16 +63,10 @@ impl BurnGraph {
         self.nodes.push(node);
     }
 
-    /// Save the state of each node in a burnpack file.
+    /// Save the state of each node in a burnpack file and generate weight-loading constructors.
     ///
-    /// The `Default` trait will be implemented for the generated model, which will load the
-    /// burnpack file saved at the provided path.
-    ///
-    /// # Arguments
-    ///
-    /// * `out_file` - The path to the burnpack file (without extension).
-    /// * `embed_states` - If true, embed the burnpack file in the binary using `include_bytes!`.
-    pub fn with_burnpack(mut self, out_file: PathBuf, embed_states: bool) -> Self {
+    /// The [`LoadStrategy`] controls which constructors are generated on the `Model` struct.
+    pub fn with_burnpack(mut self, out_file: PathBuf, strategy: LoadStrategy) -> Self {
         // Collect all tensor snapshots from nodes
         let snapshots = self.collect_all_snapshots();
 
@@ -82,11 +77,9 @@ impl BurnGraph {
             .write_to_file(&burnpack_file)
             .expect("Failed to write burnpack file");
 
-        // Register the loading code
-        if embed_states {
-            self.register_burnpack_embed(burnpack_file);
-        } else {
-            self.register_burnpack_file(burnpack_file);
+        // Register the loading code based on strategy
+        if strategy != LoadStrategy::None {
+            self.register_burnpack_loaders(burnpack_file, strategy);
         }
 
         self
@@ -529,71 +522,95 @@ impl BurnGraph {
             });
     }
 
-    fn register_burnpack_file(&mut self, file: PathBuf) {
+    fn register_burnpack_loaders(&mut self, file: PathBuf, strategy: LoadStrategy) {
         self.imports.register("burn_store::BurnpackStore");
         self.imports.register("burn_store::ModuleSnapshot");
+        self.imports.register("burn::tensor::Bytes");
 
-        let file = file.to_str().unwrap();
+        let mut statics = quote! {};
+        let mut default_impl = quote! {};
+        let mut extra_loaders = quote! {};
+
+        match strategy {
+            LoadStrategy::File => {
+                let file = file.to_str().unwrap();
+                default_impl = quote! {
+                    impl<B: Backend> Default for Model<B> {
+                        fn default() -> Self {
+                            Self::from_file(#file, &Default::default())
+                        }
+                    }
+                    _blank_!();
+                };
+                extra_loaders = quote! {
+                    /// Load model weights from a burnpack file.
+                    pub fn from_file(file: &str, device: &B::Device) -> Self {
+                        let mut model = Self::new(device);
+                        let mut store = BurnpackStore::from_file(file);
+                        model.load_from(&mut store).expect("Failed to load burnpack file");
+                        model
+                    }
+                    _blank_!();
+                };
+            }
+            LoadStrategy::Embedded => {
+                let file_size = std::fs::metadata(&file)
+                    .expect("Failed to read burnpack file metadata")
+                    .len() as usize;
+                let file = file.to_str().unwrap();
+                statics = quote! {
+                    // Align embedded data to 256-byte boundary to match burnpack's internal alignment.
+                    // This ensures tensor data remains properly aligned for zero-copy loading,
+                    // regardless of where the linker places the static data in the binary.
+                    #[repr(C, align(256))]
+                    struct Aligned256([u8; #file_size]);
+                    static ALIGNED_DATA: Aligned256 = Aligned256(*include_bytes!(#file));
+                    static EMBEDDED_STATES: &[u8] = &ALIGNED_DATA.0;
+                    _blank_!();
+                };
+                default_impl = quote! {
+                    impl<B: Backend> Default for Model<B> {
+                        fn default() -> Self {
+                            Self::from_embedded(&Default::default())
+                        }
+                    }
+                    _blank_!();
+                };
+                extra_loaders = quote! {
+                    /// Load model weights from embedded burnpack data (zero-copy at store level).
+                    ///
+                    /// The embedded data stays in the binary's .rodata section without heap allocation.
+                    /// Tensor data is sliced directly from the static bytes.
+                    ///
+                    /// Note: Some backends (e.g., NdArray) may still copy data internally.
+                    /// See <https://github.com/tracel-ai/burn/issues/4153> for true backend zero-copy.
+                    ///
+                    /// See <https://github.com/tracel-ai/burn/issues/4123>
+                    pub fn from_embedded(device: &B::Device) -> Self {
+                        let mut model = Self::new(device);
+                        let mut store = BurnpackStore::from_static(EMBEDDED_STATES);
+                        model.load_from(&mut store).expect("Failed to load embedded burnpack");
+                        model
+                    }
+                    _blank_!();
+                };
+            }
+            LoadStrategy::Bytes | LoadStrategy::None => {}
+        }
+
         self.default = Some(quote! {
             _blank_!();
-            impl<B: Backend> Default for Model<B> {
-                fn default() -> Self {
-                    Self::from_file(#file, &Default::default())
-                }
-            }
-            _blank_!();
+            #statics
+            #default_impl
             impl<B: Backend> Model<B> {
-                /// Load model weights from a burnpack file.
-                pub fn from_file(file: &str, device: &B::Device) -> Self {
+                #extra_loaders
+                /// Load model weights from in-memory bytes.
+                ///
+                /// The bytes must be the contents of a `.bpk` file.
+                pub fn from_bytes(bytes: Bytes, device: &B::Device) -> Self {
                     let mut model = Self::new(device);
-                    let mut store = BurnpackStore::from_file(file);
-                    model.load_from(&mut store).expect("Failed to load burnpack file");
-                    model
-                }
-            }
-        });
-    }
-
-    fn register_burnpack_embed(&mut self, file: PathBuf) {
-        self.imports.register("burn_store::BurnpackStore");
-        self.imports.register("burn_store::ModuleSnapshot");
-
-        // Get file size to create properly-sized aligned wrapper
-        let file_size = std::fs::metadata(&file)
-            .expect("Failed to read burnpack file metadata")
-            .len() as usize;
-        let file = file.to_str().unwrap();
-
-        self.default = Some(quote! {
-            _blank_!();
-            // Align embedded data to 256-byte boundary to match burnpack's internal alignment.
-            // This ensures tensor data remains properly aligned for zero-copy loading,
-            // regardless of where the linker places the static data in the binary.
-            #[repr(C, align(256))]
-            struct Aligned256([u8; #file_size]);
-            static ALIGNED_DATA: Aligned256 = Aligned256(*include_bytes!(#file));
-            static EMBEDDED_STATES: &[u8] = &ALIGNED_DATA.0;
-            _blank_!();
-            impl<B: Backend> Default for Model<B> {
-                fn default() -> Self {
-                    Self::from_embedded(&Default::default())
-                }
-            }
-            _blank_!();
-            impl<B: Backend> Model<B> {
-                /// Load model weights from embedded burnpack data (zero-copy at store level).
-                ///
-                /// The embedded data stays in the binary's .rodata section without heap allocation.
-                /// Tensor data is sliced directly from the static bytes.
-                ///
-                /// Note: Some backends (e.g., NdArray) may still copy data internally.
-                /// See <https://github.com/tracel-ai/burn/issues/4153> for true backend zero-copy.
-                ///
-                /// See <https://github.com/tracel-ai/burn/issues/4123>
-                pub fn from_embedded(device: &B::Device) -> Self {
-                    let mut model = Self::new(device);
-                    let mut store = BurnpackStore::from_static(EMBEDDED_STATES);
-                    model.load_from(&mut store).expect("Failed to load embedded burnpack");
+                    let mut store = BurnpackStore::from_bytes(Some(bytes));
+                    model.load_from(&mut store).expect("Failed to load burnpack bytes");
                     model
                 }
             }
