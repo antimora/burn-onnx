@@ -1182,4 +1182,66 @@ mod tests {
         let submodule1_count = code.matches("pub struct Submodule1").count();
         assert_eq!(submodule1_count, 1, "Submodule1 defined more than once");
     }
+
+    /// Create a temporary .bpk file for tests that need `with_burnpack`.
+    fn temp_bpk() -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("burn-onnx-test-{}.bpk", std::process::id()));
+        std::fs::write(&path, [0u8; 4]).unwrap();
+        path
+    }
+
+    #[test]
+    fn load_strategy_file_generates_from_file_and_from_bytes() {
+        let bpk = temp_bpk();
+        let graph = build_abs_chain(1).with_burnpack(bpk.clone(), LoadStrategy::File);
+        let code = format_tokens(graph.codegen());
+        let _ = std::fs::remove_file(bpk);
+
+        assert!(code.contains("pub fn from_file("));
+        assert!(code.contains("pub fn from_bytes(bytes: Bytes"));
+        assert!(code.contains("impl<B: Backend> Default for Model<B>"));
+        assert!(code.contains("Self::from_file("));
+        assert!(!code.contains("from_embedded"));
+    }
+
+    #[test]
+    fn load_strategy_embedded_generates_from_embedded_and_from_bytes() {
+        let bpk = temp_bpk();
+        let graph = build_abs_chain(1).with_burnpack(bpk.clone(), LoadStrategy::Embedded);
+        let code = format_tokens(graph.codegen());
+        let _ = std::fs::remove_file(bpk);
+
+        assert!(code.contains("pub fn from_embedded("));
+        assert!(code.contains("pub fn from_bytes(bytes: Bytes"));
+        assert!(code.contains("impl<B: Backend> Default for Model<B>"));
+        assert!(code.contains("Self::from_embedded("));
+        assert!(code.contains("include_bytes!"));
+        assert!(!code.contains("from_file"));
+    }
+
+    #[test]
+    fn load_strategy_bytes_generates_only_from_bytes() {
+        let bpk = temp_bpk();
+        let graph = build_abs_chain(1).with_burnpack(bpk.clone(), LoadStrategy::Bytes);
+        let code = format_tokens(graph.codegen());
+        let _ = std::fs::remove_file(bpk);
+
+        assert!(code.contains("pub fn from_bytes(bytes: Bytes"));
+        assert!(!code.contains("from_file"));
+        assert!(!code.contains("from_embedded"));
+        assert!(!code.contains("impl<B: Backend> Default for Model<B>"));
+    }
+
+    #[test]
+    fn load_strategy_none_generates_no_loaders() {
+        let bpk = temp_bpk();
+        let graph = build_abs_chain(1).with_burnpack(bpk.clone(), LoadStrategy::None);
+        let code = format_tokens(graph.codegen());
+        let _ = std::fs::remove_file(bpk);
+
+        assert!(!code.contains("from_file"));
+        assert!(!code.contains("from_bytes"));
+        assert!(!code.contains("from_embedded"));
+        assert!(!code.contains("impl<B: Backend> Default for Model<B>"));
+    }
 }
