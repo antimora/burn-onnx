@@ -85,7 +85,11 @@ fn test_external_data_with_offset() {
             && let Some(output) = const_node.outputs.first()
             && let Some(data) = output.value()
         {
-            assert_eq!(data.shape, burn_tensor::Shape::new([2, 3]), "Expected shape [2, 3]");
+            assert_eq!(
+                data.shape,
+                burn_tensor::Shape::new([2, 3]),
+                "Expected shape [2, 3]"
+            );
             let values: Vec<f32> = data.as_slice().unwrap().to_vec();
             assert_eq!(values, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
         }
