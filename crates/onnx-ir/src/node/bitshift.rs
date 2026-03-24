@@ -96,7 +96,7 @@ impl NodeProcessor for BitShiftProcessor {
             .attrs
             .get("direction")
             .map(|val| val.clone().into_string())
-            .ok_or(ProcessError::MissingAttribute("direction".to_string()))?;
+            .ok_or_else(|| ProcessError::MissingAttribute("direction".to_string()))?;
 
         let direction =
             Direction::from_str(&direction_str).map_err(|e| ProcessError::InvalidAttribute {
