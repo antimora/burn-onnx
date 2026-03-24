@@ -170,11 +170,11 @@ mod tests {
             .output_tensor_i32("Z", 2, None)
             .build();
 
-        let mut node = node;
         let processor = BitShiftProcessor;
-        let prefs = OutputPreferences::new();
-        let config = processor.extract_config(&node, 16).unwrap();
-        processor.infer_types(&mut node, 16, &prefs).unwrap();
-        assert_eq!(config.direction, Direction::Left);
+        let extract_result = processor.extract_config(&node, 16);
+        assert!(matches!(
+            extract_result,
+            Err(ProcessError::MissingAttribute(ref s)) if s == "direction"
+        ));
     }
 }
