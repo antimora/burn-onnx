@@ -91,7 +91,6 @@ impl NodeProcessor for BitShiftProcessor {
 
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
         // Extract direction attribute
-        // FIXME: Spec marks 'direction' as required, but we provide default "left"
         let direction_str = node
             .attrs
             .get("direction")
