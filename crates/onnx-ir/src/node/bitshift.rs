@@ -76,12 +76,11 @@ impl NodeProcessor for BitShiftProcessor {
     fn infer_types(
         &self,
         node: &mut RawNode,
-        _opset: usize,
+        opset: usize,
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
-        // TODO: Add validation for unexpected attributes
-        // FIXME: Spec says 'direction' is required but extract_config provides default "left"
-        // Should either validate presence here or update spec documentation
+        // Validate node attributes
+        let _ = self.extract_config(node, opset)?;
 
         // Output type is same as input with broadcasting
         crate::processor::same_as_input_broadcast(node);
