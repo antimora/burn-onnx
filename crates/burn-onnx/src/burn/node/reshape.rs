@@ -40,7 +40,7 @@ impl NodeCodegen for onnx_ir::reshape::ReshapeNode {
                                     DType::F64 => quote! { .elem::<f64>() },
                                     DType::I32 => quote! { .elem::<i32>() },
                                     DType::I64 => quote! { .elem::<i64>() },
-                                    DType::Bool => quote! { .elem::<bool>() },
+                                    DType::Bool(_) => quote! { .elem::<bool>() },
                                     _ => panic!("Unsupported scalar type: {:?}", elem_type),
                                 };
                                 quote! {
@@ -264,7 +264,7 @@ impl NodeCodegen for onnx_ir::reshape::ReshapeNode {
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
-    use burn::tensor::DType;
+    use burn::tensor::{BoolStore, DType};
     use insta::assert_snapshot;
     use onnx_ir::ir::RuntimeInputRef;
     use onnx_ir::reshape::{ReshapeConfig, ReshapeInput, ReshapeNodeBuilder};
@@ -410,8 +410,8 @@ mod tests {
             shape: ReshapeInput::Static(vec![]),
         };
         let node = ReshapeNodeBuilder::new("reshape1")
-            .input_tensor("mask", 1, DType::Bool)
-            .output_scalar("flag", DType::Bool)
+            .input_tensor("mask", 1, DType::Bool(BoolStore::Native))
+            .output_scalar("flag", DType::Bool(BoolStore::Native))
             .config(config)
             .build();
         let code = codegen_forward_default(&node);

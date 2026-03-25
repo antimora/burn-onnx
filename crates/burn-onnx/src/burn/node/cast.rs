@@ -47,7 +47,7 @@ impl NodeCodegen for onnx_ir::cast::CastNode {
                         DType::U16 => quote! { u16 },
                         DType::I8 => quote! { i8 },
                         DType::U8 => quote! { u8 },
-                        DType::Bool => quote! { bool },
+                        DType::Bool(_) => quote! { bool },
                         _ => panic!("Unsupported DType for Cast: {:?}", self.config.to),
                     };
                     quote! {
@@ -191,7 +191,7 @@ impl NodeCodegen for onnx_ir::cast::CastNode {
 #[cfg(test)]
 mod tests {
     use super::super::test_helpers::*;
-    use burn::tensor::DType;
+    use burn::tensor::{BoolStore, DType};
     use insta::assert_snapshot;
     use onnx_ir::cast::{CastConfig, CastNode, CastNodeBuilder};
 
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn test_cast_float_to_bool() {
-        let node = create_cast_node_tensor("cast1", DType::F32, DType::Bool);
+        let node = create_cast_node_tensor("cast1", DType::F32, DType::Bool(BoolStore::Native));
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2, Bool> {
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn test_cast_bool_to_int64() {
-        let node = create_cast_node_tensor("cast1", DType::Bool, DType::I64);
+        let node = create_cast_node_tensor("cast1", DType::Bool(BoolStore::Native), DType::I64);
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<B, 2, Bool>) -> Tensor<B, 2, Int> {

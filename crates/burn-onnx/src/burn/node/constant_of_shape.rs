@@ -33,7 +33,7 @@ impl NodeCodegen for onnx_ir::node::constant_of_shape::ConstantOfShapeNode {
                     let val = tensor_data.as_slice::<i64>().unwrap()[0];
                     quote! { #val }
                 }
-                onnx_ir::ir::DType::Bool => {
+                onnx_ir::ir::DType::Bool(_) => {
                     let val = tensor_data.as_slice::<bool>().unwrap()[0];
                     quote! { #val }
                 }
@@ -141,7 +141,7 @@ impl NodeCodegen for onnx_ir::node::constant_of_shape::ConstantOfShapeNode {
 mod tests {
     use super::super::test_helpers::*;
     use insta::assert_snapshot;
-    use onnx_ir::ir::{DType, RuntimeInputRef, TensorData};
+    use onnx_ir::ir::{BoolStore, DType, RuntimeInputRef, TensorData};
     use onnx_ir::node::constant_of_shape::{
         ConstantOfShapeConfig, ConstantOfShapeNodeBuilder, ConstantOfShapeShape,
     };
@@ -236,7 +236,7 @@ mod tests {
         };
         let node = ConstantOfShapeNodeBuilder::new("const1")
             .input_shape("shape_vec", 1)
-            .output_scalar("flag", DType::Bool)
+            .output_scalar("flag", DType::Bool(BoolStore::Native))
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
@@ -396,7 +396,7 @@ mod tests {
         };
         let node = ConstantOfShapeNodeBuilder::new("const1")
             .input_shape("shape_dims", 2)
-            .output_tensor("mask", 2, DType::Bool)
+            .output_tensor("mask", 2, DType::Bool(BoolStore::Native))
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
@@ -416,7 +416,7 @@ mod tests {
         };
         let node = ConstantOfShapeNodeBuilder::new("const1")
             .input_shape("dimensions", 3)
-            .output_tensor("flags", 3, DType::Bool)
+            .output_tensor("flags", 3, DType::Bool(BoolStore::Native))
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
@@ -536,7 +536,7 @@ mod tests {
         };
         let node = ConstantOfShapeNodeBuilder::new("const1")
             .input_shape("sz", 4)
-            .output_tensor("bitmask", 4, DType::Bool)
+            .output_tensor("bitmask", 4, DType::Bool(BoolStore::Native))
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
@@ -559,7 +559,7 @@ mod tests {
         };
         let node = ConstantOfShapeNodeBuilder::new("const1")
             .input_shape("target_dims", 2)
-            .output_tensor("empty_mask", 2, DType::Bool)
+            .output_tensor("empty_mask", 2, DType::Bool(BoolStore::Native))
             .config(config)
             .build();
         let code = codegen_forward_default(&node);

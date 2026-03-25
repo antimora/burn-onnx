@@ -26,7 +26,7 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
                     let dtype = self.inputs[0].ty.elem_type();
                     let dtype_tokens = dtype.to_tokens();
                     let kind = match dtype {
-                        DType::Bool => quote! { , Bool },
+                        DType::Bool(_) => quote! { , Bool },
                         _ if dtype.is_float() => quote! {},
                         _ => quote! { , Int },
                     };
@@ -52,7 +52,7 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
                             let dtype = input_arg.ty.elem_type();
                             let dtype_tokens = dtype.to_tokens();
                             let kind = match dtype {
-                                DType::Bool => quote! { , Bool },
+                                DType::Bool(_) => quote! { , Bool },
                                 _ if dtype.is_float() => quote! {},
                                 _ => quote! { , Int },
                             };

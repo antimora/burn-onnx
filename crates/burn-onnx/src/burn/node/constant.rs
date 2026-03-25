@@ -219,7 +219,7 @@ impl NodeCodegen for onnx_ir::node::constant::ConstantNode {
                         let ty = super::super::argument_helpers::scalar_type_tokens(elem_type);
                         quote! { #val as #ty }
                     }
-                    onnx_ir::ir::DType::Bool => {
+                    onnx_ir::ir::DType::Bool(_) => {
                         let val = tensor_data.as_slice::<bool>().unwrap()[0];
                         quote! { #val }
                     }
