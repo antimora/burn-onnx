@@ -121,16 +121,15 @@ impl NodeCodegen for onnx_ir::cast::CastNode {
                 match &self.config.to {
                     dtype if dtype.is_float() => {
                         let dtype_tokens = self.config.to.to_tokens();
-                        // Use f64 intermediate for precision, then from_data_dtype
+                        // Use f64 intermediate for precision, then from_data
                         // to convert to the exact target dtype
                         quote! {
                             let #output = {
                                 let shape_array = #input as [i64; #rank];
                                 let float_array: [f64; #rank] = shape_array.map(|x| x as f64);
-                                Tensor::<B, 1>::from_data_dtype(
+                                Tensor::<B, 1>::from_data(
                                     TensorData::from(float_array),
-                                    &self.device,
-                                    #dtype_tokens
+                                    (&*self.device, #dtype_tokens)
                                 )
                             };
                         }
@@ -141,10 +140,9 @@ impl NodeCodegen for onnx_ir::cast::CastNode {
                             let #output = {
                                 let shape_array = #input as [i64; #rank];
                                 let bool_array: [bool; #rank] = shape_array.map(|x| x != 0);
-                                Tensor::<B, 1, Bool>::from_data_dtype(
+                                Tensor::<B, 1, Bool>::from_data(
                                     TensorData::from(bool_array),
-                                    &self.device,
-                                    #dtype_tokens
+                                    (&*self.device, #dtype_tokens)
                                 )
                             };
                         }

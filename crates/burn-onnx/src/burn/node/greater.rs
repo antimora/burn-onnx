@@ -38,20 +38,18 @@ impl NodeCodegen for onnx_ir::comparison::GreaterNode {
             (ArgType::Shape(_), rhs_ty) if rhs_ty.is_on_device() => {
                 let dtype_tokens = rhs_ty.elem_type().to_tokens();
                 quote! {
-                    Tensor::<B, 1, burn::tensor::Int>::from_data_dtype(
+                    Tensor::<B, 1, burn::tensor::Int>::from_data(
                         burn::tensor::TensorData::from(&#lhs_value as &[i64]),
-                        &*self.device,
-                        #dtype_tokens
+                        (&*self.device, #dtype_tokens)
                     ).greater(#rhs_value)
                 }
             }
             (lhs_ty, ArgType::Shape(_)) if lhs_ty.is_on_device() => {
                 let dtype_tokens = lhs_ty.elem_type().to_tokens();
                 quote! {
-                    #lhs_value.greater(Tensor::<B, 1, burn::tensor::Int>::from_data_dtype(
+                    #lhs_value.greater(Tensor::<B, 1, burn::tensor::Int>::from_data(
                         burn::tensor::TensorData::from(&#rhs_value as &[i64]),
-                        &*self.device,
-                        #dtype_tokens
+                        (&*self.device, #dtype_tokens)
                     ))
                 }
             }
@@ -207,10 +205,9 @@ mod tests {
                 B,
                 1,
                 burn::tensor::Int,
-            >::from_data_dtype(
+            >::from_data(
                     burn::tensor::TensorData::from(&lhs as &[i64]),
-                    &*self.device,
-                    burn::tensor::DType::I64,
+                    (&*self.device, burn::tensor::DType::I64),
                 )
                 .greater(rhs);
             output
@@ -233,10 +230,9 @@ mod tests {
                         B,
                         1,
                         burn::tensor::Int,
-                    >::from_data_dtype(
+                    >::from_data(
                         burn::tensor::TensorData::from(&rhs as &[i64]),
-                        &*self.device,
-                        burn::tensor::DType::I64,
+                        (&*self.device, burn::tensor::DType::I64),
                     ),
                 );
             output

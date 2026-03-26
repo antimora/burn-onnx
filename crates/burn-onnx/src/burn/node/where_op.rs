@@ -200,18 +200,16 @@ fn where_input_as_tensor(
 
             if target_dtype.is_float() {
                 quote! {
-                    Tensor::<B, 1>::from_data_dtype(
+                    Tensor::<B, 1>::from_data(
                         burn::tensor::TensorData::from([#name as f64]),
-                        &*self.device,
-                        #dtype_tokens
+                        (&*self.device, #dtype_tokens)
                     ).reshape([#(#shape_vec),*])
                 }
             } else if target_dtype.is_int() || target_dtype.is_uint() {
                 quote! {
-                    Tensor::<B, 1, burn::tensor::Int>::from_data_dtype(
+                    Tensor::<B, 1, burn::tensor::Int>::from_data(
                         burn::tensor::TensorData::from([#name as i64]),
-                        &*self.device,
-                        #dtype_tokens
+                        (&*self.device, #dtype_tokens)
                     ).reshape([#(#shape_vec),*])
                 }
             } else {
@@ -222,10 +220,9 @@ fn where_input_as_tensor(
                     quote! { #name != 0 }
                 };
                 quote! {
-                    Tensor::<B, 1, burn::tensor::Bool>::from_data_dtype(
+                    Tensor::<B, 1, burn::tensor::Bool>::from_data(
                         burn::tensor::TensorData::from([#bool_expr]),
-                        &*self.device,
-                        #dtype_tokens
+                        (&*self.device, #dtype_tokens)
                     ).reshape([#(#shape_vec),*])
                 }
             }
@@ -235,10 +232,9 @@ fn where_input_as_tensor(
             let name = arg_to_ident(arg);
             let dtype_tokens = target_dtype.to_tokens();
             let tensor = quote! {
-                Tensor::<B, 1, burn::tensor::Int>::from_data_dtype(
+                Tensor::<B, 1, burn::tensor::Int>::from_data(
                     burn::tensor::TensorData::from(&#name as &[i64]),
-                    &*self.device,
-                    #dtype_tokens
+                    (&*self.device, #dtype_tokens)
                 )
             };
 
@@ -345,10 +341,9 @@ mod tests {
                 Tensor::<
                     B,
                     1,
-                >::from_data_dtype(
+                >::from_data(
                         burn::tensor::TensorData::from([y as f64]),
-                        &*self.device,
-                        burn::tensor::DType::F32,
+                        (&*self.device, burn::tensor::DType::F32),
                     )
                     .reshape([1, 1])
                     .expand(cond.dims())

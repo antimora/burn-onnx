@@ -123,10 +123,9 @@ impl NodeCodegen for onnx_ir::cast_like::CastLikeNode {
                             let #output = {
                                 let shape_array = #input as [i64; #rank];
                                 let float_array: [f64; #rank] = shape_array.map(|x| x as f64);
-                                Tensor::<B, 1>::from_data_dtype(
+                                Tensor::<B, 1>::from_data(
                                     TensorData::from(float_array),
-                                    &self.device,
-                                    #dtype_tokens
+                                    (&*self.device, #dtype_tokens)
                                 )
                             };
                         }
@@ -137,10 +136,9 @@ impl NodeCodegen for onnx_ir::cast_like::CastLikeNode {
                             let #output = {
                                 let shape_array = #input as [i64; #rank];
                                 let bool_array: [bool; #rank] = shape_array.map(|x| x != 0);
-                                Tensor::<B, 1, Bool>::from_data_dtype(
+                                Tensor::<B, 1, Bool>::from_data(
                                     TensorData::from(bool_array),
-                                    &self.device,
-                                    #dtype_tokens
+                                    (&*self.device, #dtype_tokens)
                                 )
                             };
                         }
@@ -338,10 +336,9 @@ mod tests {
                 Tensor::<
                     B,
                     1,
-                >::from_data_dtype(
+                >::from_data(
                     TensorData::from(float_array),
-                    &self.device,
-                    burn::tensor::DType::F32,
+                    (&*self.device, burn::tensor::DType::F32),
                 )
             };
             output
@@ -367,10 +364,9 @@ mod tests {
                     B,
                     1,
                     Bool,
-                >::from_data_dtype(
+                >::from_data(
                     TensorData::from(bool_array),
-                    &self.device,
-                    burn::tensor::DType::Bool(burn::tensor::BoolStore::Native),
+                    (&*self.device, burn::tensor::DType::Bool(burn::tensor::BoolStore::Native)),
                 )
             };
             output

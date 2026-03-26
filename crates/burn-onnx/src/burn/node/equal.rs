@@ -50,10 +50,9 @@ impl NodeCodegen for onnx_ir::comparison::EqualNode {
                 let dtype_tokens = rhs_ty.elem_type().to_tokens();
                 quote! {
                     {
-                        let shape_tensor = Tensor::<B, 1, Int>::from_data_dtype(
+                        let shape_tensor = Tensor::<B, 1, Int>::from_data(
                             burn::tensor::TensorData::from(#lhs_value.as_slice()),
-                            &*self.device,
-                            #dtype_tokens
+                            (&*self.device, #dtype_tokens)
                         );
                         shape_tensor.equal(#rhs_value)
                     }
@@ -63,10 +62,9 @@ impl NodeCodegen for onnx_ir::comparison::EqualNode {
                 let dtype_tokens = lhs_ty.elem_type().to_tokens();
                 quote! {
                     {
-                        let shape_tensor = Tensor::<B, 1, Int>::from_data_dtype(
+                        let shape_tensor = Tensor::<B, 1, Int>::from_data(
                             burn::tensor::TensorData::from(#rhs_value.as_slice()),
-                            &*self.device,
-                            #dtype_tokens
+                            (&*self.device, #dtype_tokens)
                         );
                         #lhs_value.equal(shape_tensor)
                     }
@@ -270,10 +268,9 @@ mod tests {
                     B,
                     1,
                     Int,
-                >::from_data_dtype(
+                >::from_data(
                     burn::tensor::TensorData::from(lhs.as_slice()),
-                    &*self.device,
-                    burn::tensor::DType::I64,
+                    (&*self.device, burn::tensor::DType::I64),
                 );
                 shape_tensor.equal(rhs)
             };
@@ -296,10 +293,9 @@ mod tests {
                     B,
                     1,
                     Int,
-                >::from_data_dtype(
+                >::from_data(
                     burn::tensor::TensorData::from(rhs.as_slice()),
-                    &*self.device,
-                    burn::tensor::DType::I64,
+                    (&*self.device, burn::tensor::DType::I64),
                 );
                 lhs.equal(shape_tensor)
             };

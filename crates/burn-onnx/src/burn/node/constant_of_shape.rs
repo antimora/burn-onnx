@@ -98,7 +98,7 @@ impl NodeCodegen for onnx_ir::node::constant_of_shape::ConstantOfShapeNode {
                         }
                     }
                 } else {
-                    // Use from_data_dtype with reshape and expand to ensure correct dtype
+                    // Use from_data with reshape and expand to ensure correct dtype
                     let dtype_tokens = tensor.dtype.to_tokens();
                     // Create shape of ones for reshape: [1, 1, ..., 1] with tensor.rank dimensions
                     let ones: Vec<_> = (0..tensor.rank).map(|_| quote! { 1 }).collect();
@@ -106,19 +106,17 @@ impl NodeCodegen for onnx_ir::node::constant_of_shape::ConstantOfShapeNode {
                     // Create tensor with explicit dtype, reshape to correct rank, then expand
                     if tensor.dtype.is_float() {
                         quote! {
-                            let #output = Tensor::<B, 1>::from_data_dtype(
+                            let #output = Tensor::<B, 1>::from_data(
                                 burn::tensor::TensorData::from([#value as f64]),
-                                &*self.device,
-                                #dtype_tokens
+                                (&*self.device, #dtype_tokens)
                             ).reshape([#(#ones),*]).expand(#shape_expr);
                         }
                     } else {
                         // Int types
                         quote! {
-                            let #output = Tensor::<B, 1, Int>::from_data_dtype(
+                            let #output = Tensor::<B, 1, Int>::from_data(
                                 burn::tensor::TensorData::from([#value as i64]),
-                                &*self.device,
-                                #dtype_tokens
+                                (&*self.device, #dtype_tokens)
                             ).reshape([#(#ones),*]).expand(#shape_expr);
                         }
                     }
@@ -287,10 +285,9 @@ mod tests {
             let filled = Tensor::<
                 B,
                 1,
-            >::from_data_dtype(
+            >::from_data(
                     burn::tensor::TensorData::from([1.5f32 as f64]),
-                    &*self.device,
-                    burn::tensor::DType::F32,
+                    (&*self.device, burn::tensor::DType::F32),
                 )
                 .reshape([1, 1, 1])
                 .expand([2usize, 3usize, 4usize]);
@@ -316,10 +313,9 @@ mod tests {
             let matrix = Tensor::<
                 B,
                 1,
-            >::from_data_dtype(
+            >::from_data(
                     burn::tensor::TensorData::from([0.5f64 as f64]),
-                    &*self.device,
-                    burn::tensor::DType::F64,
+                    (&*self.device, burn::tensor::DType::F64),
                 )
                 .reshape([1, 1])
                 .expand([10usize, 20usize]);
@@ -346,10 +342,9 @@ mod tests {
                 B,
                 1,
                 Int,
-            >::from_data_dtype(
+            >::from_data(
                     burn::tensor::TensorData::from([7i32 as i64]),
-                    &*self.device,
-                    burn::tensor::DType::I32,
+                    (&*self.device, burn::tensor::DType::I32),
                 )
                 .reshape([1, 1])
                 .expand([5usize, 5usize]);
@@ -376,10 +371,9 @@ mod tests {
                 B,
                 1,
                 Int,
-            >::from_data_dtype(
+            >::from_data(
                     burn::tensor::TensorData::from([100i64 as i64]),
-                    &*self.device,
-                    burn::tensor::DType::I64,
+                    (&*self.device, burn::tensor::DType::I64),
                 )
                 .reshape([1])
                 .expand([8usize]);
@@ -446,10 +440,9 @@ mod tests {
             let zeros = Tensor::<
                 B,
                 1,
-            >::from_data_dtype(
+            >::from_data(
                     burn::tensor::TensorData::from([0.0f32 as f64]),
-                    &*self.device,
-                    burn::tensor::DType::F32,
+                    (&*self.device, burn::tensor::DType::F32),
                 )
                 .reshape([1, 1])
                 .expand([2usize, 2usize]);
@@ -480,10 +473,9 @@ mod tests {
             let tensor = Tensor::<
                 B,
                 1,
-            >::from_data_dtype(
+            >::from_data(
                     burn::tensor::TensorData::from([2.5f32 as f64]),
-                    &*self.device,
-                    burn::tensor::DType::F32,
+                    (&*self.device, burn::tensor::DType::F32),
                 )
                 .reshape([1, 1, 1])
                 .expand(dynamic_shape);
@@ -513,10 +505,9 @@ mod tests {
                 B,
                 1,
                 Int,
-            >::from_data_dtype(
+            >::from_data(
                     burn::tensor::TensorData::from([255i64 as i64]),
-                    &*self.device,
-                    burn::tensor::DType::I64,
+                    (&*self.device, burn::tensor::DType::I64),
                 )
                 .reshape([1, 1])
                 .expand(shape_param);
@@ -591,10 +582,9 @@ mod tests {
             let zeros = Tensor::<
                 B,
                 1,
-            >::from_data_dtype(
+            >::from_data(
                     burn::tensor::TensorData::from([0.0f32 as f64]),
-                    &*self.device,
-                    burn::tensor::DType::F32,
+                    (&*self.device, burn::tensor::DType::F32),
                 )
                 .reshape([1, 1, 1])
                 .expand(runtime_shape);

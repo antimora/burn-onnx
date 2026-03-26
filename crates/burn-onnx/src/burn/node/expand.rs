@@ -51,10 +51,9 @@ impl NodeCodegen for onnx_ir::expand::ExpandNode {
             };
             return quote! {
                 let #output = {
-                    let input = Tensor::<B, 1 #kind>::from_data_dtype(
+                    let input = Tensor::<B, 1 #kind>::from_data(
                         burn::tensor::TensorData::from([#input]),
-                        &*self.device,
-                        #dtype_tokens
+                        (&*self.device, #dtype_tokens)
                     );
                     input.expand(#shape)
                 };
@@ -163,10 +162,9 @@ mod tests {
                     B,
                     1,
                     Int,
-                >::from_data_dtype(
+                >::from_data(
                     burn::tensor::TensorData::from([input]),
-                    &*self.device,
-                    burn::tensor::DType::I64,
+                    (&*self.device, burn::tensor::DType::I64),
                 );
                 input.expand([2, 3])
             };
@@ -190,10 +188,9 @@ mod tests {
                 let input = Tensor::<
                     B,
                     1,
-                >::from_data_dtype(
+                >::from_data(
                     burn::tensor::TensorData::from([input]),
-                    &*self.device,
-                    burn::tensor::DType::F32,
+                    (&*self.device, burn::tensor::DType::F32),
                 );
                 input.expand([2, 3])
             };
@@ -218,10 +215,9 @@ mod tests {
                     B,
                     1,
                     Bool,
-                >::from_data_dtype(
+                >::from_data(
                     burn::tensor::TensorData::from([input]),
-                    &*self.device,
-                    burn::tensor::DType::Bool(burn::tensor::BoolStore::Native),
+                    (&*self.device, burn::tensor::DType::Bool(burn::tensor::BoolStore::Native)),
                 );
                 input.expand([2, 3])
             };
