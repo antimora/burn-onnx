@@ -121,9 +121,7 @@ impl NodeProcessor for ExpandProcessor {
                     node.outputs[0].ty = ArgType::Tensor(TensorType {
                         dtype: input_elem_type,
                         rank: shape.len(),
-                        static_shape: Some(
-                            shape.iter().map(|&dim| Some(dim as usize)).collect(),
-                        ),
+                        static_shape: Some(shape.iter().map(|&dim| Some(dim as usize)).collect()),
                     });
                 }
             }
