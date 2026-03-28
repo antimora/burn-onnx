@@ -84,11 +84,8 @@ impl NodeProcessor for ExpandProcessor {
             ArgType::Shape(_) => {
                 // Shapes are always 1-D int64 data, so nothing to validate here
             }
-            _ => {
-                return Err(ProcessError::TypeMismatch {
-                    expected: "Tensor or Shape".to_string(),
-                    actual: format!("{:?}", node.inputs[1].ty),
-                });
+            ArgType::ScalarTensor(_) | ArgType::ScalarNative(_) => {
+                // Scalar shape means expanding to rank 0 (scalar output)
             }
         }
 
@@ -160,12 +157,6 @@ impl NodeProcessor for ExpandProcessor {
                                 }
                             }
                         }
-                    }
-                    _ => {
-                        return Err(ProcessError::TypeMismatch {
-                            expected: "Tensor or Shape".to_string(),
-                            actual: format!("{:?}", node.inputs[1].ty),
-                        });
                     }
                 };
 
@@ -399,15 +390,16 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_config_with_invalid_input_type() {
-        let invalid_shape_type = ArgType::ScalarNative(DType::I64);
-        let node = create_test_node(2, None, Some(invalid_shape_type)).build();
+    fn test_expand_scalar_native_shape_outputs_scalar() {
+        // ScalarNative shape input means expanding to rank 0
+        let shape_type = ArgType::ScalarNative(DType::I64);
+        let node = create_test_node(2, None, Some(shape_type)).build();
         let mut node = node;
         let processor = ExpandProcessor;
         let prefs = OutputPreferences::new();
-        let _config = processor.extract_config(&node, 16).unwrap();
-        let result = processor.infer_types(&mut node, 16, &prefs);
-        assert!(matches!(result, Err(ProcessError::TypeMismatch { .. })));
+        processor.infer_types(&mut node, 16, &prefs).unwrap();
+
+        assert_eq!(node.outputs[0].ty, ArgType::ScalarTensor(DType::F32));
     }
 
     #[test]
