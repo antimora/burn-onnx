@@ -1185,8 +1185,8 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir()
-            .join(format!("burn-onnx-test-{}-{}.bpk", std::process::id(), id));
+        let path =
+            std::env::temp_dir().join(format!("burn-onnx-test-{}-{}.bpk", std::process::id(), id));
         std::fs::write(&path, [0u8; 4]).unwrap();
         path
     }
