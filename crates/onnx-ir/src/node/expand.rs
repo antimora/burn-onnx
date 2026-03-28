@@ -128,6 +128,8 @@ impl NodeProcessor for ExpandProcessor {
             ExpandConfig::Runtime(_) => {
                 // When the shape cannot be determined statically, infer the rank from the shape input
                 let output_rank = match &node.inputs[1].ty {
+                    // Scalar shape input means expanding to a scalar (rank 0)
+                    ArgType::ScalarTensor(_) | ArgType::ScalarNative(_) => 0,
                     ArgType::Shape(rank) => *rank,
                     ArgType::Tensor(tensor) => {
                         if let Some(static_shape) = &tensor.static_shape
