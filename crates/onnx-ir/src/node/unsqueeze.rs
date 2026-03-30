@@ -183,11 +183,20 @@ impl NodeProcessor for UnsqueezeProcessor {
                     UnsqueezeConfig::Runtime(RuntimeInputRef::new(node.inputs[1].name.clone(), 1))
                 }
             }
-            _ => {
-                return Err(ProcessError::TypeMismatch {
-                    expected: "Tensor or Scalar".to_string(),
-                    actual: format!("{:?}", node.inputs[1].ty),
-                });
+            ArgType::Shape(_) => {
+                // Shape is effectively a 1D I64 tensor
+                if let Some(tensor_data) = input_value.value().as_ref() {
+                    match tensor_data.to_i64_vec() {
+                        Ok(axes) => UnsqueezeConfig::Static(axes),
+                        Err(_) => {
+                            return Err(ProcessError::Custom(
+                                "Unsqueeze: failed to extract axes from Shape".to_string(),
+                            ));
+                        }
+                    }
+                } else {
+                    UnsqueezeConfig::Runtime(RuntimeInputRef::new(node.inputs[1].name.clone(), 1))
+                }
             }
         };
 
@@ -217,12 +226,8 @@ impl UnsqueezeProcessor {
         let input_rank = match &node.inputs[0].ty {
             ArgType::Tensor(tensor) => tensor.rank,
             ArgType::ScalarTensor(_) | ArgType::ScalarNative(_) => 0,
-            _ => {
-                return Err(ProcessError::TypeMismatch {
-                    expected: "Tensor or Scalar".to_string(),
-                    actual: format!("{:?}", node.inputs[0].ty),
-                });
-            }
+            // Shape is effectively a 1D I64 tensor of dimension values
+            ArgType::Shape(_) => 1,
         };
 
         let output_rank = if let Some(ref axes) = axes {
@@ -273,18 +278,22 @@ impl UnsqueezeProcessor {
                 }
             }
             _ => {
-                let output_elem = match &node.outputs[0].ty {
-                    ArgType::Tensor(_) => node.inputs[0].ty.elem_type(),
-                    ArgType::ScalarTensor(elem_type) | ArgType::ScalarNative(elem_type) => {
-                        *elem_type
-                    }
+                let output_elem = match &node.inputs[0].ty {
                     ArgType::Shape(_) => crate::ir::DType::I64,
+                    _ => match &node.outputs[0].ty {
+                        ArgType::Tensor(_) => node.inputs[0].ty.elem_type(),
+                        ArgType::ScalarTensor(elem_type) | ArgType::ScalarNative(elem_type) => {
+                            *elem_type
+                        }
+                        ArgType::Shape(_) => crate::ir::DType::I64,
+                    },
                 };
 
                 // Compute output static_shape by inserting Some(1) at the unsqueezed axes
                 let static_shape = if let Some(axes) = axes {
                     let input_shape = match &node.inputs[0].ty {
                         ArgType::Tensor(t) => t.static_shape.clone(),
+                        ArgType::Shape(rank) => Some(vec![Some(*rank)]),
                         _ => None,
                     };
                     // Start with input dims or all-None
@@ -492,15 +501,24 @@ mod tests {
     }
 
     #[test]
-    fn test_unsqueeze_invalid_input() {
+    fn test_unsqueeze_shape_input() {
+        // Shape(4) unsqueezed at axis 0 should produce Tensor(I64, rank=2)
         let mut node = create_test_node_with_attr(2, vec![0]).build();
-        node.inputs[0].ty = ArgType::Shape(1);
+        node.inputs[0].ty = ArgType::Shape(4);
         let processor = UnsqueezeProcessor;
         let prefs = OutputPreferences::new();
         // Use opset 11 for attribute-based axes (pre-opset 13)
         let _config = processor.extract_config(&node, 11).unwrap();
-        let result = processor.infer_types(&mut node, 11, &prefs);
-        assert!(matches!(result, Err(ProcessError::TypeMismatch { .. })));
+        processor.infer_types(&mut node, 11, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(tensor) => {
+                assert_eq!(tensor.dtype, DType::I64);
+                assert_eq!(tensor.rank, 2); // 1 (shape is 1D) + 1 axis = 2
+                assert_eq!(tensor.static_shape, Some(vec![Some(1), Some(4)]));
+            }
+            _ => panic!("Expected Tensor output for Shape unsqueeze"),
+        }
     }
 
     // Tests for unsqueeze_config function
@@ -623,15 +641,20 @@ mod tests {
     }
 
     #[test]
-    fn test_unsqueeze_config_invalid_axes_type() {
+    fn test_unsqueeze_config_shape_axes() {
+        // Shape type is valid for axes (treated as 1D I64 tensor)
         let mut node = create_test_node_with_input(2, vec![0], false).build();
-        node.inputs[1].ty = ArgType::Shape(1); // Invalid type for axes
+        node.inputs[1].ty = ArgType::Shape(1);
 
         let node = node;
         let processor = UnsqueezeProcessor;
         let _prefs = OutputPreferences::new();
         let result = processor.extract_config(&node, 16);
-        assert!(matches!(result, Err(ProcessError::TypeMismatch { .. })));
+        // Without a value, Shape axes produce Runtime config
+        match result.unwrap() {
+            UnsqueezeConfig::Runtime(ref r) => assert_eq!(r.input_index, 1),
+            _ => panic!("Expected Runtime config for Shape axes without value"),
+        }
     }
 
     #[test]
