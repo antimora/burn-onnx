@@ -74,7 +74,7 @@ def main():
 
     session = ReferenceEvaluator(model, verbose=0)
 
-    test_input = np.random.seed(42)
+    np.random.seed(42)
     test_input = np.random.randn(2, 3).astype(np.float32)
     print(f"Input shape: {test_input.shape}")
 
