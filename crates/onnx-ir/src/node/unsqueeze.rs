@@ -189,9 +189,9 @@ impl NodeProcessor for UnsqueezeProcessor {
                     match tensor_data.to_i64_vec() {
                         Ok(axes) => UnsqueezeConfig::Static(axes),
                         Err(e) => {
-                            return Err(ProcessError::Custom(
-                                format!("Unsqueeze: failed to extract axes from Shape: {e}"),
-                            ));
+                            return Err(ProcessError::Custom(format!(
+                                "Unsqueeze: failed to extract axes from Shape: {e}"
+                            )));
                         }
                     }
                 } else {
