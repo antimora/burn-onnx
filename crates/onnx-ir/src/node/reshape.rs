@@ -343,9 +343,18 @@ impl NodeProcessor for ReshapeProcessor {
                 ArgType::Shape(_) => {
                     // Shape type is valid
                 }
+                ArgType::ScalarTensor(dtype) => {
+                    // ScalarTensor is rank 1; validate dtype like a 1D tensor
+                    if *dtype != crate::ir::DType::I64 {
+                        return Err(ProcessError::TypeMismatch {
+                            expected: "Shape ScalarTensor with dtype I64".to_string(),
+                            actual: format!("ScalarTensor with dtype {:?}", dtype),
+                        });
+                    }
+                }
                 _ => {
                     return Err(ProcessError::TypeMismatch {
-                        expected: "Tensor or Shape for shape input".to_string(),
+                        expected: "Tensor, Shape, or ScalarTensor for shape input".to_string(),
                         actual: format!("{:?}", node.inputs[1].ty),
                     });
                 }

@@ -211,9 +211,13 @@ impl NodeProcessor for SliceProcessor {
                 );
                 node.outputs[0].ty = ArgType::Shape(output_len);
             }
+            ArgType::ScalarTensor(_) => {
+                // Slicing a ScalarTensor preserves its type
+                node.outputs[0].ty = input_ty;
+            }
             unsupported_type => {
                 return Err(ProcessError::TypeMismatch {
-                    expected: "Tensor or Shape".to_string(),
+                    expected: "Tensor, Shape, or ScalarTensor".to_string(),
                     actual: format!("{:?}", unsupported_type),
                 });
             }

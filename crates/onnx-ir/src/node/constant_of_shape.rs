@@ -100,9 +100,18 @@ impl NodeProcessor for ConstantOfShapeProcessor {
             ArgType::Shape(_) => {
                 // Shapes are always 1-D int64 data, so nothing to validate here
             }
+            ArgType::ScalarTensor(dtype) => {
+                // ScalarTensor is rank 1; validate dtype like a 1D tensor
+                if !matches!(dtype, DType::I64) {
+                    return Err(ProcessError::TypeMismatch {
+                        expected: "Int64".to_string(),
+                        actual: format!("{:?}", dtype),
+                    });
+                }
+            }
             _ => {
                 return Err(ProcessError::TypeMismatch {
-                    expected: "Tensor or Shape".to_string(),
+                    expected: "Tensor, Shape, or ScalarTensor".to_string(),
                     actual: format!("{:?}", node.inputs[0].ty),
                 });
             }
@@ -126,6 +135,23 @@ impl NodeProcessor for ConstantOfShapeProcessor {
 
         let rank = match &node.inputs[0].ty {
             ArgType::Shape(rank) => *rank,
+            ArgType::ScalarTensor(_) => {
+                // ScalarTensor is rank 1 with a single element; the value is the output rank
+                if let Some(tensor_data) = node.inputs[0].value() {
+                    match tensor_data.to_i64_vec() {
+                        Ok(shape_vec) => shape_vec.len(),
+                        Err(_) => {
+                            return Err(ProcessError::Custom(format!(
+                                "ConstantOfShape node {} requires Int64 ScalarTensor input",
+                                node.name
+                            )));
+                        }
+                    }
+                } else {
+                    // ScalarTensor with no static value: single element means rank 1
+                    1
+                }
+            }
             ArgType::Tensor(tensor_type) => {
                 // First check if we have a lifted constant value (most reliable)
                 if let Some(tensor_data) = node.inputs[0].value() {

@@ -92,9 +92,10 @@ impl NodeProcessor for SplitProcessor {
         let (dtype, rank, input_static_shape) = match &node.inputs.first().unwrap().ty {
             ArgType::Tensor(tensor) => (tensor.dtype, tensor.rank, tensor.static_shape.clone()),
             ArgType::Shape(r) => (crate::ir::DType::I64, 1, Some(vec![Some(*r)])),
+            ArgType::ScalarTensor(dtype) => (*dtype, 1, Some(vec![Some(1)])),
             _ => {
                 return Err(ProcessError::TypeMismatch {
-                    expected: "Tensor or Shape".to_string(),
+                    expected: "Tensor, Shape, or ScalarTensor".to_string(),
                     actual: format!("{:?}", node.inputs.first().unwrap().ty),
                 });
             }
@@ -180,9 +181,14 @@ impl NodeProcessor for SplitProcessor {
                 rank: 1,
                 static_shape: Some(vec![Some(*rank)]),
             },
+            ArgType::ScalarTensor(dtype) => TensorType {
+                dtype: *dtype,
+                rank: 1,
+                static_shape: Some(vec![Some(1)]),
+            },
             _ => {
                 return Err(ProcessError::TypeMismatch {
-                    expected: "Tensor or Shape".to_string(),
+                    expected: "Tensor, Shape, or ScalarTensor".to_string(),
                     actual: format!("{:?}", node.inputs.first().unwrap().ty),
                 });
             }
