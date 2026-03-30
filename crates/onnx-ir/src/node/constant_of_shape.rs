@@ -136,7 +136,9 @@ impl NodeProcessor for ConstantOfShapeProcessor {
         let rank = match &node.inputs[0].ty {
             ArgType::Shape(rank) => *rank,
             ArgType::ScalarTensor(_) => {
-                // ScalarTensor is rank 1 with a single element; the value is the output rank
+                // ScalarTensor always has exactly 1 element, so the output rank
+                // is always 1 (the number of elements in the shape input = output rank).
+                // We still read the value for consistency with the Tensor path.
                 if let Some(tensor_data) = node.inputs[0].value() {
                     match tensor_data.to_i64_vec() {
                         Ok(shape_vec) => shape_vec.len(),
@@ -148,8 +150,7 @@ impl NodeProcessor for ConstantOfShapeProcessor {
                         }
                     }
                 } else {
-                    // ScalarTensor with no static value: single element means rank 1
-                    1
+                    1 // ScalarTensor invariant: always exactly 1 element
                 }
             }
             ArgType::Tensor(tensor_type) => {
@@ -188,7 +189,7 @@ impl NodeProcessor for ConstantOfShapeProcessor {
             }
             _ => {
                 return Err(ProcessError::TypeMismatch {
-                    expected: "Tensor or Shape".to_string(),
+                    expected: "Tensor, Shape, or ScalarTensor".to_string(),
                     actual: format!("{:?}", node.inputs[0].ty),
                 });
             }
@@ -510,5 +511,32 @@ mod tests {
             }
             _ => panic!("Expected Tensor output for Shape(1) input with default Float32 value"),
         }
+    }
+
+    #[test]
+    fn test_scalar_tensor_input() {
+        // ScalarTensor(I64) with no static value: rank defaults to 1
+        let mut node = create_test_node(ArgType::ScalarTensor(DType::I64)).build();
+        let processor = ConstantOfShapeProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 16, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(tensor) => {
+                assert_eq!(tensor.dtype, DType::F32);
+                assert_eq!(tensor.rank, 1);
+            }
+            _ => panic!("Expected Tensor output for ScalarTensor(I64) input"),
+        }
+    }
+
+    #[test]
+    fn test_scalar_tensor_wrong_dtype() {
+        // ScalarTensor(F32) should be rejected (must be I64)
+        let mut node = create_test_node(ArgType::ScalarTensor(DType::F32)).build();
+        let processor = ConstantOfShapeProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 16, &prefs);
+        assert!(matches!(result, Err(ProcessError::TypeMismatch { .. })));
     }
 }

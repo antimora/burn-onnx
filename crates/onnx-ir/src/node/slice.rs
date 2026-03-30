@@ -786,4 +786,21 @@ mod tests {
 
     // TODO: Missing test for INT32_MAX / INT64_MAX special values in ends.
     // ONNX spec mentions these special values mean "slice to the end" but not tested.
+
+    #[test]
+    fn test_slice_scalar_tensor_input() {
+        // Slicing a ScalarTensor preserves its type
+        let mut node = TestNodeBuilder::new(NodeType::Slice, "test_slice")
+            .add_input("data", ArgType::ScalarTensor(DType::I64))
+            .input_tensor_i64_data("starts", vec![0], vec![1])
+            .input_tensor_i64_data("ends", vec![1], vec![1])
+            .output_default("output")
+            .build_with_graph_data(16);
+
+        let processor = SliceProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 16, &prefs).unwrap();
+
+        assert!(matches!(node.outputs[0].ty, ArgType::ScalarTensor(DType::I64)));
+    }
 }
