@@ -220,6 +220,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/gather/gather_constant_2d_indices.onnx")
         .input("tests/gather/gather_static_shape_indices.onnx")
         .input("tests/gather/gather_shape.onnx")
+        .input("tests/gather/gather_shape_reorder.onnx")
         .input("tests/gather/gather_with_shape_indices.onnx")
         .input("tests/gather/gather_scalar_out.onnx")
         .input("tests/gather/gather_scalar_input.onnx")
