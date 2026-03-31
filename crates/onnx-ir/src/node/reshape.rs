@@ -521,9 +521,7 @@ impl NodeProcessor for ReshapeProcessor {
             ArgType::ScalarTensor(_) => {
                 // ScalarTensor is rank 1 with a single element
                 match node.inputs[1].value() {
-                    Some(tensor_data) => {
-                        ReshapeInput::Static(tensor_data.to_vec::<i64>().unwrap())
-                    }
+                    Some(tensor_data) => ReshapeInput::Static(tensor_data.to_vec::<i64>().unwrap()),
                     None => {
                         ReshapeInput::Runtime(RuntimeInputRef::new(node.inputs[1].name.clone(), 1))
                     }

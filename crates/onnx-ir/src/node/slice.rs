@@ -801,6 +801,9 @@ mod tests {
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
-        assert!(matches!(node.outputs[0].ty, ArgType::ScalarTensor(DType::I64)));
+        assert!(matches!(
+            node.outputs[0].ty,
+            ArgType::ScalarTensor(DType::I64)
+        ));
     }
 }
