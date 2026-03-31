@@ -73,6 +73,56 @@ fn scalar_native_to_tensor(expr: TokenStream, dtype: DType) -> TokenStream {
     }
 }
 
+/// Generate bindings that sum out reduced axes and reshape to the effective rank.
+///
+/// Returns `(bindings_tokens, var_ident_tokens)` where `var_ident_tokens` refers to the
+/// post-reduction tensor variable.
+fn sum_reduce_bindings(
+    input_expr: &TokenStream,
+    var_prefix: &str,
+    original_labels: &[char],
+    reduced_axes: &[char],
+    effective_rank: usize,
+    dtype: &DType,
+) -> (TokenStream, TokenStream) {
+    let pre_var = syn::Ident::new(&format!("{var_prefix}_pre"), proc_macro2::Span::call_site());
+    let pre_shape_var =
+        syn::Ident::new(&format!("{var_prefix}_pre_s"), proc_macro2::Span::call_site());
+    let result_var = syn::Ident::new(&format!("{var_prefix}_r"), proc_macro2::Span::call_site());
+
+    // Positions of reduced axes in the original label order.
+    let reduced_positions: Vec<usize> = reduced_axes
+        .iter()
+        .map(|c| original_labels.iter().position(|l| l == c).unwrap())
+        .collect();
+
+    // Positions of kept (non-reduced) axes.
+    let kept_positions: Vec<usize> = (0..original_labels.len())
+        .filter(|i| !reduced_positions.contains(i))
+        .collect();
+
+    // Chain .sum_dim(pos) for each reduced axis (order doesn't matter since dims stay).
+    let sum_chain: TokenStream = reduced_positions.iter().fold(
+        quote! { #pre_var },
+        |acc, &pos| quote! { #acc.sum_dim(#pos) },
+    );
+
+    let kept_dims: Vec<proc_macro2::TokenStream> = kept_positions
+        .iter()
+        .map(|&i| quote! { #pre_shape_var[#i] })
+        .collect();
+
+    let result_ty = tensor_type_tokens(effective_rank, dtype);
+
+    let bindings = quote! {
+        let #pre_var = #input_expr;
+        let #pre_shape_var = #pre_var.dims();
+        let #result_var: #result_ty = #sum_chain.reshape([#(#kept_dims),*]);
+    };
+
+    (bindings, quote! { #result_var })
+}
+
 fn einsum_operand_expr(
     node_name: &str,
     equation: &str,
@@ -170,6 +220,23 @@ impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
         let contract = parsed.contraction_axes();
         let free_lhs = parsed.free_lhs_axes();
         let free_rhs = parsed.free_rhs_axes();
+        let reduced_lhs = parsed.reduced_lhs_axes();
+        let reduced_rhs = parsed.reduced_rhs_axes();
+        let has_reductions = !reduced_lhs.is_empty() || !reduced_rhs.is_empty();
+
+        // Effective labels after summing out reduced axes.
+        let effective_lhs: Vec<char> = parsed
+            .lhs
+            .iter()
+            .filter(|c| !reduced_lhs.contains(c))
+            .copied()
+            .collect();
+        let effective_rhs: Vec<char> = parsed
+            .rhs
+            .iter()
+            .filter(|c| !reduced_rhs.contains(c))
+            .copied()
+            .collect();
 
         let lhs_perm_order: Vec<char> = batch
             .iter()
@@ -177,7 +244,7 @@ impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
             .chain(contract.iter())
             .copied()
             .collect();
-        let lhs_perm = match find_axis_positions(&lhs_perm_order, &parsed.lhs) {
+        let lhs_perm = match find_axis_positions(&lhs_perm_order, &effective_lhs) {
             Some(perm) => perm,
             None => {
                 return compile_error_tokens(format!(
@@ -193,7 +260,7 @@ impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
             .chain(free_rhs.iter())
             .copied()
             .collect();
-        let rhs_perm = match find_axis_positions(&rhs_perm_order, &parsed.rhs) {
+        let rhs_perm = match find_axis_positions(&rhs_perm_order, &effective_rhs) {
             Some(perm) => perm,
             None => {
                 return compile_error_tokens(format!(
@@ -224,8 +291,8 @@ impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
         let n_contract = contract.len();
         let n_free_rhs = free_rhs.len();
 
-        let lhs_perm_rank = parsed.lhs.len();
-        let rhs_perm_rank = parsed.rhs.len();
+        let lhs_perm_rank = effective_lhs.len();
+        let rhs_perm_rank = effective_rhs.len();
 
         let lhs_is_identity = lhs_perm.iter().enumerate().all(|(i, &v)| i == v);
         let rhs_is_identity = rhs_perm.iter().enumerate().all(|(i, &v)| i == v);
@@ -235,8 +302,9 @@ impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
             || n_batch + n_contract != 1
             || n_batch > 1;
 
-        // Fast path for plain matrix multiplication.
-        if lhs_is_identity
+        // Fast path for plain matrix multiplication (no reductions, no permutation).
+        if !has_reductions
+            && lhs_is_identity
             && rhs_is_identity
             && output_is_identity
             && !needs_reshape
@@ -248,7 +316,8 @@ impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
         }
 
         // Fast path for the common rank-3 batched case.
-        if lhs_is_identity
+        if !has_reductions
+            && lhs_is_identity
             && rhs_is_identity
             && output_is_identity
             && n_batch == 1
@@ -261,20 +330,47 @@ impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
             };
         }
 
+        // Generate pre-reduction code for inputs with one-sided reduced axes.
+        // Each reduced axis is summed (producing size 1), then reshaped away.
+        let (lhs_reduction_bindings, lhs_input_expr) = if reduced_lhs.is_empty() {
+            (quote! {}, lhs.clone())
+        } else {
+            sum_reduce_bindings(
+                &lhs,
+                "einsum_lhs",
+                &parsed.lhs,
+                &reduced_lhs,
+                lhs_perm_rank,
+                &lhs_arg.ty.elem_type(),
+            )
+        };
+        let (rhs_reduction_bindings, rhs_input_expr) = if reduced_rhs.is_empty() {
+            (quote! {}, rhs.clone())
+        } else {
+            sum_reduce_bindings(
+                &rhs,
+                "einsum_rhs",
+                &parsed.rhs,
+                &reduced_rhs,
+                rhs_perm_rank,
+                &rhs_arg.ty.elem_type(),
+            )
+        };
+
         let lhs_perm_expr = if lhs_is_identity {
-            lhs.clone()
+            lhs_input_expr
         } else {
             let perm_dims: Vec<proc_macro2::TokenStream> =
                 lhs_perm.iter().map(|&d| quote! { #d }).collect();
-            quote! { #lhs.permute([#(#perm_dims),*]) }
+            quote! { #lhs_input_expr.permute([#(#perm_dims),*]) }
         };
 
         let rhs_perm_expr = if rhs_is_identity {
-            rhs.clone()
+            rhs_input_expr
         } else {
             let perm_dims: Vec<proc_macro2::TokenStream> =
                 rhs_perm.iter().map(|&d| quote! { #d }).collect();
-            quote! { #rhs.permute([#(#perm_dims),*]) }
+            quote! { #rhs_input_expr.permute([#(#perm_dims),*]) }
         };
 
         // Flatten grouped axes to a batched `[B, M, K] x [B, K, N]` matmul.
@@ -387,6 +483,8 @@ impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
 
         quote! {
             let #output = {
+                #lhs_reduction_bindings
+                #rhs_reduction_bindings
                 let einsum_lhs = #lhs_perm_expr;
                 let einsum_rhs = #rhs_perm_expr;
                 #lhs_shape_binding
@@ -747,6 +845,86 @@ mod tests {
                         einsum_rhs_shape[2usize],
                     ]);
                 einsum_result.permute([1usize, 2usize, 0usize, 3usize])
+            };
+            output
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_einsum_one_sided_reduction() {
+        let node = EinsumNodeBuilder::new("einsum_reduce")
+            .input_tensor("lhs", 2, DType::F32)
+            .input_tensor("rhs", 2, DType::F32)
+            .output_tensor("output", 2, DType::F32)
+            .config(EinsumConfig {
+                equation: "ij,kl->il".to_string(),
+            })
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, lhs: Tensor<B, 2>, rhs: Tensor<B, 2>) -> Tensor<B, 2> {
+            let output = {
+                let einsum_lhs_pre = lhs;
+                let einsum_lhs_pre_s = einsum_lhs_pre.dims();
+                let einsum_lhs_r: Tensor<B, 1> = einsum_lhs_pre
+                    .sum_dim(1usize)
+                    .reshape([einsum_lhs_pre_s[0usize]]);
+                let einsum_rhs_pre = rhs;
+                let einsum_rhs_pre_s = einsum_rhs_pre.dims();
+                let einsum_rhs_r: Tensor<B, 1> = einsum_rhs_pre
+                    .sum_dim(0usize)
+                    .reshape([einsum_rhs_pre_s[1usize]]);
+                let einsum_lhs = einsum_lhs_r;
+                let einsum_rhs = einsum_rhs_r;
+                let einsum_lhs_shape = einsum_lhs.dims();
+                let einsum_rhs_shape = einsum_rhs.dims();
+                let einsum_lhs_3d: Tensor<B, 3> = einsum_lhs
+                    .reshape([1usize, einsum_lhs_shape[0usize], 1usize]);
+                let einsum_rhs_3d: Tensor<B, 3> = einsum_rhs
+                    .reshape([1usize, 1usize, einsum_rhs_shape[0usize]]);
+                let einsum_result: Tensor<B, 2> = einsum_lhs_3d
+                    .matmul(einsum_rhs_3d)
+                    .reshape([einsum_lhs_shape[0usize], einsum_rhs_shape[0usize]]);
+                einsum_result
+            };
+            output
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_einsum_one_sided_reduction_lhs_only() {
+        let node = EinsumNodeBuilder::new("einsum_reduce_lhs")
+            .input_tensor("a", 3, DType::F32)
+            .input_tensor("b", 1, DType::F32)
+            .output_tensor("output", 2, DType::F32)
+            .config(EinsumConfig {
+                equation: "ijk,l->il".to_string(),
+            })
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, a: Tensor<B, 3>, b: Tensor<B, 1>) -> Tensor<B, 2> {
+            let output = {
+                let einsum_lhs_pre = a;
+                let einsum_lhs_pre_s = einsum_lhs_pre.dims();
+                let einsum_lhs_r: Tensor<B, 1> = einsum_lhs_pre
+                    .sum_dim(1usize)
+                    .sum_dim(2usize)
+                    .reshape([einsum_lhs_pre_s[0usize]]);
+                let einsum_lhs = einsum_lhs_r;
+                let einsum_rhs = b;
+                let einsum_lhs_shape = einsum_lhs.dims();
+                let einsum_rhs_shape = einsum_rhs.dims();
+                let einsum_lhs_3d: Tensor<B, 3> = einsum_lhs
+                    .reshape([1usize, einsum_lhs_shape[0usize], 1usize]);
+                let einsum_rhs_3d: Tensor<B, 3> = einsum_rhs
+                    .reshape([1usize, 1usize, einsum_rhs_shape[0usize]]);
+                let einsum_result: Tensor<B, 2> = einsum_lhs_3d
+                    .matmul(einsum_rhs_3d)
+                    .reshape([einsum_lhs_shape[0usize], einsum_rhs_shape[0usize]]);
+                einsum_result
             };
             output
         }
