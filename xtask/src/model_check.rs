@@ -104,7 +104,7 @@ const MODELS: &[ModelInfo] = &[
         name: "RF-DETR Small",
         env: None,
         download_args: &[],
-        blocked: false,
+        blocked: true, // https://github.com/tracel-ai/burn-onnx/issues/272 - runtime shape mismatch with rfdetr 1.6.2
     },
     ModelInfo {
         id: "depth-anything-v2",
