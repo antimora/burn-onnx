@@ -417,14 +417,43 @@ fn expand_ellipsis(equation: &str, input_ranks: &[usize]) -> Result<String, Stri
     }
     let ellipsis_labels: String = available[..ndim].iter().collect();
 
-    // Replace each `...` with the concrete labels.
-    let mut result = String::new();
-    let full_str = if let Some(ref out) = output_str {
-        format!("{}->{}", inputs_str, out)
-    } else {
-        inputs_str.clone()
+    // For implicit form + ellipsis, convert to explicit form per the ONNX spec:
+    // "In implicit mode, the ellipsis dimensions are set to the beginning of the output."
+    // After expanding `...` to concrete labels, those labels appear in both inputs
+    // (counted twice) and would be excluded by the standard implicit-output rule.
+    // We fix this by computing the output explicitly here.
+    let output_str = match output_str {
+        Some(out) => Some(out),
+        None => {
+            // Compute implicit output: ellipsis labels + alphabetically sorted
+            // labels that appear exactly once across all expanded input terms.
+            let expanded_inputs: String = input_parts
+                .iter()
+                .map(|p| p.replace("...", &ellipsis_labels))
+                .collect::<Vec<_>>()
+                .join(",");
+            let all_labels: Vec<char> = expanded_inputs.replace(',', "").chars().collect();
+            let mut counts = std::collections::BTreeMap::new();
+            for &c in &all_labels {
+                *counts.entry(c).or_insert(0usize) += 1;
+            }
+            let singletons: String = counts
+                .into_iter()
+                .filter(|&(_, count)| count == 1)
+                .map(|(c, _)| c)
+                .collect();
+            Some(format!("{}{}", ellipsis_labels, singletons))
+        }
     };
 
+    // Replace each `...` with the concrete labels.
+    let full_str = format!(
+        "{}->{}",
+        inputs_str,
+        output_str.as_deref().unwrap_or("")
+    );
+
+    let mut result = String::new();
     let mut chars = full_str.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '.' && chars.peek() == Some(&'.') {
@@ -997,6 +1026,16 @@ mod tests {
     fn test_expand_ellipsis_inconsistent_dims() {
         let result = expand_ellipsis("...ij,...jk->...ik", &[4, 3]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_expand_ellipsis_implicit_form() {
+        // Implicit + ellipsis: per ONNX spec, ellipsis dims go at the beginning
+        // of the output, followed by alphabetically sorted singleton labels.
+        let result = expand_ellipsis("...ij,...jk", &[4, 4]).unwrap();
+        // j appears in both inputs (contracted), i and k are singletons
+        // Output = ellipsis_labels + singletons = "ab" + "ik" = "abik"
+        assert_eq!(result, "abij,abjk->abik");
     }
 
     #[test]

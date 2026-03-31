@@ -316,14 +316,16 @@ impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
         // A scalar times a tensor is just element-wise multiply, no matmul needed.
         // The scalar operand is reshaped to all-1s at the tensor's rank so Burn
         // can broadcast the multiply.
-        if !has_reductions && parsed.lhs.is_empty() && !parsed.rhs.is_empty() {
+        if !has_reductions && output_is_identity && parsed.lhs.is_empty() && !parsed.rhs.is_empty()
+        {
             let ones: Vec<proc_macro2::TokenStream> =
                 (0..parsed.rhs.len()).map(|_| quote! { 1usize }).collect();
             return quote! {
                 let #output = #rhs.mul(#lhs.reshape([#(#ones),*]));
             };
         }
-        if !has_reductions && parsed.rhs.is_empty() && !parsed.lhs.is_empty() {
+        if !has_reductions && output_is_identity && parsed.rhs.is_empty() && !parsed.lhs.is_empty()
+        {
             let ones: Vec<proc_macro2::TokenStream> =
                 (0..parsed.lhs.len()).map(|_| quote! { 1usize }).collect();
             return quote! {
