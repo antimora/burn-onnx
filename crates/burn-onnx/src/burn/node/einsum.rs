@@ -22,6 +22,18 @@ fn compile_error_tokens(message: impl Into<String>) -> TokenStream {
     }
 }
 
+/// Check whether a permutation only swaps the last two elements.
+///
+/// For example `[0, 1, 3, 2]` returns `true` (leading elements are identity,
+/// last two are swapped).  An identity permutation returns `false`.
+fn is_last_two_swap(perm: &[usize]) -> bool {
+    let n = perm.len();
+    n >= 2
+        && perm[..n - 2].iter().enumerate().all(|(i, &v)| i == v)
+        && perm[n - 2] == n - 1
+        && perm[n - 1] == n - 2
+}
+
 fn find_axis_positions(order: &[char], labels: &[char]) -> Option<Vec<usize>> {
     order
         .iter()
@@ -86,8 +98,10 @@ fn sum_reduce_bindings(
     dtype: &DType,
 ) -> (TokenStream, TokenStream) {
     let pre_var = syn::Ident::new(&format!("{var_prefix}_pre"), proc_macro2::Span::call_site());
-    let pre_shape_var =
-        syn::Ident::new(&format!("{var_prefix}_pre_s"), proc_macro2::Span::call_site());
+    let pre_shape_var = syn::Ident::new(
+        &format!("{var_prefix}_pre_s"),
+        proc_macro2::Span::call_site(),
+    );
     let result_var = syn::Ident::new(&format!("{var_prefix}_r"), proc_macro2::Span::call_site());
 
     // Positions of reduced axes in the original label order.
@@ -297,37 +311,72 @@ impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
         let lhs_is_identity = lhs_perm.iter().enumerate().all(|(i, &v)| i == v);
         let rhs_is_identity = rhs_perm.iter().enumerate().all(|(i, &v)| i == v);
         let output_is_identity = output_perm.iter().enumerate().all(|(i, &v)| i == v);
-        let needs_reshape = n_batch + n_free_lhs != 1
-            || n_batch + n_free_rhs != 1
-            || n_batch + n_contract != 1
-            || n_batch > 1;
 
-        // Fast path for plain matrix multiplication (no reductions, no permutation).
-        if !has_reductions
-            && lhs_is_identity
-            && rhs_is_identity
+        // Fast path: scalar broadcast (e.g. ",ij->ij" or "ij,->ij").
+        // A scalar times a tensor is just element-wise multiply, no matmul needed.
+        // The scalar operand is reshaped to all-1s at the tensor's rank so Burn
+        // can broadcast the multiply.
+        if !has_reductions && parsed.lhs.is_empty() && !parsed.rhs.is_empty() {
+            let ones: Vec<proc_macro2::TokenStream> =
+                (0..parsed.rhs.len()).map(|_| quote! { 1usize }).collect();
+            return quote! {
+                let #output = #rhs.mul(#lhs.reshape([#(#ones),*]));
+            };
+        }
+        if !has_reductions && parsed.rhs.is_empty() && !parsed.lhs.is_empty() {
+            let ones: Vec<proc_macro2::TokenStream> =
+                (0..parsed.lhs.len()).map(|_| quote! { 1usize }).collect();
+            return quote! {
+                let #output = #lhs.mul(#rhs.reshape([#(#ones),*]));
+            };
+        }
+
+        // Fast path: direct N-D matmul (any number of batch dims).
+        // Burn's matmul contracts the last two dims and broadcasts leading dims,
+        // so when each axis group has exactly 1 element and the axes are already
+        // in canonical order [batch..., M, K] x [batch..., K, N] we can call
+        // matmul directly, avoiding the reshape-to-3D round-trip.
+        let is_direct_matmul = !has_reductions
             && output_is_identity
-            && !needs_reshape
-            && n_batch == 0
-        {
+            && n_free_lhs == 1
+            && n_contract == 1
+            && n_free_rhs == 1;
+
+        if is_direct_matmul && lhs_is_identity && rhs_is_identity {
             return quote! {
                 let #output = #lhs.matmul(#rhs);
             };
         }
 
-        // Fast path for the common rank-3 batched case.
-        if !has_reductions
-            && lhs_is_identity
-            && rhs_is_identity
-            && output_is_identity
-            && n_batch == 1
-            && n_free_lhs == 1
-            && n_contract == 1
-            && n_free_rhs == 1
-        {
-            return quote! {
-                let #output = #lhs.matmul(#rhs);
-            };
+        // Fast path: matmul with swap_dims on one or both operands.
+        // When the only needed permutation is swapping the last two axes of an
+        // operand (e.g. "ij,kj->ik" needs rhs transposed), swap_dims is a
+        // zero-copy view, much cheaper than permute + reshape + matmul + reshape.
+        if is_direct_matmul {
+            let lhs_swap = is_last_two_swap(&lhs_perm);
+            let rhs_swap = is_last_two_swap(&rhs_perm);
+
+            if (lhs_is_identity || lhs_swap) && (rhs_is_identity || rhs_swap) {
+                let lhs_rank = lhs_perm_rank;
+                let rhs_rank = rhs_perm_rank;
+                let lhs_expr = if lhs_swap {
+                    let d0 = lhs_rank - 2;
+                    let d1 = lhs_rank - 1;
+                    quote! { #lhs.swap_dims(#d0, #d1) }
+                } else {
+                    lhs.clone()
+                };
+                let rhs_expr = if rhs_swap {
+                    let d0 = rhs_rank - 2;
+                    let d1 = rhs_rank - 1;
+                    quote! { #rhs.swap_dims(#d0, #d1) }
+                } else {
+                    rhs.clone()
+                };
+                return quote! {
+                    let #output = #lhs_expr.matmul(#rhs_expr);
+                };
+            }
         }
 
         // Generate pre-reduction code for inputs with one-sided reduced axes.
@@ -690,13 +739,11 @@ mod tests {
             })
             .build();
         let code = codegen_forward_default(&node);
-
-        assert!(code.contains("scale: f32"));
+        assert!(code.contains(".mul("));
         assert!(code.contains("from_data("));
-        assert!(code.contains("TensorData::from([f64::from(scale)])"));
-        assert!(code.contains("reshape([1usize, 1usize, 1usize])"));
-        assert!(code.contains("einsum_rhs_shape[0usize]"));
-        assert!(code.contains("einsum_rhs_shape[1usize]"));
+        assert!(code.contains("f64::from(scale)"));
+        assert!(code.contains("reshape([1usize, 1usize])"));
+        assert!(!code.contains("matmul"));
     }
 
     #[test]
@@ -710,9 +757,10 @@ mod tests {
             })
             .build();
         let code = codegen_forward_default(&node);
-
-        assert!(code.contains("scale: half::f16"));
-        assert!(code.contains("TensorData::from([(scale).to_f64()])"));
+        assert!(code.contains("rhs"));
+        assert!(code.contains(".mul("));
+        assert!(code.contains("(scale).to_f64()"));
+        assert!(!code.contains("matmul"));
     }
 
     #[test]
@@ -726,12 +774,8 @@ mod tests {
             })
             .build();
         let code = codegen_forward_default(&node);
-
-        assert!(code.contains("scale: Tensor<B, 1>"));
-        assert!(code.contains("let einsum_rhs = scale;"));
-        assert!(code.contains("reshape([1usize, 1usize, 1usize])"));
-        assert!(code.contains("einsum_lhs_shape[0usize]"));
-        assert!(code.contains("einsum_lhs_shape[1usize]"));
+        assert!(code.contains("lhs.mul(scale.reshape([1usize, 1usize]))"));
+        assert!(!code.contains("matmul"));
     }
 
     #[test]
@@ -775,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn test_einsum_decomposition_temporaries_are_scoped() {
+    fn test_einsum_swap_dims_matmul() {
         let node = EinsumNodeBuilder::new("einsum_scope")
             .input_tensor("lhs", 2, DType::F32)
             .input_tensor("einsum_rhs", 2, DType::F32)
@@ -785,25 +829,31 @@ mod tests {
             })
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r#"
+        assert_snapshot!(code, @r"
         pub fn forward(&self, lhs: Tensor<B, 2>, einsum_rhs: Tensor<B, 2>) -> Tensor<B, 2> {
-            let output = {
-                let einsum_lhs = lhs;
-                let einsum_rhs = einsum_rhs.permute([1usize, 0usize]);
-                let einsum_lhs_shape = einsum_lhs.dims();
-                let einsum_rhs_shape = einsum_rhs.dims();
-                let einsum_lhs_3d: Tensor<B, 3> = einsum_lhs
-                    .reshape([1usize, einsum_lhs_shape[0usize], einsum_lhs_shape[1usize]]);
-                let einsum_rhs_3d: Tensor<B, 3> = einsum_rhs
-                    .reshape([1usize, einsum_lhs_shape[1usize], einsum_rhs_shape[1usize]]);
-                let einsum_result: Tensor<B, 2> = einsum_lhs_3d
-                    .matmul(einsum_rhs_3d)
-                    .reshape([einsum_lhs_shape[0usize], einsum_rhs_shape[1usize]]);
-                einsum_result
-            };
+            let output = lhs.matmul(einsum_rhs.swap_dims(0usize, 1usize));
             output
         }
-        "#);
+        ");
+    }
+
+    #[test]
+    fn test_einsum_batched_swap_dims_matmul() {
+        let node = EinsumNodeBuilder::new("einsum_batched_swap")
+            .input_tensor("q", 3, DType::F32)
+            .input_tensor("k", 3, DType::F32)
+            .output_tensor("output", 3, DType::F32)
+            .config(EinsumConfig {
+                equation: "bij,bkj->bik".to_string(),
+            })
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, q: Tensor<B, 3>, k: Tensor<B, 3>) -> Tensor<B, 3> {
+            let output = q.matmul(k.swap_dims(1usize, 2usize));
+            output
+        }
+        ");
     }
 
     #[test]

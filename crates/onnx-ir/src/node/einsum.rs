@@ -384,13 +384,13 @@ fn expand_ellipsis(equation: &str, input_ranks: &[usize]) -> Result<String, Stri
                 ));
             }
             let ndim = rank - explicit_count;
-            if let Some(prev) = ellipsis_ndim {
-                if prev != ndim {
-                    return Err(format!(
-                        "Einsum equation '{}' has inconsistent ellipsis dimensions: {} vs {}",
-                        equation, prev, ndim
-                    ));
-                }
+            if let Some(prev) = ellipsis_ndim
+                && prev != ndim
+            {
+                return Err(format!(
+                    "Einsum equation '{}' has inconsistent ellipsis dimensions: {} vs {}",
+                    equation, prev, ndim
+                ));
             }
             ellipsis_ndim = Some(ndim);
         }

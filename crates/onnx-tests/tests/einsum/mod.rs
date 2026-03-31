@@ -167,12 +167,8 @@ mod tests {
         let output = model.forward(a, b);
         assert_eq!(output.dims(), [1, 2, 2, 2]);
 
-        let expected = TensorData::from([
-            [
-                [[1.0f32, 2.0], [3.0, 4.0]],
-                [[10.0, 12.0], [14.0, 16.0]],
-            ],
-        ]);
+        let expected =
+            TensorData::from([[[[1.0f32, 2.0], [3.0, 4.0]], [[10.0, 12.0], [14.0, 16.0]]]]);
         output.to_data().assert_eq(&expected, true);
     }
 
