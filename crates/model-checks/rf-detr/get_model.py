@@ -9,7 +9,7 @@
 #   "onnxruntime",
 #   "numpy",
 #   "onnxsim==0.4.36",
-#   "rfdetr[onnxexport]",
+#   "rfdetr==1.6.2",
 # ]
 # ///
 
