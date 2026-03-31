@@ -78,8 +78,11 @@ impl NodeProcessor for ShapeProcessor {
                 1
             }
             ArgType::ScalarTensor(_) => {
-                // ScalarTensor is rank 1, so Shape returns [1]
-                1
+                // ScalarTensor is rank 1; apply start/end like a rank-1 Tensor
+                let config = self
+                    .extract_config(node, opset)
+                    .expect("Config extraction failed");
+                config.end - config.start
             }
             _ => {
                 return Err(ProcessError::TypeMismatch {

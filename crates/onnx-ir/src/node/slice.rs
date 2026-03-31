@@ -211,9 +211,13 @@ impl NodeProcessor for SliceProcessor {
                 );
                 node.outputs[0].ty = ArgType::Shape(output_len);
             }
-            ArgType::ScalarTensor(_) => {
-                // Slicing a ScalarTensor preserves its type
-                node.outputs[0].ty = input_ty;
+            ArgType::ScalarTensor(dtype) => {
+                // Treat as rank-1 tensor; slicing may change element count
+                node.outputs[0].ty = ArgType::Tensor(crate::ir::TensorType {
+                    dtype,
+                    rank: 1,
+                    static_shape: None,
+                });
             }
             unsupported_type => {
                 return Err(ProcessError::TypeMismatch {
@@ -789,7 +793,7 @@ mod tests {
 
     #[test]
     fn test_slice_scalar_tensor_input() {
-        // Slicing a ScalarTensor preserves its type
+        // Slicing a ScalarTensor produces a rank-1 Tensor (slice may change element count)
         let mut node = TestNodeBuilder::new(NodeType::Slice, "test_slice")
             .add_input("data", ArgType::ScalarTensor(DType::I64))
             .input_tensor_i64_data("starts", vec![0], vec![1])
@@ -801,9 +805,12 @@ mod tests {
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
-        assert!(matches!(
-            node.outputs[0].ty,
-            ArgType::ScalarTensor(DType::I64)
-        ));
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.dtype, DType::I64);
+                assert_eq!(t.rank, 1);
+            }
+            other => panic!("Expected Tensor, got {:?}", other),
+        }
     }
 }

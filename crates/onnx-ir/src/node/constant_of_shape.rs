@@ -136,22 +136,9 @@ impl NodeProcessor for ConstantOfShapeProcessor {
         let rank = match &node.inputs[0].ty {
             ArgType::Shape(rank) => *rank,
             ArgType::ScalarTensor(_) => {
-                // ScalarTensor always has exactly 1 element, so the output rank
-                // is always 1 (the number of elements in the shape input = output rank).
-                // We still read the value for consistency with the Tensor path.
-                if let Some(tensor_data) = node.inputs[0].value() {
-                    match tensor_data.to_i64_vec() {
-                        Ok(shape_vec) => shape_vec.len(),
-                        Err(_) => {
-                            return Err(ProcessError::Custom(format!(
-                                "ConstantOfShape node {} requires Int64 ScalarTensor input",
-                                node.name
-                            )));
-                        }
-                    }
-                } else {
-                    1 // ScalarTensor invariant: always exactly 1 element
-                }
+                // ScalarTensor is a 1-element shape vector, so output rank is always 1.
+                // The scalar value determines the size of that single dimension.
+                1
             }
             ArgType::Tensor(tensor_type) => {
                 // First check if we have a lifted constant value (most reliable)
