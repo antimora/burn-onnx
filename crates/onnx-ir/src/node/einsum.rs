@@ -447,11 +447,7 @@ fn expand_ellipsis(equation: &str, input_ranks: &[usize]) -> Result<String, Stri
     };
 
     // Replace each `...` with the concrete labels.
-    let full_str = format!(
-        "{}->{}",
-        inputs_str,
-        output_str.as_deref().unwrap_or("")
-    );
+    let full_str = format!("{}->{}", inputs_str, output_str.as_deref().unwrap_or(""));
 
     let mut result = String::new();
     let mut chars = full_str.chars().peekable();
