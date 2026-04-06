@@ -115,6 +115,14 @@ const MODELS: &[ModelInfo] = &[
         blocked: false,
     },
     ModelInfo {
+        id: "inception-v2",
+        dir: "inception-v2",
+        name: "Inception v2 (BN-Inception)",
+        env: None,
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
         id: "silero-vad",
         dir: "silero-vad",
         name: "Silero VAD",
