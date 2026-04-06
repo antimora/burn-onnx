@@ -83,6 +83,14 @@ const MODELS: &[ModelInfo] = &[
         blocked: false,
     },
     ModelInfo {
+        id: "vgg19",
+        dir: "vgg19",
+        name: "VGG-19",
+        env: None,
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
         id: "silero-vad",
         dir: "silero-vad",
         name: "Silero VAD",
