@@ -41,6 +41,7 @@ def export_model(output_path):
         input_names=["input"],
         output_names=["output"],
         dynamic_axes=None,
+        opset_version=18,
     )
 
     print("Applying shape inference...")

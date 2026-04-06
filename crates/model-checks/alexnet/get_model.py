@@ -32,9 +32,10 @@ def download_model(output_path):
     """Download BVLC AlexNet ONNX model from the ONNX Model Zoo."""
     print("Downloading BVLC AlexNet from ONNX Model Zoo...")
     urllib.request.urlretrieve(MODEL_URL, output_path)
-    if not output_path.exists() or output_path.stat().st_size < 1000:
+    file_size = output_path.stat().st_size if output_path.exists() else 0
+    if file_size < 1000:
         raise RuntimeError(
-            f"Download failed or file too small ({output_path.stat().st_size} bytes). "
+            f"Download failed or file too small ({file_size} bytes). "
             "The ONNX Model Zoo may use Git LFS; try cloning the repo instead."
         )
     print(f"  Model downloaded to: {output_path}")
