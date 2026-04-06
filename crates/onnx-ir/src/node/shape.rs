@@ -94,7 +94,7 @@ impl NodeProcessor for ShapeProcessor {
         Ok(())
     }
 
-    fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
+    fn extract_config(&self, node: &RawNode, opset: usize) -> Result<Self::Config, ProcessError> {
         // Extract the rank/dimension count from the input
         let rank = match &node.inputs[0].ty {
             ArgType::Tensor(tensor) => tensor.rank,
@@ -108,15 +108,17 @@ impl NodeProcessor for ShapeProcessor {
             }
         };
 
-        // Extract attributes
+        // Extract start/end attributes (opset 15+ only)
         let mut start_dim: i64 = 0;
         let mut end_dim: i64 = rank as i64;
 
-        for (key, value) in node.attrs.iter() {
-            match key.as_str() {
-                "start" => start_dim = value.clone().into_i64(),
-                "end" => end_dim = value.clone().into_i64(),
-                _ => {}
+        if opset >= 15 {
+            for (key, value) in node.attrs.iter() {
+                match key.as_str() {
+                    "start" => start_dim = value.clone().into_i64(),
+                    "end" => end_dim = value.clone().into_i64(),
+                    _ => {}
+                }
             }
         }
 
@@ -323,6 +325,16 @@ mod tests {
         let config = processor.extract_config(&node, 16).unwrap();
         assert_eq!(config.start, 3);
         assert_eq!(config.end, 3);
+    }
+
+    #[test]
+    fn test_shape_opset_below_15_ignores_start_end() {
+        // Opset 14: start/end attributes should be ignored, full shape returned
+        let node = create_test_node(Some(1), Some(3), 4);
+        let processor = ShapeProcessor;
+        let config = processor.extract_config(&node, 14).unwrap();
+        assert_eq!(config.start, 0);
+        assert_eq!(config.end, 4);
     }
 
     #[test]
