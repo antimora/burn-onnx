@@ -75,6 +75,14 @@ const MODELS: &[ModelInfo] = &[
         blocked: false,
     },
     ModelInfo {
+        id: "densenet121",
+        dir: "densenet121",
+        name: "DenseNet-121",
+        env: None,
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
         id: "silero-vad",
         dir: "silero-vad",
         name: "Silero VAD",
