@@ -48,8 +48,7 @@ fn main() {
     let start = Instant::now();
     let device = model_checks_common::best_device!();
     let weights_path = concat!(env!("OUT_DIR"), "/model/shufflenet.bpk");
-    let model: shufflenet::Model<MyBackend> =
-        shufflenet::Model::from_file(weights_path, &device);
+    let model: shufflenet::Model<MyBackend> = shufflenet::Model::from_file(weights_path, &device);
     let init_time = start.elapsed();
     println!("  Model initialized in {:.2?}", init_time);
 
