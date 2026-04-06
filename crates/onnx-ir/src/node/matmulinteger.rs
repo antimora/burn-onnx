@@ -142,6 +142,40 @@ mod tests {
     }
 
     #[test]
+    fn test_too_many_inputs_rejected() {
+        let mut node = create_test_node(2, 2);
+        // Add 3 extra inputs (a_zero_point, b_zero_point, and one too many)
+        node.inputs.push(
+            TestNodeBuilder::new(NodeType::Identity, "tmp")
+                .input_tensor_i32("a_zp", 1, None)
+                .build()
+                .inputs
+                .pop()
+                .unwrap(),
+        );
+        node.inputs.push(
+            TestNodeBuilder::new(NodeType::Identity, "tmp")
+                .input_tensor_i32("b_zp", 1, None)
+                .build()
+                .inputs
+                .pop()
+                .unwrap(),
+        );
+        node.inputs.push(
+            TestNodeBuilder::new(NodeType::Identity, "tmp")
+                .input_tensor_i32("extra", 1, None)
+                .build()
+                .inputs
+                .pop()
+                .unwrap(),
+        );
+        let processor = MatMulIntegerProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 16, &prefs);
+        assert!(matches!(result, Err(ProcessError::Custom(ref msg)) if msg.contains("2-4 inputs")));
+    }
+
+    #[test]
     fn test_invalid_input() {
         let mut node = create_test_node(2, 2);
         node.inputs[0].ty = ArgType::ScalarNative(DType::I32);

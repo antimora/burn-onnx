@@ -8,8 +8,7 @@
 //! - **Opset 17**: Initial version introducing LayerNormalization operator. Supports `axis`,
 //!   `epsilon`, and `stash_type` attributes. Includes support for optional Mean and InvStdDev outputs.
 //!
-//! **Implementation Note**: This implementation validates opset 17+ (MIN constant at line 94).
-//! Note that the current implementation requires 3 inputs (including bias) and only produces 1 output,
+//! **Implementation Note**: Requires at least 2 inputs (X and Scale; Bias is optional).
 //! Accepts 1-3 outputs (Y required, optional Mean and InvStdDev).
 //!
 //! ## Missing Test Coverage
