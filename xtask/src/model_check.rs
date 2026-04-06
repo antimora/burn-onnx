@@ -59,6 +59,14 @@ struct ModelInfo {
 // (28K+ nodes, ~5GB weights). Use crates/model-checks/stable-diffusion-xl/.
 const MODELS: &[ModelInfo] = &[
     ModelInfo {
+        id: "squeezenet",
+        dir: "squeezenet",
+        name: "SqueezeNet 1.0",
+        env: None,
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
         id: "silero-vad",
         dir: "silero-vad",
         name: "Silero VAD",
