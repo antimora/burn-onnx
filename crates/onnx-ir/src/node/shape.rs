@@ -128,10 +128,10 @@ impl NodeProcessor for ShapeProcessor {
             end_dim += rank as i64;
         }
 
-        // Clamp to [0, rank] per ONNX spec
+        // Clamp to [0, rank] per ONNX spec, then ensure end >= start
         let rank_i64 = rank as i64;
         start_dim = start_dim.max(0).min(rank_i64);
-        end_dim = end_dim.max(0).min(rank_i64);
+        end_dim = end_dim.max(start_dim).min(rank_i64);
 
         // Calculate dimensions
         let start = start_dim as usize;
@@ -313,6 +313,16 @@ mod tests {
         let config = processor.extract_config(&node, 16).unwrap();
         assert_eq!(config.start, 0);
         assert_eq!(config.end, 0);
+    }
+
+    #[test]
+    fn test_shape_clamp_start_greater_than_end() {
+        // start=3, end=1 on rank-4: end clamped up to start, yielding empty slice
+        let node = create_test_node(Some(3), Some(1), 4);
+        let processor = ShapeProcessor;
+        let config = processor.extract_config(&node, 16).unwrap();
+        assert_eq!(config.start, 3);
+        assert_eq!(config.end, 3);
     }
 
     #[test]
