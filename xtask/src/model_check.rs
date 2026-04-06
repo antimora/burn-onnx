@@ -123,6 +123,22 @@ const MODELS: &[ModelInfo] = &[
         blocked: false,
     },
     ModelInfo {
+        id: "alexnet",
+        dir: "alexnet",
+        name: "BVLC AlexNet",
+        env: None,
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
+        id: "zfnet512",
+        dir: "zfnet512",
+        name: "ZFNet-512",
+        env: None,
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
         id: "silero-vad",
         dir: "silero-vad",
         name: "Silero VAD",
