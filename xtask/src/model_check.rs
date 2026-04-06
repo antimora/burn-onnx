@@ -99,6 +99,22 @@ const MODELS: &[ModelInfo] = &[
         blocked: false,
     },
     ModelInfo {
+        id: "mobilenet-v2",
+        dir: "mobilenet-v2",
+        name: "MobileNet v2",
+        env: None,
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
+        id: "inception-v1",
+        dir: "inception-v1",
+        name: "Inception v1 (GoogLeNet)",
+        env: None,
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
         id: "silero-vad",
         dir: "silero-vad",
         name: "Silero VAD",
