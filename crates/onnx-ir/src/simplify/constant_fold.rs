@@ -6,11 +6,6 @@ use crate::graph_state::GraphState;
 use crate::ir::{ArgType, Argument, DType, NodeType, RawNode, TensorData, ValueSource};
 use crate::tensor_store::TensorDataRef;
 
-/// Fold nodes where all non-optional inputs are constants.
-///
-/// Evaluates the operation at compile time and replaces the node with a Constant.
-/// Runs after `simplify_constant_shape` so that Shape->Gather results are available
-/// as constants for cascading folds (e.g., `Mul(const_3, const_4) -> const_12`).
 /// Fold only Slice, Concat, Unsqueeze, Squeeze, and Reshape operations on constant inputs.
 ///
 /// This is a targeted pass designed to run before type inference to resolve weight
@@ -19,77 +14,59 @@ use crate::tensor_store::TensorDataRef;
 /// arithmetic ops (Add, Mul, Div, Sqrt, etc.) that may be needed by pattern matchers like
 /// the attention coalescer.
 pub(crate) fn fold_weight_rearrangements(
-    mut nodes: Vec<RawNode>,
+    nodes: Vec<RawNode>,
     state: &Rc<RefCell<GraphState>>,
 ) -> Vec<RawNode> {
-    let mut constant_outputs: Vec<String> = Vec::new();
-
-    for node in nodes.iter_mut() {
-        if node.node_type == NodeType::Constant {
-            continue;
-        }
-
-        // Only fold shape-manipulation ops used in weight rearrangement patterns
-        let is_weight_rearrangement = matches!(
-            node.node_type,
+    let filter = |nt: &NodeType| {
+        matches!(
+            nt,
             NodeType::Slice
                 | NodeType::Concat
                 | NodeType::Unsqueeze
                 | NodeType::Squeeze
                 | NodeType::Reshape
-        );
-        if !is_weight_rearrangement {
-            continue;
-        }
-
-        let all_const = node
-            .inputs
-            .iter()
-            .filter(|arg| !arg.is_optional())
-            .all(|arg| arg.value().is_some());
-
-        if !all_const || node.inputs.iter().all(|arg| arg.is_optional()) {
-            continue;
-        }
-
-        let (data, output_ty) = match try_evaluate(node) {
-            Some(r) => r,
-            None => continue,
-        };
-
-        let output_name = node.outputs[0].name.clone();
-
-        log::info!(
-            "Early constant folding: replacing {:?} '{}' with constant",
-            node.node_type,
-            node.name,
-        );
-
-        *node = make_constant_node(&node.name.clone(), &output_name, data, output_ty, state);
-        constant_outputs.push(output_name);
-    }
-
-    if !constant_outputs.is_empty() {
-        super::update_constant_references(&mut nodes, &mut [], &constant_outputs);
-    }
-
-    nodes
+        )
+    };
+    fold_matching(nodes, &mut [], state, Some(&filter), "Early constant folding")
 }
 
+/// Fold nodes where all non-optional inputs are constants.
+///
+/// Evaluates the operation at compile time and replaces the node with a Constant.
+/// Runs after `simplify_constant_shape` so that Shape->Gather results are available
+/// as constants for cascading folds (e.g., `Mul(const_3, const_4) -> const_12`).
 pub(crate) fn fold_constants(
+    nodes: Vec<RawNode>,
+    graph_outputs: &mut [Argument],
+    state: &Rc<RefCell<GraphState>>,
+) -> Vec<RawNode> {
+    fold_matching(nodes, graph_outputs, state, None, "Constant folding")
+}
+
+/// Shared implementation for constant folding passes.
+///
+/// When `node_filter` is `Some`, only nodes whose type passes the filter are considered.
+/// When `None`, all node types are eligible.
+fn fold_matching(
     mut nodes: Vec<RawNode>,
     graph_outputs: &mut [Argument],
     state: &Rc<RefCell<GraphState>>,
+    node_filter: Option<&dyn Fn(&NodeType) -> bool>,
+    log_prefix: &str,
 ) -> Vec<RawNode> {
     let mut constant_outputs: Vec<String> = Vec::new();
 
     for node in nodes.iter_mut() {
-        // Skip nodes that are already constants
         if node.node_type == NodeType::Constant {
             continue;
         }
 
-        // Check: all non-optional inputs must have constant values
+        if let Some(filter) = node_filter {
+            if !filter(&node.node_type) {
+                continue;
+            }
+        }
+
         let all_const = node
             .inputs
             .iter()
@@ -100,7 +77,6 @@ pub(crate) fn fold_constants(
             continue;
         }
 
-        // Try to evaluate the operation
         let (data, output_ty) = match try_evaluate(node) {
             Some(r) => r,
             None => continue,
@@ -109,7 +85,7 @@ pub(crate) fn fold_constants(
         let output_name = node.outputs[0].name.clone();
 
         log::info!(
-            "Constant folding: replacing {:?} '{}' with constant",
+            "{log_prefix}: replacing {:?} '{}' with constant",
             node.node_type,
             node.name,
         );
@@ -408,7 +384,8 @@ fn eval_cast(node: &RawNode) -> Option<(TensorData, ArgType)> {
 /// Evaluate Slice on a constant input tensor.
 ///
 /// Supports both attribute-based (opset < 10) and input-based (opset >= 10) parameters.
-/// Only handles axis-0 slicing with step=1 to keep implementation simple.
+/// Only handles axis-0 slicing with step=1. This is sufficient for PyTorch RNN weight
+/// splitting patterns, which always slice along the gate dimension (axis 0).
 fn eval_slice(node: &RawNode) -> Option<(TensorData, ArgType)> {
     let data = node.inputs[0].value()?;
     if data.shape.is_empty() {
@@ -478,6 +455,9 @@ fn eval_slice(node: &RawNode) -> Option<(TensorData, ArgType)> {
     let elem_size = data.dtype.size();
     let byte_start = start * row_size * elem_size;
     let byte_end = end * row_size * elem_size;
+    if byte_end > data.bytes.len() {
+        return None;
+    }
     let sliced_bytes = &data.bytes[byte_start..byte_end];
 
     let mut output_shape = data.shape.to_vec();
@@ -527,13 +507,21 @@ fn eval_concat(node: &RawNode) -> Option<(TensorData, ArgType)> {
 
     let dtype = all_data[0].dtype;
     let rank = all_data[0].shape.len();
+    if rank == 0 {
+        return None;
+    }
+
+    // Validate all inputs have matching rank and non-axis dimensions
+    for d in &all_data[1..] {
+        if d.shape.len() != rank || d.shape[1..] != all_data[0].shape[1..] {
+            return None;
+        }
+    }
 
     // Compute output shape: sum of axis-0 sizes, rest from first input
     let mut output_shape = all_data[0].shape.to_vec();
     let total_axis0: usize = all_data.iter().map(|d| d.shape[0]).sum();
-    if rank > 0 {
-        output_shape[0] = total_axis0;
-    }
+    output_shape[0] = total_axis0;
 
     // Concatenate raw bytes (axis=0 in row-major = byte append)
     let total_bytes: usize = all_data.iter().map(|d| d.bytes.len()).sum();
@@ -563,7 +551,7 @@ fn eval_reshape(node: &RawNode) -> Option<(TensorData, ArgType)> {
     let target_shape = match &node.outputs[0].ty {
         ArgType::Tensor(t) if t.static_shape.is_some() => {
             let static_shape = t.static_shape.as_ref()?;
-            static_shape.iter().map(|d| d.map(|v| v)).collect::<Option<Vec<_>>>()
+            static_shape.iter().copied().collect::<Option<Vec<_>>>()
         }
         ArgType::ScalarTensor(_) | ArgType::ScalarNative(_) => Some(vec![]),
         ArgType::Shape(len) => Some(vec![*len]),
@@ -590,7 +578,12 @@ fn eval_reshape(node: &RawNode) -> Option<(TensorData, ArgType)> {
     Some((result, output_ty))
 }
 
-/// Compute target shape for Unsqueeze/Squeeze/Reshape from operation parameters.
+/// Compute target shape for Unsqueeze/Squeeze from operation parameters.
+///
+/// This is the fallback path used when output types haven't been inferred yet
+/// (e.g., during early constant folding before type inference). Reshape is not
+/// handled here because it requires reading the target shape from a second input,
+/// which is typically handled by the type inference pass instead.
 fn compute_reshape_target(node: &RawNode, data: &TensorData) -> Option<Vec<usize>> {
     match node.node_type {
         NodeType::Unsqueeze => {
@@ -1001,6 +994,20 @@ mod tests {
         }
     }
 
+    /// Helper to create a dynamic tensor output argument.
+    fn dynamic_tensor_out(name: &str, dtype: DType, rank: usize) -> Argument {
+        Argument {
+            name: name.to_string(),
+            ty: ArgType::Tensor(crate::ir::TensorType {
+                dtype,
+                rank,
+                static_shape: None,
+            }),
+            value_source: ValueSource::Dynamic,
+            value_store: None,
+        }
+    }
+
     #[test]
     fn test_slice_axis0_2d_attr() {
         // Slice a [4, 2] f32 tensor along axis 0 from index 1 to 3
@@ -1011,22 +1018,12 @@ mod tests {
             &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
             vec![4, 2],
         );
-        let output = Argument {
-            name: "out".to_string(),
-            ty: ArgType::Tensor(crate::ir::TensorType {
-                dtype: DType::F32,
-                rank: 2,
-                static_shape: None,
-            }),
-            value_source: ValueSource::Dynamic,
-            value_store: None,
-        };
 
         let nodes = vec![raw_node_with_attrs(
             "slice",
             NodeType::Slice,
             vec![input],
-            vec![output],
+            vec![dynamic_tensor_out("out", DType::F32, 2)],
             [
                 ("starts".to_string(), AttributeValue::Int64s(vec![1])),
                 ("ends".to_string(), AttributeValue::Int64s(vec![3])),
@@ -1050,62 +1047,15 @@ mod tests {
     fn test_slice_then_concat_then_unsqueeze_cascade() {
         // Simulates PyTorch GRU weight rearrangement pattern:
         // Slice constant -> Concat sliced results -> Unsqueeze
-        let input = const_f32_tensor(
-            "w",
-            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-            vec![6, 1],
-        );
-
-        let slice_output = Argument {
-            name: "slice_out".to_string(),
-            ty: ArgType::Tensor(crate::ir::TensorType {
-                dtype: DType::F32,
-                rank: 2,
-                static_shape: None,
-            }),
-            value_source: ValueSource::Dynamic,
-            value_store: None,
-        };
-        let slice2_output = Argument {
-            name: "slice2_out".to_string(),
-            ty: ArgType::Tensor(crate::ir::TensorType {
-                dtype: DType::F32,
-                rank: 2,
-                static_shape: None,
-            }),
-            value_source: ValueSource::Dynamic,
-            value_store: None,
-        };
-        let concat_output = Argument {
-            name: "concat_out".to_string(),
-            ty: ArgType::Tensor(crate::ir::TensorType {
-                dtype: DType::F32,
-                rank: 2,
-                static_shape: None,
-            }),
-            value_source: ValueSource::Dynamic,
-            value_store: None,
-        };
-        let unsqueeze_output = Argument {
-            name: "unsqueeze_out".to_string(),
-            ty: ArgType::Tensor(crate::ir::TensorType {
-                dtype: DType::F32,
-                rank: 3,
-                static_shape: None,
-            }),
-            value_source: ValueSource::Dynamic,
-            value_store: None,
-        };
-
+        let input = const_f32_tensor("w", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![6, 1]);
         let state = test_state();
 
         let nodes = vec![
-            // Slice [3:6] -> [3, 1]
             raw_node_with_attrs(
                 "slice1",
                 NodeType::Slice,
                 vec![input.clone()],
-                vec![slice_output],
+                vec![dynamic_tensor_out("slice_out", DType::F32, 2)],
                 [
                     ("starts".to_string(), AttributeValue::Int64s(vec![3])),
                     ("ends".to_string(), AttributeValue::Int64s(vec![6])),
@@ -1114,12 +1064,11 @@ mod tests {
                 .into_iter()
                 .collect(),
             ),
-            // Slice [0:3] -> [3, 1]
             raw_node_with_attrs(
                 "slice2",
                 NodeType::Slice,
                 vec![input],
-                vec![slice2_output],
+                vec![dynamic_tensor_out("slice2_out", DType::F32, 2)],
                 [
                     ("starts".to_string(), AttributeValue::Int64s(vec![0])),
                     ("ends".to_string(), AttributeValue::Int64s(vec![3])),
@@ -1128,50 +1077,133 @@ mod tests {
                 .into_iter()
                 .collect(),
             ),
-            // Concat [slice1_out, slice2_out] -> [6, 1]
             raw_node_with_attrs(
                 "concat1",
                 NodeType::Concat,
                 vec![
-                    Argument { name: "slice_out".to_string(), ty: ArgType::Tensor(crate::ir::TensorType { dtype: DType::F32, rank: 2, static_shape: None }), value_source: ValueSource::Dynamic, value_store: None },
-                    Argument { name: "slice2_out".to_string(), ty: ArgType::Tensor(crate::ir::TensorType { dtype: DType::F32, rank: 2, static_shape: None }), value_source: ValueSource::Dynamic, value_store: None },
+                    dynamic_tensor_out("slice_out", DType::F32, 2),
+                    dynamic_tensor_out("slice2_out", DType::F32, 2),
                 ],
-                vec![concat_output],
-                [("axis".to_string(), AttributeValue::Int64(0))].into_iter().collect(),
+                vec![dynamic_tensor_out("concat_out", DType::F32, 2)],
+                [("axis".to_string(), AttributeValue::Int64(0))]
+                    .into_iter()
+                    .collect(),
             ),
-            // Unsqueeze concat_out at axis 0 -> [1, 6, 1]
             raw_node_with_attrs(
                 "unsqueeze1",
                 NodeType::Unsqueeze,
-                vec![
-                    Argument { name: "concat_out".to_string(), ty: ArgType::Tensor(crate::ir::TensorType { dtype: DType::F32, rank: 2, static_shape: None }), value_source: ValueSource::Dynamic, value_store: None },
-                ],
-                vec![unsqueeze_output],
-                [("axes".to_string(), AttributeValue::Int64s(vec![0]))].into_iter().collect(),
+                vec![dynamic_tensor_out("concat_out", DType::F32, 2)],
+                vec![dynamic_tensor_out("unsqueeze_out", DType::F32, 3)],
+                [("axes".to_string(), AttributeValue::Int64s(vec![0]))]
+                    .into_iter()
+                    .collect(),
             ),
         ];
 
         // Run targeted early folding with cascade
         let mut folded = nodes;
         for _ in 0..5 {
-            let before = folded.iter().filter(|n| n.node_type == NodeType::Constant).count();
+            let before = folded
+                .iter()
+                .filter(|n| n.node_type == NodeType::Constant)
+                .count();
             folded = fold_weight_rearrangements(folded, &state);
-            let after = folded.iter().filter(|n| n.node_type == NodeType::Constant).count();
-            if after == before {
+            if folded
+                .iter()
+                .filter(|n| n.node_type == NodeType::Constant)
+                .count()
+                == before
+            {
                 break;
             }
         }
 
         // All 4 nodes should be folded to constants
-        assert_eq!(folded[0].node_type, NodeType::Constant, "slice1 should be folded");
-        assert_eq!(folded[1].node_type, NodeType::Constant, "slice2 should be folded");
-        assert_eq!(folded[2].node_type, NodeType::Constant, "concat should be folded");
-        assert_eq!(folded[3].node_type, NodeType::Constant, "unsqueeze should be folded");
+        assert_eq!(folded[0].node_type, NodeType::Constant);
+        assert_eq!(folded[1].node_type, NodeType::Constant);
+        assert_eq!(folded[2].node_type, NodeType::Constant);
+        assert_eq!(folded[3].node_type, NodeType::Constant);
 
         // Verify the final unsqueeze result: [4,5,6,1,2,3] unsqueezed to [1,6,1]
         let data = folded[3].inputs[0].value().unwrap();
         assert_eq!(data.shape.to_vec(), vec![1, 6, 1]);
         let vals = data.to_f64_vec().unwrap();
         assert_eq!(vals, vec![4.0, 5.0, 6.0, 1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_slice_negative_index() {
+        // Slice [4, 2] from starts=[-2] ends=[i64::MAX] => rows [2:4]
+        let input = const_f32_tensor(
+            "w",
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            vec![4, 2],
+        );
+        let nodes = vec![raw_node_with_attrs(
+            "slice",
+            NodeType::Slice,
+            vec![input],
+            vec![dynamic_tensor_out("out", DType::F32, 2)],
+            [
+                ("starts".to_string(), AttributeValue::Int64s(vec![-2])),
+                ("ends".to_string(), AttributeValue::Int64s(vec![i64::MAX])),
+                ("axes".to_string(), AttributeValue::Int64s(vec![0])),
+            ]
+            .into_iter()
+            .collect(),
+        )];
+
+        let state = test_state();
+        let result = fold_constants(nodes, &mut [], &state);
+        assert_eq!(result[0].node_type, NodeType::Constant);
+
+        let data = result[0].inputs[0].value().unwrap();
+        assert_eq!(data.shape.to_vec(), vec![2, 2]);
+        let vals = data.to_f64_vec().unwrap();
+        assert_eq!(vals, vec![5.0, 6.0, 7.0, 8.0]);
+    }
+
+    #[test]
+    fn test_slice_opset10_input_based() {
+        // Opset >= 10: starts/ends/axes come from input tensors, not attributes
+        let input = const_f32_tensor(
+            "w",
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            vec![3, 2],
+        );
+        let starts = const_i64_vec("starts", &[1]);
+        let ends = const_i64_vec("ends", &[3]);
+        let axes = const_i64_vec("axes", &[0]);
+
+        let nodes = vec![raw_node(
+            "slice",
+            NodeType::Slice,
+            vec![input, starts, ends, axes],
+            vec![dynamic_tensor_out("out", DType::F32, 2)],
+        )];
+
+        let state = test_state();
+        let result = fold_constants(nodes, &mut [], &state);
+        assert_eq!(result[0].node_type, NodeType::Constant);
+
+        let data = result[0].inputs[0].value().unwrap();
+        assert_eq!(data.shape.to_vec(), vec![2, 2]);
+        let vals = data.to_f64_vec().unwrap();
+        assert_eq!(vals, vec![3.0, 4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_weight_rearrangement_skips_arithmetic() {
+        // fold_weight_rearrangements should NOT fold Add even with constant inputs
+        let nodes = vec![raw_node(
+            "add",
+            NodeType::Add,
+            vec![const_i64_scalar("a", 3), const_i64_scalar("b", 4)],
+            vec![scalar_out("out", DType::I64)],
+        )];
+
+        let state = test_state();
+        let result = fold_weight_rearrangements(nodes, &state);
+        assert_eq!(result[0].node_type, NodeType::Add, "arithmetic ops must not be folded");
     }
 }

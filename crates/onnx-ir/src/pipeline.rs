@@ -356,7 +356,9 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
         drop(state);
 
         // Run in a fixed-point loop so that Slice -> Concat -> Unsqueeze chains cascade
-        for _ in 0..5 {
+        let max_iterations = 5;
+        let mut converged = false;
+        for _ in 0..max_iterations {
             let const_count_before = nodes
                 .iter()
                 .filter(|n| n.node_type == crate::ir::NodeType::Constant)
@@ -369,8 +371,14 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
                 .filter(|n| n.node_type == crate::ir::NodeType::Constant)
                 .count();
             if const_count_after == const_count_before {
+                converged = true;
                 break;
             }
+        }
+        if !converged {
+            log::debug!(
+                "Early constant folding: reached max iterations ({max_iterations}) without converging"
+            );
         }
 
         let mut state = state_rc.borrow_mut();
