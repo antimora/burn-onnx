@@ -115,8 +115,7 @@ mod tests {
     /// MatMul + Add with scalar bias [1] should NOT be fused into Linear.
     #[test]
     fn matmul_scalar_add() {
-        let model: matmul_scalar_add::Model<TestBackend> =
-            matmul_scalar_add::Model::default();
+        let model: matmul_scalar_add::Model<TestBackend> = matmul_scalar_add::Model::default();
 
         let device = Default::default();
         // x = [[0,1,2,3],[4,5,6,7]] matching the Python script

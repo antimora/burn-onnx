@@ -599,9 +599,7 @@ fn is_add_node_with_bias(
                     return false;
                 }
             } else {
-                log::debug!(
-                    "Add fusion: static shapes not fully known, proceeding optimistically"
-                );
+                log::debug!("Add fusion: static shapes not fully known, proceeding optimistically");
             }
             true
         }
@@ -820,12 +818,14 @@ mod tests {
             "weight".to_string(),
             TensorData::new(weight_data, weight_shape),
         );
-        graph_state.register_test_constant(
-            "bias".to_string(),
-            TensorData::new(bias_data, bias_shape),
-        );
+        graph_state
+            .register_test_constant("bias".to_string(), TensorData::new(bias_data, bias_shape));
 
-        assert!(!is_add_node_with_bias(&add_node, &matmul_node, &graph_state));
+        assert!(!is_add_node_with_bias(
+            &add_node,
+            &matmul_node,
+            &graph_state
+        ));
     }
 
     #[test]
@@ -870,10 +870,8 @@ mod tests {
             "weight".to_string(),
             TensorData::new(weight_data, weight_shape),
         );
-        graph_state.register_test_constant(
-            "bias".to_string(),
-            TensorData::new(bias_data, bias_shape),
-        );
+        graph_state
+            .register_test_constant("bias".to_string(), TensorData::new(bias_data, bias_shape));
 
         assert!(is_add_node_with_bias(&add_node, &matmul_node, &graph_state));
     }
@@ -901,10 +899,8 @@ mod tests {
             "weight".to_string(),
             TensorData::new(vec![0.0; 128], vec![4, 32]),
         );
-        graph_state.register_test_constant(
-            "bias".to_string(),
-            TensorData::new(vec![0.0; 32], vec![32]),
-        );
+        graph_state
+            .register_test_constant("bias".to_string(), TensorData::new(vec![0.0; 32], vec![32]));
 
         // Should return true (optimistic fallback)
         assert!(is_add_node_with_bias(&add_node, &matmul_node, &graph_state));
