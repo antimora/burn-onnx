@@ -27,7 +27,13 @@ pub(crate) fn fold_weight_rearrangements(
                 | NodeType::Reshape
         )
     };
-    fold_matching(nodes, &mut [], state, Some(&filter), "Early constant folding")
+    fold_matching(
+        nodes,
+        &mut [],
+        state,
+        Some(&filter),
+        "Early constant folding",
+    )
 }
 
 /// Fold nodes where all non-optional inputs are constants.
@@ -61,10 +67,10 @@ fn fold_matching(
             continue;
         }
 
-        if let Some(filter) = node_filter {
-            if !filter(&node.node_type) {
-                continue;
-            }
+        if let Some(filter) = node_filter
+            && !filter(&node.node_type)
+        {
+            continue;
         }
 
         let all_const = node
@@ -434,12 +440,12 @@ fn eval_slice(node: &RawNode) -> Option<(TensorData, ArgType)> {
         if steps.iter().any(|&s| s != 1) {
             return None;
         }
-    } else if let Some(steps_input) = node.inputs.get(4) {
-        if let Some(steps_data) = steps_input.value() {
-            let steps = steps_data.to_i64_vec().ok()?;
-            if steps.iter().any(|&s| s != 1) {
-                return None;
-            }
+    } else if let Some(steps_input) = node.inputs.get(4)
+        && let Some(steps_data) = steps_input.value()
+    {
+        let steps = steps_data.to_i64_vec().ok()?;
+        if steps.iter().any(|&s| s != 1) {
+            return None;
         }
     }
 
@@ -562,8 +568,16 @@ fn eval_reshape(node: &RawNode) -> Option<(TensorData, ArgType)> {
     let target_shape = target_shape.or_else(|| compute_reshape_target(node, &data))?;
 
     // Verify element count matches
-    let src_elems: usize = if data.shape.is_empty() { 1 } else { data.shape.iter().product() };
-    let dst_elems: usize = if target_shape.is_empty() { 1 } else { target_shape.iter().product() };
+    let src_elems: usize = if data.shape.is_empty() {
+        1
+    } else {
+        data.shape.iter().product()
+    };
+    let dst_elems: usize = if target_shape.is_empty() {
+        1
+    } else {
+        target_shape.iter().product()
+    };
     if src_elems != dst_elems {
         return None;
     }
@@ -600,7 +614,13 @@ fn compute_reshape_target(node: &RawNode, data: &TensorData) -> Option<Vec<usize
             let mut result = data.shape.to_vec();
             let mut sorted_axes: Vec<usize> = axes
                 .iter()
-                .map(|&a| if a < 0 { (output_rank as i64 + a) as usize } else { a as usize })
+                .map(|&a| {
+                    if a < 0 {
+                        (output_rank as i64 + a) as usize
+                    } else {
+                        a as usize
+                    }
+                })
                 .collect();
             sorted_axes.sort();
             for &ax in &sorted_axes {
@@ -623,7 +643,13 @@ fn compute_reshape_target(node: &RawNode, data: &TensorData) -> Option<Vec<usize
             let rank = data.shape.len() as i64;
             let mut axes_set: Vec<usize> = axes
                 .iter()
-                .map(|&a| if a < 0 { (rank + a) as usize } else { a as usize })
+                .map(|&a| {
+                    if a < 0 {
+                        (rank + a) as usize
+                    } else {
+                        a as usize
+                    }
+                })
                 .collect();
             axes_set.sort();
             Some(
@@ -973,7 +999,11 @@ mod tests {
     /// Helper to create a constant f32 tensor argument with a given shape.
     fn const_f32_tensor(name: &str, values: &[f32], shape: Vec<usize>) -> Argument {
         let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_ne_bytes()).collect();
-        let data_ref = TensorDataRef::new(bytes::Bytes::copy_from_slice(&bytes), shape.clone(), DType::F32);
+        let data_ref = TensorDataRef::new(
+            bytes::Bytes::copy_from_slice(&bytes),
+            shape.clone(),
+            DType::F32,
+        );
         let mut store = TensorStore::new();
         let id = store.store(data_ref);
         let mut constant_map = std::collections::HashMap::new();
@@ -1013,11 +1043,7 @@ mod tests {
         // Slice a [4, 2] f32 tensor along axis 0 from index 1 to 3
         // Input: [[1,2], [3,4], [5,6], [7,8]]
         // Expected output: [[3,4], [5,6]]
-        let input = const_f32_tensor(
-            "w",
-            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
-            vec![4, 2],
-        );
+        let input = const_f32_tensor("w", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], vec![4, 2]);
 
         let nodes = vec![raw_node_with_attrs(
             "slice",
@@ -1134,11 +1160,7 @@ mod tests {
     #[test]
     fn test_slice_negative_index() {
         // Slice [4, 2] from starts=[-2] ends=[i64::MAX] => rows [2:4]
-        let input = const_f32_tensor(
-            "w",
-            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
-            vec![4, 2],
-        );
+        let input = const_f32_tensor("w", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], vec![4, 2]);
         let nodes = vec![raw_node_with_attrs(
             "slice",
             NodeType::Slice,
@@ -1166,11 +1188,7 @@ mod tests {
     #[test]
     fn test_slice_opset10_input_based() {
         // Opset >= 10: starts/ends/axes come from input tensors, not attributes
-        let input = const_f32_tensor(
-            "w",
-            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
-            vec![3, 2],
-        );
+        let input = const_f32_tensor("w", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]);
         let starts = const_i64_vec("starts", &[1]);
         let ends = const_i64_vec("ends", &[3]);
         let axes = const_i64_vec("axes", &[0]);
@@ -1204,6 +1222,10 @@ mod tests {
 
         let state = test_state();
         let result = fold_weight_rearrangements(nodes, &state);
-        assert_eq!(result[0].node_type, NodeType::Add, "arithmetic ops must not be folded");
+        assert_eq!(
+            result[0].node_type,
+            NodeType::Add,
+            "arithmetic ops must not be folded"
+        );
     }
 }
