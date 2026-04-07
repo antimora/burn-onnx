@@ -72,7 +72,7 @@ def generate_test_data(model_path, output_path):
 
     # Save as PyTorch tensors
     output_names = [out.name for out in outputs]
-    test_data = {"input": torch.from_numpy(test_input)}
+    test_data = {input_info.name: torch.from_numpy(test_input)}
     for name, result in zip(output_names, results):
         test_data[name] = torch.from_numpy(result)
         print(f"  {name} shape: {result.shape}")

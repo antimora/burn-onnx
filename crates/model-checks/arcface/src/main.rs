@@ -85,7 +85,10 @@ fn main() {
     let input = test_data.data.val();
     let reference = test_data.fc1.val();
     println!("  Input shape: {:?}", input.shape().as_slice());
-    println!("  Reference output shape: {:?}", reference.shape().as_slice());
+    println!(
+        "  Reference output shape: {:?}",
+        reference.shape().as_slice()
+    );
 
     // Warmup run
     println!("\nWarmup inference...");
