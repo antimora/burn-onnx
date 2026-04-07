@@ -356,7 +356,7 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
         drop(state);
 
         // Run in a fixed-point loop so that Slice -> Concat -> Unsqueeze chains cascade
-        let max_iterations = 5;
+        let max_iterations = 10;
         let mut converged = false;
         for _ in 0..max_iterations {
             let const_count_before = nodes

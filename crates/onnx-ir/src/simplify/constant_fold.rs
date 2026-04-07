@@ -430,7 +430,7 @@ fn eval_slice(node: &RawNode) -> Option<(TensorData, ArgType)> {
     };
 
     // Only support single-axis slicing on axis 0 with default step
-    if axes.len() != 1 || axes[0] != 0 {
+    if axes.len() != 1 || axes[0] != 0 || starts.is_empty() || ends.is_empty() {
         return None;
     }
 
@@ -517,9 +517,9 @@ fn eval_concat(node: &RawNode) -> Option<(TensorData, ArgType)> {
         return None;
     }
 
-    // Validate all inputs have matching rank and non-axis dimensions
+    // Validate all inputs have matching dtype, rank, and non-axis dimensions
     for d in &all_data[1..] {
-        if d.shape.len() != rank || d.shape[1..] != all_data[0].shape[1..] {
+        if d.dtype != dtype || d.shape.len() != rank || d.shape[1..] != all_data[0].shape[1..] {
             return None;
         }
     }
@@ -592,12 +592,10 @@ fn eval_reshape(node: &RawNode) -> Option<(TensorData, ArgType)> {
     Some((result, output_ty))
 }
 
-/// Compute target shape for Unsqueeze/Squeeze from operation parameters.
+/// Compute target shape for Unsqueeze/Squeeze/Reshape from operation parameters.
 ///
 /// This is the fallback path used when output types haven't been inferred yet
-/// (e.g., during early constant folding before type inference). Reshape is not
-/// handled here because it requires reading the target shape from a second input,
-/// which is typically handled by the type inference pass instead.
+/// (e.g., during early constant folding before type inference).
 fn compute_reshape_target(node: &RawNode, data: &TensorData) -> Option<Vec<usize>> {
     match node.node_type {
         NodeType::Unsqueeze => {
@@ -611,19 +609,24 @@ fn compute_reshape_target(node: &RawNode, data: &TensorData) -> Option<Vec<usize
             };
 
             let output_rank = data.shape.len() + axes.len();
+            let output_rank_i64 = output_rank as i64;
             let mut result = data.shape.to_vec();
             let mut sorted_axes: Vec<usize> = axes
                 .iter()
                 .map(|&a| {
-                    if a < 0 {
-                        (output_rank as i64 + a) as usize
+                    let normalized = if a < 0 { output_rank_i64 + a } else { a };
+                    if normalized < 0 || normalized >= output_rank_i64 {
+                        None
                     } else {
-                        a as usize
+                        Some(normalized as usize)
                     }
                 })
-                .collect();
+                .collect::<Option<Vec<_>>>()?;
             sorted_axes.sort();
             for &ax in &sorted_axes {
+                if ax > result.len() {
+                    return None;
+                }
                 result.insert(ax, 1);
             }
             Some(result)
@@ -660,6 +663,46 @@ fn compute_reshape_target(node: &RawNode, data: &TensorData) -> Option<Vec<usize
                     .map(|(_, &d)| d)
                     .collect(),
             )
+        }
+        NodeType::Reshape => {
+            // Read target shape from the second input (opset >= 5)
+            let shape_data = node.inputs.get(1)?.value()?;
+            let shape_vals = shape_data.to_i64_vec().ok()?;
+            let src_elems: usize = if data.shape.is_empty() {
+                1
+            } else {
+                data.shape.iter().product()
+            };
+            // Resolve -1 dimension (at most one allowed)
+            let mut result = Vec::with_capacity(shape_vals.len());
+            let mut neg_idx = None;
+            let mut known_product: usize = 1;
+            for (i, &v) in shape_vals.iter().enumerate() {
+                if v == -1 {
+                    if neg_idx.is_some() {
+                        return None; // multiple -1s
+                    }
+                    neg_idx = Some(i);
+                    result.push(0); // placeholder
+                } else if v == 0 {
+                    // 0 means "copy from input" per ONNX spec
+                    let dim = *data.shape.get(i)?;
+                    known_product *= dim;
+                    result.push(dim);
+                } else if v > 0 {
+                    known_product *= v as usize;
+                    result.push(v as usize);
+                } else {
+                    return None; // invalid negative value
+                }
+            }
+            if let Some(idx) = neg_idx {
+                if known_product == 0 {
+                    return None;
+                }
+                result[idx] = src_elems / known_product;
+            }
+            Some(result)
         }
         _ => None,
     }
