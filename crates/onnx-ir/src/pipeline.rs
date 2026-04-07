@@ -363,9 +363,7 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
                 .iter()
                 .filter(|n| n.node_type == crate::ir::NodeType::Constant)
                 .count();
-            nodes = crate::simplify::constant_fold::fold_weight_rearrangements(
-                nodes, &state_rc,
-            );
+            nodes = crate::simplify::constant_fold::fold_weight_rearrangements(nodes, &state_rc);
             let const_count_after = nodes
                 .iter()
                 .filter(|n| n.node_type == crate::ir::NodeType::Constant)
