@@ -11,6 +11,71 @@ use crate::tensor_store::TensorDataRef;
 /// Evaluates the operation at compile time and replaces the node with a Constant.
 /// Runs after `simplify_constant_shape` so that Shape->Gather results are available
 /// as constants for cascading folds (e.g., `Mul(const_3, const_4) -> const_12`).
+/// Fold only Slice, Concat, Unsqueeze, Squeeze, and Reshape operations on constant inputs.
+///
+/// This is a targeted pass designed to run before type inference to resolve weight
+/// rearrangement patterns (e.g., PyTorch's GRU/LSTM export inserts Slice+Concat+Unsqueeze
+/// chains on initializer weights). Unlike the full `fold_constants`, this avoids folding
+/// arithmetic ops (Add, Mul, Div, Sqrt, etc.) that may be needed by pattern matchers like
+/// the attention coalescer.
+pub(crate) fn fold_weight_rearrangements(
+    mut nodes: Vec<RawNode>,
+    state: &Rc<RefCell<GraphState>>,
+) -> Vec<RawNode> {
+    let mut constant_outputs: Vec<String> = Vec::new();
+
+    for node in nodes.iter_mut() {
+        if node.node_type == NodeType::Constant {
+            continue;
+        }
+
+        // Only fold shape-manipulation ops used in weight rearrangement patterns
+        let is_weight_rearrangement = matches!(
+            node.node_type,
+            NodeType::Slice
+                | NodeType::Concat
+                | NodeType::Unsqueeze
+                | NodeType::Squeeze
+                | NodeType::Reshape
+        );
+        if !is_weight_rearrangement {
+            continue;
+        }
+
+        let all_const = node
+            .inputs
+            .iter()
+            .filter(|arg| !arg.is_optional())
+            .all(|arg| arg.value().is_some());
+
+        if !all_const || node.inputs.iter().all(|arg| arg.is_optional()) {
+            continue;
+        }
+
+        let (data, output_ty) = match try_evaluate(node) {
+            Some(r) => r,
+            None => continue,
+        };
+
+        let output_name = node.outputs[0].name.clone();
+
+        log::info!(
+            "Early constant folding: replacing {:?} '{}' with constant",
+            node.node_type,
+            node.name,
+        );
+
+        *node = make_constant_node(&node.name.clone(), &output_name, data, output_ty, state);
+        constant_outputs.push(output_name);
+    }
+
+    if !constant_outputs.is_empty() {
+        super::update_constant_references(&mut nodes, &mut [], &constant_outputs);
+    }
+
+    nodes
+}
+
 pub(crate) fn fold_constants(
     mut nodes: Vec<RawNode>,
     graph_outputs: &mut [Argument],
@@ -106,6 +171,7 @@ fn try_evaluate(node: &RawNode) -> Option<(TensorData, ArgType)> {
         NodeType::Neg => eval_neg(node),
         NodeType::Sqrt => eval_sqrt(node),
         NodeType::Cast => eval_cast(node),
+        NodeType::Slice => eval_slice(node),
         NodeType::Concat => eval_concat(node),
         NodeType::Unsqueeze | NodeType::Squeeze | NodeType::Reshape => eval_reshape(node),
         _ => None,
@@ -339,9 +405,106 @@ fn eval_cast(node: &RawNode) -> Option<(TensorData, ArgType)> {
     }
 }
 
+/// Evaluate Slice on a constant input tensor.
+///
+/// Supports both attribute-based (opset < 10) and input-based (opset >= 10) parameters.
+/// Only handles axis-0 slicing with step=1 to keep implementation simple.
+fn eval_slice(node: &RawNode) -> Option<(TensorData, ArgType)> {
+    let data = node.inputs[0].value()?;
+    if data.shape.is_empty() {
+        return None;
+    }
+
+    // Extract slice parameters from either attributes (opset < 10) or inputs (opset >= 10)
+    let (starts, ends, axes) = if node.attrs.contains_key("starts") {
+        // Opset < 10: parameters are attributes
+        let starts = node.attrs.get("starts")?.clone().into_i64s();
+        let ends = node.attrs.get("ends")?.clone().into_i64s();
+        let axes = node
+            .attrs
+            .get("axes")
+            .map(|v| v.clone().into_i64s())
+            .unwrap_or_else(|| (0..starts.len() as i64).collect());
+        (starts, ends, axes)
+    } else if node.inputs.len() >= 3 {
+        // Opset >= 10: parameters are inputs
+        let starts_data = node.inputs.get(1)?.value()?;
+        let ends_data = node.inputs.get(2)?.value()?;
+        let starts = starts_data.to_i64_vec().ok()?;
+        let ends = ends_data.to_i64_vec().ok()?;
+        let axes = if let Some(axes_input) = node.inputs.get(3) {
+            if let Some(axes_data) = axes_input.value() {
+                axes_data.to_i64_vec().ok()?
+            } else {
+                (0..starts.len() as i64).collect()
+            }
+        } else {
+            (0..starts.len() as i64).collect()
+        };
+        (starts, ends, axes)
+    } else {
+        return None;
+    };
+
+    // Only support single-axis slicing on axis 0 with default step
+    if axes.len() != 1 || axes[0] != 0 {
+        return None;
+    }
+
+    // Check steps (must be 1 or absent)
+    if node.attrs.contains_key("steps") {
+        let steps = node.attrs.get("steps")?.clone().into_i64s();
+        if steps.iter().any(|&s| s != 1) {
+            return None;
+        }
+    } else if let Some(steps_input) = node.inputs.get(4) {
+        if let Some(steps_data) = steps_input.value() {
+            let steps = steps_data.to_i64_vec().ok()?;
+            if steps.iter().any(|&s| s != 1) {
+                return None;
+            }
+        }
+    }
+
+    let dim0 = data.shape[0];
+    let start = clamp_index(starts[0], dim0);
+    let end = clamp_index(ends[0], dim0);
+    if start >= end {
+        return None;
+    }
+
+    // For axis=0, the data is contiguous in row-major layout
+    let row_size: usize = data.shape[1..].iter().product::<usize>().max(1);
+    let elem_size = data.dtype.size();
+    let byte_start = start * row_size * elem_size;
+    let byte_end = end * row_size * elem_size;
+    let sliced_bytes = &data.bytes[byte_start..byte_end];
+
+    let mut output_shape = data.shape.to_vec();
+    output_shape[0] = end - start;
+
+    let output_ty = ArgType::Tensor(crate::ir::TensorType {
+        dtype: data.dtype,
+        rank: data.shape.len(),
+        static_shape: Some(output_shape.iter().map(|&d| Some(d)).collect()),
+    });
+
+    let result = TensorData::from_bytes_vec(sliced_bytes.to_vec(), output_shape, data.dtype);
+    Some((result, output_ty))
+}
+
+/// Clamp a slice index per ONNX spec: negative values wrap, then clamp to [0, dim].
+fn clamp_index(idx: i64, dim: usize) -> usize {
+    let dim = dim as i64;
+    let resolved = if idx < 0 { dim + idx } else { idx };
+    resolved.clamp(0, dim) as usize
+}
+
 /// Evaluate Concat on constant inputs along the axis attribute.
+///
+/// Supports axis=0 concatenation on tensors of any rank. For axis=0 in row-major
+/// layout, concatenation is equivalent to appending the flat byte arrays.
 fn eval_concat(node: &RawNode) -> Option<(TensorData, ArgType)> {
-    // Concat only supports axis=0 for 1D constant arrays (shape assembly pattern)
     let axis = node
         .attrs
         .get("axis")
@@ -351,84 +514,136 @@ fn eval_concat(node: &RawNode) -> Option<(TensorData, ArgType)> {
         return None;
     }
 
-    let output_ty = node.outputs[0].ty.clone();
-    let first_data = node.inputs[0].value()?;
-    let dtype = first_data.dtype;
-    let shape = output_shape(&output_ty);
-
     let non_optional = || node.inputs.iter().filter(|arg| !arg.is_optional());
 
-    match dtype {
-        DType::I64 => {
-            let mut result: Vec<i64> = Vec::new();
-            for input in non_optional() {
-                result.extend(input.value()?.to_i64_vec().ok()?);
-            }
-            Some((TensorData::new(result, shape), output_ty))
-        }
-        DType::I32 => {
-            let mut result: Vec<i32> = Vec::new();
-            for input in non_optional() {
-                let vals = input.value()?.to_i64_vec().ok()?;
-                result.extend(vals.iter().map(|&v| v as i32));
-            }
-            Some((TensorData::new(result, shape), output_ty))
-        }
-        DType::F32 => {
-            let mut result: Vec<f32> = Vec::new();
-            for input in non_optional() {
-                let vals = input.value()?.to_f64_vec().ok()?;
-                result.extend(vals.iter().map(|&v| v as f32));
-            }
-            Some((TensorData::new(result, shape), output_ty))
-        }
-        DType::F64 => {
-            let mut result: Vec<f64> = Vec::new();
-            for input in non_optional() {
-                result.extend(input.value()?.to_f64_vec().ok()?);
-            }
-            Some((TensorData::new(result, shape), output_ty))
-        }
-        _ => None,
+    // Collect all input data and compute output shape from inputs
+    let all_data: Vec<TensorData> = non_optional()
+        .map(|input| input.value())
+        .collect::<Option<Vec<_>>>()?;
+
+    if all_data.is_empty() {
+        return None;
     }
+
+    let dtype = all_data[0].dtype;
+    let rank = all_data[0].shape.len();
+
+    // Compute output shape: sum of axis-0 sizes, rest from first input
+    let mut output_shape = all_data[0].shape.to_vec();
+    let total_axis0: usize = all_data.iter().map(|d| d.shape[0]).sum();
+    if rank > 0 {
+        output_shape[0] = total_axis0;
+    }
+
+    // Concatenate raw bytes (axis=0 in row-major = byte append)
+    let total_bytes: usize = all_data.iter().map(|d| d.bytes.len()).sum();
+    let mut result_bytes = Vec::with_capacity(total_bytes);
+    for d in &all_data {
+        result_bytes.extend_from_slice(&d.bytes);
+    }
+
+    let output_ty = ArgType::Tensor(crate::ir::TensorType {
+        dtype,
+        rank,
+        static_shape: Some(output_shape.iter().map(|&d| Some(d)).collect()),
+    });
+
+    let result = TensorData::from_bytes_vec(result_bytes, output_shape, dtype);
+    Some((result, output_ty))
 }
 
-/// Evaluate Unsqueeze/Squeeze/Reshape by reshaping the constant data
-/// to match the already-inferred output type.
+/// Evaluate Unsqueeze/Squeeze/Reshape by reshaping the constant data.
+///
+/// First tries the already-inferred output type. If that's not available (e.g., running
+/// before type inference), computes the target shape from operation parameters directly.
 fn eval_reshape(node: &RawNode) -> Option<(TensorData, ArgType)> {
     let data = node.inputs[0].value()?;
-    let output_ty = node.outputs[0].ty.clone();
 
-    // Determine target shape from output type
-    let target_shape = match &output_ty {
-        ArgType::Tensor(t) => {
+    // Try to get target shape from already-inferred output type
+    let target_shape = match &node.outputs[0].ty {
+        ArgType::Tensor(t) if t.static_shape.is_some() => {
             let static_shape = t.static_shape.as_ref()?;
-            // All dims must be known
-            let dims: Option<Vec<usize>> = static_shape.iter().map(|d| d.map(|v| v)).collect();
-            dims?
+            static_shape.iter().map(|d| d.map(|v| v)).collect::<Option<Vec<_>>>()
         }
-        ArgType::ScalarTensor(_) | ArgType::ScalarNative(_) => vec![],
-        ArgType::Shape(len) => vec![*len],
+        ArgType::ScalarTensor(_) | ArgType::ScalarNative(_) => Some(vec![]),
+        ArgType::Shape(len) => Some(vec![*len]),
+        _ => None,
     };
+
+    // If output type doesn't have shape, compute from operation parameters
+    let target_shape = target_shape.or_else(|| compute_reshape_target(node, &data))?;
 
     // Verify element count matches
-    let src_elems: usize = if data.shape.is_empty() {
-        1
-    } else {
-        data.shape.iter().product()
-    };
-    let dst_elems: usize = if target_shape.is_empty() {
-        1
-    } else {
-        target_shape.iter().product()
-    };
+    let src_elems: usize = if data.shape.is_empty() { 1 } else { data.shape.iter().product() };
+    let dst_elems: usize = if target_shape.is_empty() { 1 } else { target_shape.iter().product() };
     if src_elems != dst_elems {
         return None;
     }
 
-    // Reuse the same bytes, just change shape
+    let output_ty = ArgType::Tensor(crate::ir::TensorType {
+        dtype: data.dtype,
+        rank: target_shape.len(),
+        static_shape: Some(target_shape.iter().map(|&d| Some(d)).collect()),
+    });
+
     let result = TensorData::from_bytes_vec(data.bytes.to_vec(), target_shape, data.dtype);
     Some((result, output_ty))
+}
+
+/// Compute target shape for Unsqueeze/Squeeze/Reshape from operation parameters.
+fn compute_reshape_target(node: &RawNode, data: &TensorData) -> Option<Vec<usize>> {
+    match node.node_type {
+        NodeType::Unsqueeze => {
+            // Get axes from attributes (opset < 13) or from input (opset >= 13)
+            let axes = if let Some(attr) = node.attrs.get("axes") {
+                attr.clone().into_i64s()
+            } else if let Some(axes_input) = node.inputs.get(1) {
+                axes_input.value()?.to_i64_vec().ok()?
+            } else {
+                return None;
+            };
+
+            let output_rank = data.shape.len() + axes.len();
+            let mut result = data.shape.to_vec();
+            let mut sorted_axes: Vec<usize> = axes
+                .iter()
+                .map(|&a| if a < 0 { (output_rank as i64 + a) as usize } else { a as usize })
+                .collect();
+            sorted_axes.sort();
+            for &ax in &sorted_axes {
+                result.insert(ax, 1);
+            }
+            Some(result)
+        }
+        NodeType::Squeeze => {
+            // Get axes from attributes (opset < 13) or from input (opset >= 13)
+            let axes = if let Some(attr) = node.attrs.get("axes") {
+                attr.clone().into_i64s()
+            } else if let Some(axes_input) = node.inputs.get(1) {
+                axes_input.value()?.to_i64_vec().ok()?
+            } else {
+                // Default: squeeze all dims with size 1
+                let squeezed: Vec<usize> = data.shape.iter().copied().filter(|&d| d != 1).collect();
+                return Some(squeezed);
+            };
+
+            let rank = data.shape.len() as i64;
+            let mut axes_set: Vec<usize> = axes
+                .iter()
+                .map(|&a| if a < 0 { (rank + a) as usize } else { a as usize })
+                .collect();
+            axes_set.sort();
+            Some(
+                data.shape
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !axes_set.contains(i))
+                    .map(|(_, &d)| d)
+                    .collect(),
+            )
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -760,5 +975,203 @@ mod tests {
         let state = test_state();
         let result = fold_constants(nodes, &mut [], &state);
         assert_eq!(result[0].node_type, NodeType::Sqrt);
+    }
+
+    /// Helper to create a constant f32 tensor argument with a given shape.
+    fn const_f32_tensor(name: &str, values: &[f32], shape: Vec<usize>) -> Argument {
+        let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_ne_bytes()).collect();
+        let data_ref = TensorDataRef::new(bytes::Bytes::copy_from_slice(&bytes), shape.clone(), DType::F32);
+        let mut store = TensorStore::new();
+        let id = store.store(data_ref);
+        let mut constant_map = std::collections::HashMap::new();
+        constant_map.insert(name.to_string(), id);
+        let value_store = ValueStore::new(
+            std::sync::Arc::new(store),
+            std::sync::Arc::new(constant_map),
+        );
+        Argument {
+            name: name.to_string(),
+            ty: ArgType::Tensor(crate::ir::TensorType {
+                dtype: DType::F32,
+                rank: shape.len(),
+                static_shape: Some(shape.iter().map(|&d| Some(d)).collect()),
+            }),
+            value_source: ValueSource::Constant,
+            value_store: Some(value_store),
+        }
+    }
+
+    #[test]
+    fn test_slice_axis0_2d_attr() {
+        // Slice a [4, 2] f32 tensor along axis 0 from index 1 to 3
+        // Input: [[1,2], [3,4], [5,6], [7,8]]
+        // Expected output: [[3,4], [5,6]]
+        let input = const_f32_tensor(
+            "w",
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            vec![4, 2],
+        );
+        let output = Argument {
+            name: "out".to_string(),
+            ty: ArgType::Tensor(crate::ir::TensorType {
+                dtype: DType::F32,
+                rank: 2,
+                static_shape: None,
+            }),
+            value_source: ValueSource::Dynamic,
+            value_store: None,
+        };
+
+        let nodes = vec![raw_node_with_attrs(
+            "slice",
+            NodeType::Slice,
+            vec![input],
+            vec![output],
+            [
+                ("starts".to_string(), AttributeValue::Int64s(vec![1])),
+                ("ends".to_string(), AttributeValue::Int64s(vec![3])),
+                ("axes".to_string(), AttributeValue::Int64s(vec![0])),
+            ]
+            .into_iter()
+            .collect(),
+        )];
+
+        let state = test_state();
+        let result = fold_constants(nodes, &mut [], &state);
+        assert_eq!(result[0].node_type, NodeType::Constant);
+
+        let data = result[0].inputs[0].value().unwrap();
+        assert_eq!(data.shape.to_vec(), vec![2, 2]);
+        let vals = data.to_f64_vec().unwrap();
+        assert_eq!(vals, vec![3.0, 4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_slice_then_concat_then_unsqueeze_cascade() {
+        // Simulates PyTorch GRU weight rearrangement pattern:
+        // Slice constant -> Concat sliced results -> Unsqueeze
+        let input = const_f32_tensor(
+            "w",
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            vec![6, 1],
+        );
+
+        let slice_output = Argument {
+            name: "slice_out".to_string(),
+            ty: ArgType::Tensor(crate::ir::TensorType {
+                dtype: DType::F32,
+                rank: 2,
+                static_shape: None,
+            }),
+            value_source: ValueSource::Dynamic,
+            value_store: None,
+        };
+        let slice2_output = Argument {
+            name: "slice2_out".to_string(),
+            ty: ArgType::Tensor(crate::ir::TensorType {
+                dtype: DType::F32,
+                rank: 2,
+                static_shape: None,
+            }),
+            value_source: ValueSource::Dynamic,
+            value_store: None,
+        };
+        let concat_output = Argument {
+            name: "concat_out".to_string(),
+            ty: ArgType::Tensor(crate::ir::TensorType {
+                dtype: DType::F32,
+                rank: 2,
+                static_shape: None,
+            }),
+            value_source: ValueSource::Dynamic,
+            value_store: None,
+        };
+        let unsqueeze_output = Argument {
+            name: "unsqueeze_out".to_string(),
+            ty: ArgType::Tensor(crate::ir::TensorType {
+                dtype: DType::F32,
+                rank: 3,
+                static_shape: None,
+            }),
+            value_source: ValueSource::Dynamic,
+            value_store: None,
+        };
+
+        let state = test_state();
+
+        let nodes = vec![
+            // Slice [3:6] -> [3, 1]
+            raw_node_with_attrs(
+                "slice1",
+                NodeType::Slice,
+                vec![input.clone()],
+                vec![slice_output],
+                [
+                    ("starts".to_string(), AttributeValue::Int64s(vec![3])),
+                    ("ends".to_string(), AttributeValue::Int64s(vec![6])),
+                    ("axes".to_string(), AttributeValue::Int64s(vec![0])),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            // Slice [0:3] -> [3, 1]
+            raw_node_with_attrs(
+                "slice2",
+                NodeType::Slice,
+                vec![input],
+                vec![slice2_output],
+                [
+                    ("starts".to_string(), AttributeValue::Int64s(vec![0])),
+                    ("ends".to_string(), AttributeValue::Int64s(vec![3])),
+                    ("axes".to_string(), AttributeValue::Int64s(vec![0])),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            // Concat [slice1_out, slice2_out] -> [6, 1]
+            raw_node_with_attrs(
+                "concat1",
+                NodeType::Concat,
+                vec![
+                    Argument { name: "slice_out".to_string(), ty: ArgType::Tensor(crate::ir::TensorType { dtype: DType::F32, rank: 2, static_shape: None }), value_source: ValueSource::Dynamic, value_store: None },
+                    Argument { name: "slice2_out".to_string(), ty: ArgType::Tensor(crate::ir::TensorType { dtype: DType::F32, rank: 2, static_shape: None }), value_source: ValueSource::Dynamic, value_store: None },
+                ],
+                vec![concat_output],
+                [("axis".to_string(), AttributeValue::Int64(0))].into_iter().collect(),
+            ),
+            // Unsqueeze concat_out at axis 0 -> [1, 6, 1]
+            raw_node_with_attrs(
+                "unsqueeze1",
+                NodeType::Unsqueeze,
+                vec![
+                    Argument { name: "concat_out".to_string(), ty: ArgType::Tensor(crate::ir::TensorType { dtype: DType::F32, rank: 2, static_shape: None }), value_source: ValueSource::Dynamic, value_store: None },
+                ],
+                vec![unsqueeze_output],
+                [("axes".to_string(), AttributeValue::Int64s(vec![0]))].into_iter().collect(),
+            ),
+        ];
+
+        // Run targeted early folding with cascade
+        let mut folded = nodes;
+        for _ in 0..5 {
+            let before = folded.iter().filter(|n| n.node_type == NodeType::Constant).count();
+            folded = fold_weight_rearrangements(folded, &state);
+            let after = folded.iter().filter(|n| n.node_type == NodeType::Constant).count();
+            if after == before {
+                break;
+            }
+        }
+
+        // All 4 nodes should be folded to constants
+        assert_eq!(folded[0].node_type, NodeType::Constant, "slice1 should be folded");
+        assert_eq!(folded[1].node_type, NodeType::Constant, "slice2 should be folded");
+        assert_eq!(folded[2].node_type, NodeType::Constant, "concat should be folded");
+        assert_eq!(folded[3].node_type, NodeType::Constant, "unsqueeze should be folded");
+
+        // Verify the final unsqueeze result: [4,5,6,1,2,3] unsqueezed to [1,6,1]
+        let data = folded[3].inputs[0].value().unwrap();
+        assert_eq!(data.shape.to_vec(), vec![1, 6, 1]);
+        let vals = data.to_f64_vec().unwrap();
+        assert_eq!(vals, vec![4.0, 5.0, 6.0, 1.0, 2.0, 3.0]);
     }
 }
