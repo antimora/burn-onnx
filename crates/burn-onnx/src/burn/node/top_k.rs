@@ -25,9 +25,7 @@ impl NodeCodegen for onnx_ir::topk::TopKNode {
         // main topk_with_indices call stays readable and (2) multiple
         // TopK nodes in the same forward() can't collide on `__topk_k`.
         let (prelude, k) = match &self.config.k {
-            onnx_ir::topk::TopKInput::Static(k_value) => {
-                (TokenStream::new(), k_value.to_tokens())
-            }
+            onnx_ir::topk::TopKInput::Static(k_value) => (TokenStream::new(), k_value.to_tokens()),
             onnx_ir::topk::TopKInput::Runtime(r) => {
                 let arg = &self.inputs[r.input_index];
                 let prelude = match &arg.ty {
@@ -44,9 +42,7 @@ impl NodeCodegen for onnx_ir::topk::TopKNode {
                             };
                         }
                     }
-                    other => panic!(
-                        "TopK k must be a scalar or rank-1 tensor, got {other:?}"
-                    ),
+                    other => panic!("TopK k must be a scalar or rank-1 tensor, got {other:?}"),
                 };
                 (prelude, quote! { __topk_k })
             }

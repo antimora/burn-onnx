@@ -83,7 +83,11 @@ mod tests {
         let node = DropoutNodeBuilder::new("dropout1")
             .input_tensor("input", 2, DType::F32)
             .output_tensor("output", 2, DType::F32)
-            .output_tensor("mask", 2, burn::tensor::DType::Bool(burn::tensor::BoolStore::Native))
+            .output_tensor(
+                "mask",
+                2,
+                burn::tensor::DType::Bool(burn::tensor::BoolStore::Native),
+            )
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
@@ -107,9 +111,10 @@ mod tests {
         // Opset 12+ gives Dropout a runtime ratio input. We still emit
         // identity in inference mode, so codegen should not panic and
         // should ignore the runtime input entirely.
-        let config = DropoutConfig::new(DropoutInput::Runtime(
-            onnx_ir::ir::RuntimeInputRef::new("ratio".to_string(), 1),
-        ));
+        let config = DropoutConfig::new(DropoutInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(
+            "ratio".to_string(),
+            1,
+        )));
         let node = DropoutNodeBuilder::new("dropout1")
             .input_tensor("input", 2, DType::F32)
             .input_scalar("ratio", DType::F32)

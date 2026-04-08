@@ -1,6 +1,11 @@
 // Import the shared macro
 use crate::include_models;
-include_models!(argmax, argmax_both_keepdims, argmax_1d, argmax_select_last_index);
+include_models!(
+    argmax,
+    argmax_both_keepdims,
+    argmax_1d,
+    argmax_select_last_index
+);
 
 #[cfg(test)]
 mod tests {
