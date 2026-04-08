@@ -4,15 +4,15 @@
 # CI on any drift between this file and reality.
 #
 # Source:    onnx v1.19.0 node tests (https://github.com/onnx/onnx)
-# Vendoring: hand-copied for the M1 scaffold; future PRs will widen
-#            coverage and add an `xtask refresh-onnx-tests` command.
+# Vendoring: hand-copied; refresh by re-running the steps in
+#            crates/onnx-official-tests/README.md.
 #
 # Status values:
 #   pass         - codegen succeeds, compile succeeds, output matches reference
-#   skip-codegen - onnx2burn panics or refuses the model (M2+)
-#   skip-compile - codegen succeeds but generated Rust does not compile (M2+)
-#   fail-compare - compiles and runs but produces incorrect output (M2+)
-#   flaky        - intermittent, ignored by the gate (M2+)
+#   skip-codegen - onnx2burn panics or refuses the model (not yet wired)
+#   skip-compile - codegen succeeds but generated Rust does not compile (not yet wired)
+#   fail-compare - compiles and runs but produces incorrect output (not yet wired)
+#   flaky        - intermittent, ignored by the gate (not yet wired)
 #
 # Optional fields: reason, tracking (issue/PR ref), wontfix (bool)
 

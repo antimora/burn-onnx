@@ -3,10 +3,14 @@
 //!
 //! Why staging? Each upstream test directory ships its model as
 //! `vendor/node/test_<name>/model.onnx`. `ModelGen` derives the output
-//! file name from the input file's stem, so handing it 21 paths all
-//! named `model.onnx` would emit 21 colliding `model.rs` files. Copying
-//! each one to `$OUT_DIR/staged/test_<name>.onnx` first gives every
-//! generated module a unique name that matches its upstream test.
+//! file name from the input file's stem, so handing it multiple paths
+//! all named `model.onnx` would emit colliding `model.rs` files.
+//! Copying each one to `$OUT_DIR/staged/test_<name>.onnx` first gives
+//! every generated module a unique name that matches its upstream test.
+//!
+//! `ModelGen` does not currently expose a per-input output-name override,
+//! so file copying is the simplest workaround. If that API ever lands,
+//! the staging step can be removed in favour of a direct call.
 
 use burn_onnx::ModelGen;
 use std::fs;
@@ -52,7 +56,21 @@ fn main() {
 
     for name in TESTS {
         let src: PathBuf = format!("vendor/node/{name}/model.onnx").into();
-        assert!(src.exists(), "vendored model missing: {}", src.display());
+
+        // Sanity-check the vendored file at the staging boundary so any
+        // problem (missing, empty, or unreadable) surfaces with a path-
+        // qualified message instead of an opaque burn-onnx codegen panic
+        // deep inside ModelGen.
+        let metadata = fs::metadata(&src).unwrap_or_else(|e| {
+            println!("cargo:warning=vendored model unreadable: {}", src.display());
+            panic!("stat {}: {e}", src.display());
+        });
+        assert!(
+            metadata.len() > 0,
+            "vendored model is empty: {}",
+            src.display()
+        );
+
         let dst = staged.join(format!("{name}.onnx"));
         fs::copy(&src, &dst)
             .unwrap_or_else(|e| panic!("copy {} -> {}: {e}", src.display(), dst.display()));

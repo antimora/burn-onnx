@@ -10,12 +10,11 @@
 //!   4. Loads `test_data_set_0/output_0.pb` and compares with
 //!      `assert_approx_eq` at `Tolerance::default()`.
 //!
-//! The set of tests run here is mirrored in `expectations.toml` and the
-//! `TESTS` array in `build.rs`. The runtime helper at the bottom of this
-//! file (`verify_expectations_match_tests`) asserts they stay in sync,
-//! so adding a vendored test only in `build.rs` (or only in
-//! `expectations.toml`) will cause a clear test failure rather than
-//! silent drift.
+//! Three lists of test names must stay in sync: `expectations.toml`,
+//! the `TESTS` array in `build.rs`, and the `include_node_tests!`
+//! invocation below. The `verify_expectations_match_tests` test
+//! enforces that, so adding a vendored test in only one place produces
+//! a clear failure rather than silent drift.
 
 #![allow(clippy::approx_constant)]
 
@@ -118,11 +117,24 @@ fn load_expected_output(test_name: &str) -> TensorData {
 
 /// Compare a model output to its `output_0.pb` reference, using burn's
 /// default float tolerance.
+///
+/// We check shapes ourselves before delegating to `assert_approx_eq`
+/// because burn's implementation records a shape mismatch into its
+/// failure message but still walks `self.iter().zip(other.iter())`,
+/// which silently truncates to the shorter side. The function does
+/// panic in that case, but the per-element diffs printed alongside the
+/// shape message cover only the overlap, producing a confusing
+/// "shape AND positions 0..n differ" report. Failing fast on shape
+/// gives an unambiguous error.
 fn assert_matches_reference<const D: usize>(test_name: &str, output: Tensor<TestBackend, D>) {
     let expected = load_expected_output(test_name);
-    output
-        .to_data()
-        .assert_approx_eq::<FT>(&expected, Tolerance::default());
+    let actual = output.to_data();
+    assert_eq!(
+        actual.shape, expected.shape,
+        "{test_name}: output shape {:?} differs from reference shape {:?}",
+        actual.shape, expected.shape,
+    );
+    actual.assert_approx_eq::<FT>(&expected, Tolerance::default());
 }
 
 /// Sanity-check that on-disk expectations agree with the compiled-in
@@ -148,29 +160,62 @@ fn verify_expectations_match_tests() {
          Only in expectations.toml:  {only_in_declared:?}"
     );
 
-    // M1 currently only handles `pass`. If a future PR marks something
-    // differently before wiring up the corresponding harness path, fail
-    // loudly so the gap is obvious.
-    for (name, entry) in &expectations.entries {
-        assert_eq!(
-            entry.status,
-            Status::Pass,
-            "expectations.toml entry `{name}` has status {:?}, but the \
-             M1 runner only handles `pass`. Add the harness branch \
-             before introducing this status.",
-            entry.status,
-        );
-    }
+    // The runner currently only handles `Pass`. If a future PR marks
+    // something differently before wiring up the corresponding harness
+    // path, fail loudly so the gap is obvious. We collect every offender
+    // before panicking so a contributor adding several non-`Pass` rows
+    // sees the full list in one shot.
+    let unsupported: Vec<String> = expectations
+        .entries
+        .iter()
+        .filter(|(_, entry)| entry.status != Status::Pass)
+        .map(|(name, entry)| format!("{name} = {:?}", entry.status))
+        .collect();
+    assert!(
+        unsupported.is_empty(),
+        "expectations.toml has entries with statuses the runner does not yet handle. \
+         Add the harness branch for each before introducing the status:\n  {}",
+        unsupported.join("\n  "),
+    );
+}
+
+/// Negative gate: prove that `assert_matches_reference` actually fails
+/// when the data is wrong. Without this, a regression in the comparison
+/// machinery (load_expected_output returning the input, Tolerance::default()
+/// being too loose, etc.) would silently turn the entire suite into a
+/// no-op gate while every other test stayed green.
+#[test]
+fn negative_gate_actually_gates() {
+    let device = Default::default();
+    let model = test_abs::Model::<TestBackend>::new(&device);
+    let input = load_input::<3>("test_abs", 0);
+    let output = model.forward(input);
+
+    // Construct a deliberately wrong "expected" by adding 1.0 to every
+    // element of the real reference.
+    let real_path = vendor_dir("test_abs")
+        .join("test_data_set_0")
+        .join("output_0.pb");
+    let real = load_float_tensor(&real_path).expect("load real reference");
+    let perturbed: Vec<f32> = real.values.iter().map(|v| v + 1.0).collect();
+    let wrong = TensorData::new(perturbed, real.shape);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        output
+            .to_data()
+            .assert_approx_eq::<FT>(&wrong, Tolerance::default());
+    }));
+    assert!(
+        result.is_err(),
+        "comparison against deliberately-perturbed reference passed; \
+         the gate is not actually gating",
+    );
 }
 
 // ----------------------------------------------------------------------
 // Per-test cases. Each one mirrors the upstream test name verbatim so
 // failures point straight at the corresponding `vendor/node/<name>/`
 // directory.
-//
-// All M1 tests share two shapes:
-//   - unary  : forward(Tensor<B, 3>)               -> Tensor<B, 3>
-//   - binary : forward(Tensor<B, 3>, Tensor<B, 3>) -> Tensor<B, 3>
 //
 // We keep the bodies inline (instead of factoring through a trait or
 // macro) so that the model module being exercised is unambiguous in the
@@ -204,10 +249,10 @@ macro_rules! binary_node_test {
     };
 }
 
-// Per-test ranks below are dictated by the upstream `model.onnx` graph
-// I/O shapes — most use [3, 4, 5] (rank 3), but `test_round` uses a 1D
-// input. If we add a test with a different rank, the macro invocation's
-// const-generic argument is the only thing to update.
+// Per-test ranks below are dictated by each upstream `model.onnx`'s
+// declared input/output shapes. The const-generic literal in each
+// macro call must match that rank; the assertion in `load_input` will
+// catch a mismatch at runtime with a clear message.
 
 unary_node_test!(test_abs, 3);
 unary_node_test!(test_ceil, 3);

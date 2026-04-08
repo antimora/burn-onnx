@@ -16,7 +16,7 @@
 //!
 //! `build.rs` runs `burn_onnx::ModelGen` over every vendored `model.onnx`,
 //! emitting one `<name>.rs` + `<name>.bpk` per test in `$OUT_DIR/model/`.
-//! The integration test in `tests/node_tests.rs` then loads the `.pb`
+//! The integration test in `tests/test_mod.rs` then loads the `.pb`
 //! reference tensors and compares the model output element-wise.
 //!
 //! See `expectations.toml` for the per-test status declarations.
