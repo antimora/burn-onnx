@@ -129,13 +129,11 @@ impl NodeProcessor for DropoutProcessor {
             return Ok(config);
         }
 
-        // Opset 12+ uses input for ratio
-        let prob = match node.inputs.get(1) {
-            None => {
-                return Err(ProcessError::MissingInput(
-                    "Dropout: missing ratio input".to_string(),
-                ));
-            }
+        // Opset 12+: ratio is input[1] but is optional (defaults to 0.5 per
+        // ONNX spec). Models may omit it entirely or provide it as the
+        // empty-string "optional not provided" marker.
+        let prob = match node.get_input(1) {
+            None => DropoutInput::Static(0.5),
             Some(input) => match input.value() {
                 None => {
                     // Runtime input - no static value available
