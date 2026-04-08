@@ -58,6 +58,17 @@ pub enum LoadError {
     )]
     UnsupportedDataType { path: PathBuf, data_type: i32 },
     #[error(
+        "{path:?}: TensorProto dim[{index}] = {dim} cannot be converted to usize \
+         (must be non-negative and fit in the host pointer width)"
+    )]
+    InvalidDimension {
+        path: PathBuf,
+        index: usize,
+        dim: i64,
+    },
+    #[error("{path:?}: shape {dims:?} has an element count that overflows usize")]
+    ShapeOverflow { path: PathBuf, dims: Vec<i64> },
+    #[error(
         "{path:?}: raw_data has {len} bytes, which is not a multiple of 4 \
          and cannot be a buffer of f32 values"
     )]
@@ -107,8 +118,26 @@ pub fn load_float_tensor(path: &Path) -> Result<FloatTensor, LoadError> {
         }
     }
 
-    let shape: Vec<usize> = proto.dims.iter().map(|&d| d as usize).collect();
-    let expected = shape.iter().product::<usize>();
+    // Validate each dim individually so a negative value (e.g. from a
+    // malformed proto) does not wrap into a huge usize, and use checked
+    // multiplication so the element count cannot overflow silently into
+    // a small number that subsequently passes the length check.
+    let mut shape: Vec<usize> = Vec::with_capacity(proto.dims.len());
+    let mut expected: usize = 1;
+    for (index, &dim) in proto.dims.iter().enumerate() {
+        let dim_usize = usize::try_from(dim).map_err(|_| LoadError::InvalidDimension {
+            path: path.to_path_buf(),
+            index,
+            dim,
+        })?;
+        expected = expected
+            .checked_mul(dim_usize)
+            .ok_or_else(|| LoadError::ShapeOverflow {
+                path: path.to_path_buf(),
+                dims: proto.dims.clone(),
+            })?;
+        shape.push(dim_usize);
+    }
 
     // Prefer raw_data if present (this is how upstream tests ship), and
     // require it to be a clean multiple of 4 so a truncated buffer

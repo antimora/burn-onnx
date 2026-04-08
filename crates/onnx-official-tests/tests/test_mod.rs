@@ -82,10 +82,19 @@ fn vendor_dir(test_name: &str) -> PathBuf {
 }
 
 /// Load `input_<idx>.pb` from a vendored test as an `f32` tensor of the
-/// expected rank `D`. The rank is provided by the caller (per test) so
-/// the model's `forward()` signature stays statically typed; a runtime
-/// rank mismatch is a bug in the macro invocation, not in the data.
-fn load_input<const D: usize>(test_name: &str, idx: usize) -> Tensor<TestBackend, D> {
+/// expected rank `D`, materialized on `device`.
+///
+/// The rank is provided by the caller (per test) so the model's
+/// `forward()` signature stays statically typed; a runtime rank
+/// mismatch is a bug in the macro invocation, not in the data. The
+/// device must match the one the model was created with so the input
+/// and the model live on the same backend context (matters for
+/// non-CPU backends like Wgpu/Metal/Tch).
+fn load_input<const D: usize>(
+    test_name: &str,
+    idx: usize,
+    device: &<TestBackend as burn::tensor::backend::Backend>::Device,
+) -> Tensor<TestBackend, D> {
     let path = vendor_dir(test_name)
         .join("test_data_set_0")
         .join(format!("input_{idx}.pb"));
@@ -100,7 +109,7 @@ fn load_input<const D: usize>(test_name: &str, idx: usize) -> Tensor<TestBackend
         raw.shape,
     );
     let data = TensorData::new(raw.values, raw.shape);
-    Tensor::<TestBackend, D>::from_data(data, &Default::default())
+    Tensor::<TestBackend, D>::from_data(data, device)
 }
 
 /// Load `output_0.pb` from a vendored test as a `TensorData`. Burn's
@@ -188,7 +197,7 @@ fn verify_expectations_match_tests() {
 fn negative_gate_actually_gates() {
     let device = Default::default();
     let model = test_abs::Model::<TestBackend>::new(&device);
-    let input = load_input::<3>("test_abs", 0);
+    let input = load_input::<3>("test_abs", 0, &device);
     let output = model.forward(input);
 
     // Construct a deliberately wrong "expected" by adding 1.0 to every
@@ -228,7 +237,7 @@ macro_rules! unary_node_test {
         fn $name() {
             let device = Default::default();
             let model = $name::Model::<TestBackend>::new(&device);
-            let input = load_input::<$rank>(stringify!($name), 0);
+            let input = load_input::<$rank>(stringify!($name), 0, &device);
             let output = model.forward(input);
             assert_matches_reference::<$rank>(stringify!($name), output);
         }
@@ -241,8 +250,8 @@ macro_rules! binary_node_test {
         fn $name() {
             let device = Default::default();
             let model = $name::Model::<TestBackend>::new(&device);
-            let lhs = load_input::<$rank>(stringify!($name), 0);
-            let rhs = load_input::<$rank>(stringify!($name), 1);
+            let lhs = load_input::<$rank>(stringify!($name), 0, &device);
+            let rhs = load_input::<$rank>(stringify!($name), 1, &device);
             let output = model.forward(lhs, rhs);
             assert_matches_reference::<$rank>(stringify!($name), output);
         }
