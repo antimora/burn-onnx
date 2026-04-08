@@ -44,10 +44,13 @@ RUN git clone https://github.com/tracel-ai/burn-onnx.git /opt/burn-onnx && \
     cargo build --release -p burn-onnx --bin onnx2burn && \
     cp target/release/onnx2burn /usr/local/bin/
 
-# Copy and pre-build the runner template (compiles burn deps once)
+# Copy and pre-build the runner template (compiles burn deps once).
+# Debug profile is intentional: it matches the per-model build in backend.py,
+# so incremental rebuilds reuse the cached dep artifacts. Release would
+# double the compile work without benefiting the short-lived test inferences.
 COPY ./backends/burn-onnx/runner /root/runner
 COPY ./backends/burn-onnx/backend.py /root/burn_onnx_backend.py
-RUN cd /root/runner && cargo build --release
+RUN cd /root/runner && cargo build
 
 ENV BURN_RUNNER_DIR="/root/runner"
 ENV ONNX2BURN="/usr/local/bin/onnx2burn"

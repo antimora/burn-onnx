@@ -27,7 +27,7 @@ Per test case:
   Generate main.rs harness (type-safe Rust I/O for this model's signature)
     |
     v
-  cargo build --release (incremental, burn deps pre-compiled)
+  cargo build (debug, incremental; burn deps pre-compiled)
     |
     v
   Return BurnOnnxBackendRep(compiled_binary)
@@ -64,9 +64,11 @@ incremental builds only recompile the generated model code.
 cargo build --release -p burn-onnx --bin onnx2burn
 export ONNX2BURN="$(pwd)/target/release/onnx2burn"
 
-# 2. Pre-compile runner (compiles burn deps, takes a few minutes first time)
+# 2. Pre-compile runner in debug mode (compiles burn deps, takes a few minutes
+# first time). Debug profile matches what backend.py rebuilds per model, so the
+# cached dep artifacts get reused on every subsequent test case.
 cd scoreboard/runner
-cargo build --release
+cargo build
 cd ..
 
 # 3. Install Python deps

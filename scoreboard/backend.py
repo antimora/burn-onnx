@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import warnings
 
 import numpy as np
 from onnx.backend.base import Backend, BackendRep
@@ -237,28 +238,30 @@ def _gen_read_input(idx, name, rust_type):
             f"        )\n"
             f"    }};\n"
         )
-    elif cat == "scalar_i64":
+    elif cat in ("scalar_i64", "scalar_i32", "scalar_f32", "scalar_f64"):
+        # Fixed-size native scalar: validate length then decode.
+        scalar_info = {
+            "scalar_i64": ("i64", 8),
+            "scalar_i32": ("i32", 4),
+            "scalar_f32": ("f32", 4),
+            "scalar_f64": ("f64", 8),
+        }[cat]
+        rust_ty, nbytes = scalar_info
         return (
             f"    let {name} = {{\n"
             f"        let info = &manifest.inputs[{idx}];\n"
             f"        let bytes = std::fs::read(&info.file).expect(\"read input\");\n"
-            f"        i64::from_le_bytes(bytes[..8].try_into().unwrap())\n"
+            f"        assert_eq!(bytes.len(), {nbytes}, \"expected {nbytes} bytes for {rust_ty}\");\n"
+            f"        {rust_ty}::from_le_bytes(bytes[..{nbytes}].try_into().unwrap())\n"
             f"    }};\n"
         )
-    elif cat == "scalar_f32":
+    elif cat == "scalar_bool":
         return (
             f"    let {name} = {{\n"
             f"        let info = &manifest.inputs[{idx}];\n"
             f"        let bytes = std::fs::read(&info.file).expect(\"read input\");\n"
-            f"        f32::from_le_bytes(bytes[..4].try_into().unwrap())\n"
-            f"    }};\n"
-        )
-    elif cat == "scalar_f64":
-        return (
-            f"    let {name} = {{\n"
-            f"        let info = &manifest.inputs[{idx}];\n"
-            f"        let bytes = std::fs::read(&info.file).expect(\"read input\");\n"
-            f"        f64::from_le_bytes(bytes[..8].try_into().unwrap())\n"
+            f"        assert!(!bytes.is_empty(), \"expected at least 1 byte for bool\");\n"
+            f"        bytes[0] != 0\n"
             f"    }};\n"
         )
     else:
@@ -282,19 +285,27 @@ def _gen_write_output(idx, var_expr, rust_type):
             f"        out_infos.push(serde_json::json!({{\"file\": path, \"shape\": shape, \"dtype\": dtype}}));\n"
             f"    }}\n"
         )
-    elif cat.startswith("scalar_"):
-        dtype_map = {
-            "scalar_f32": ("f32", "float32", "4"),
-            "scalar_f64": ("f64", "float64", "8"),
-            "scalar_i64": ("i64", "int64", "8"),
-            "scalar_i32": ("i32", "int32", "4"),
-        }
-        _, dtype_str, _ = dtype_map.get(cat, ("f32", "float32", "4"))
+    elif cat in ("scalar_f32", "scalar_f64", "scalar_i64", "scalar_i32"):
+        dtype_str = {
+            "scalar_f32": "float32",
+            "scalar_f64": "float64",
+            "scalar_i64": "int64",
+            "scalar_i32": "int32",
+        }[cat]
         return (
             f"    {{\n"
             f"        let path = format!(\"{{output_dir}}/output_{idx}.bin\");\n"
             f"        std::fs::write(&path, {var_expr}.to_le_bytes()).expect(\"write output\");\n"
             f"        out_infos.push(serde_json::json!({{\"file\": path, \"shape\": [], \"dtype\": \"{dtype_str}\"}}));\n"
+            f"    }}\n"
+        )
+    elif cat == "scalar_bool":
+        # bool has no to_le_bytes(); write a single 0/1 byte.
+        return (
+            f"    {{\n"
+            f"        let path = format!(\"{{output_dir}}/output_{idx}.bin\");\n"
+            f"        std::fs::write(&path, [u8::from({var_expr})]).expect(\"write output\");\n"
+            f"        out_infos.push(serde_json::json!({{\"file\": path, \"shape\": [], \"dtype\": \"bool\"}}));\n"
             f"    }}\n"
         )
     else:
@@ -381,6 +392,21 @@ def _generate_main_rs(rs_source, bpk_path):
     return "\n".join(lines)
 
 
+# Numpy dtype expected by the Rust runner for each input category.
+# The generated main.rs reads fixed types (f32 for float tensors, i64 for int
+# tensors, etc.), so numpy inputs must be cast to match before serialization.
+_CATEGORY_TO_NUMPY = {
+    "float_tensor": np.float32,
+    "int_tensor": np.int64,
+    "bool_tensor": np.bool_,
+    "scalar_f32": np.float32,
+    "scalar_f64": np.float64,
+    "scalar_i64": np.int64,
+    "scalar_i32": np.int32,
+    "scalar_bool": np.bool_,
+}
+
+
 def _serialize_input(arr, path):
     """Write a numpy array as raw little-endian bytes."""
     arr = np.ascontiguousarray(arr)
@@ -388,11 +414,34 @@ def _serialize_input(arr, path):
         f.write(arr.tobytes())
 
 
-def _write_input_manifest(inputs, input_dir, bpk_path, manifest_path):
-    """Write the input manifest JSON."""
+def _write_input_manifest(inputs, input_types, input_dir, bpk_path, manifest_path):
+    """Write the input manifest JSON, casting inputs to the runner's expected dtype.
+
+    `input_types` is a list of parsed Rust type strings from the forward()
+    signature, one per input. Each numpy array is cast to the dtype the runner
+    expects (e.g. float tensors -> f32) to avoid byte-level corruption.
+    """
     input_infos = []
-    for i, arr in enumerate(inputs):
+    for i, (arr, rust_type) in enumerate(zip(inputs, input_types)):
         arr = np.asarray(arr)
+        cat = _rust_type_category(rust_type)
+        target = _CATEGORY_TO_NUMPY.get(cat)
+        if target is None:
+            raise BackendIsNotSupposedToImplementIt(
+                f"Unsupported input type for serialization: {rust_type}"
+            )
+        if arr.dtype != np.dtype(target):
+            # A lossy cast (e.g. uint64 -> int64 with out-of-range values)
+            # means the runner can't represent this input faithfully; surface
+            # it as a skip rather than producing garbage inference.
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", RuntimeWarning)
+                try:
+                    arr = arr.astype(target)
+                except RuntimeWarning as w:
+                    raise BackendIsNotSupposedToImplementIt(
+                        f"Lossy input cast {arr.dtype} -> {np.dtype(target)}: {w}"
+                    )
         file_path = os.path.join(input_dir, f"input_{i}.bin")
         _serialize_input(arr, file_path)
         dtype_str = NUMPY_DTYPE_TO_STR.get(arr.dtype, str(arr.dtype))
@@ -440,10 +489,11 @@ def _read_output_manifest(output_dir):
 class BurnOnnxBackendRep(BackendRep):
     """Holds a compiled burn-onnx model binary ready for inference."""
 
-    def __init__(self, binary_path, bpk_path, work_dir):
+    def __init__(self, binary_path, bpk_path, work_dir, input_types):
         self._binary = binary_path
         self._bpk = bpk_path
         self._work_dir = work_dir
+        self._input_types = input_types
 
     def run(self, inputs, **kwargs):
         input_dir = os.path.join(self._work_dir, "inputs")
@@ -452,7 +502,9 @@ class BurnOnnxBackendRep(BackendRep):
         os.makedirs(output_dir, exist_ok=True)
 
         manifest_path = os.path.join(self._work_dir, "input_manifest.json")
-        _write_input_manifest(inputs, input_dir, self._bpk, manifest_path)
+        _write_input_manifest(
+            inputs, self._input_types, input_dir, self._bpk, manifest_path
+        )
 
         try:
             result = subprocess.run(
@@ -469,7 +521,19 @@ class BurnOnnxBackendRep(BackendRep):
                 f"Inference failed (exit {result.returncode}): {stderr[:500]}"
             )
 
-        return _read_output_manifest(output_dir)
+        try:
+            return _read_output_manifest(output_dir)
+        finally:
+            # Clean up per-run input/output files so the work dir can be
+            # deleted cleanly by __del__.
+            shutil.rmtree(input_dir, ignore_errors=True)
+            shutil.rmtree(output_dir, ignore_errors=True)
+
+    def __del__(self):
+        # Best-effort cleanup: the test harness creates thousands of reps.
+        work_dir = getattr(self, "_work_dir", None)
+        if work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 class BurnOnnxBackend(Backend):
@@ -485,8 +549,10 @@ class BurnOnnxBackend(Backend):
         try:
             return cls._prepare_impl(model, work_dir)
         except BackendIsNotSupposedToImplementIt:
+            shutil.rmtree(work_dir, ignore_errors=True)
             raise
         except Exception as e:
+            shutil.rmtree(work_dir, ignore_errors=True)
             raise BackendIsNotSupposedToImplementIt(
                 f"Model preparation failed: {e}"
             )
@@ -512,18 +578,28 @@ class BurnOnnxBackend(Backend):
                 f"onnx2burn failed: {stderr[:500]}"
             )
 
-        # 3. Find generated files
-        rs_files = [f for f in os.listdir(gen_dir) if f.endswith(".rs")]
-        bpk_files = [f for f in os.listdir(gen_dir) if f.endswith(".bpk")]
-        if not rs_files:
-            raise BackendIsNotSupposedToImplementIt("No .rs file generated")
+        # 3. Find generated files (sorted for determinism; fail fast on
+        # unexpected multiplicity)
+        rs_files = sorted(f for f in os.listdir(gen_dir) if f.endswith(".rs"))
+        bpk_files = sorted(f for f in os.listdir(gen_dir) if f.endswith(".bpk"))
+        if len(rs_files) != 1:
+            raise BackendIsNotSupposedToImplementIt(
+                f"Expected exactly one .rs file, found {len(rs_files)}: {rs_files}"
+            )
+        if len(bpk_files) != 1:
+            raise BackendIsNotSupposedToImplementIt(
+                f"Expected exactly one .bpk file, found {len(bpk_files)}: {bpk_files}"
+            )
 
         rs_path = os.path.join(gen_dir, rs_files[0])
-        bpk_path = os.path.join(gen_dir, bpk_files[0]) if bpk_files else ""
+        bpk_path = os.path.join(gen_dir, bpk_files[0])
 
-        # 4. Read generated source and create main.rs
+        # 4. Read generated source, parse input types, and create main.rs
         with open(rs_path) as f:
             rs_source = f.read()
+
+        params, _ = _parse_forward_signature(rs_source)
+        input_types = [ty for _, ty in params]
 
         main_rs = _generate_main_rs(rs_source, bpk_path)
 
@@ -550,7 +626,7 @@ class BurnOnnxBackend(Backend):
         if not os.path.exists(binary):
             raise BackendIsNotSupposedToImplementIt("Binary not found after build")
 
-        return BurnOnnxBackendRep(binary, bpk_path, work_dir)
+        return BurnOnnxBackendRep(binary, bpk_path, work_dir, input_types)
 
     @classmethod
     def run_model(cls, model, inputs, device="CPU", **kwargs):
