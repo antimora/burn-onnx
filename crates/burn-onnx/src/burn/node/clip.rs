@@ -152,9 +152,11 @@ mod tests {
 
     #[test]
     fn test_clip_runtime_min_scalar_tensor() {
-        // ONNX gives us Clip(x, min_tensor) where min_tensor is a rank-0
-        // scalar tensor. Burn's clamp_min takes a native scalar, so we
-        // extract it via .into_scalar().elem::<T>() and cast to f64.
+        // ONNX gives us Clip(x, min_tensor) where min_tensor arrives here
+        // as `ArgType::ScalarTensor`, which onnx-ir models as a rank-1
+        // tensor with shape [1] (see ArgType::rank() for ScalarTensor).
+        // Burn's clamp_min takes a native scalar, so we extract it via
+        // .into_scalar().elem::<T>() and cast to f64.
         let config = ClipConfig {
             min: Some(ClipInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(
                 "min_val".to_string(),

@@ -39,9 +39,9 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
                             };
                         });
                     }
-                    other => panic!(
-                        "OneHot depth must be a scalar or rank-1 tensor, got {other:?}"
-                    ),
+                    other => {
+                        panic!("OneHot depth must be a scalar or rank-1 tensor, got {other:?}")
+                    }
                 }
                 quote! { __onehot_depth }
             }
@@ -57,9 +57,14 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
                 let arg = &self.inputs[r.input_index];
                 let tensor = scope.arg(arg);
                 // The values input is a rank-1 tensor [off_value, on_value].
-                // Convert to f32 so the downstream one_hot_fill (which
-                // takes `E: ElementConversion`) can coerce to whatever
-                // element type the output tensor wants.
+                // Burn's `one_hot_fill` signature pins `on_value`/`off_value`
+                // to concrete `f32`, so we have to narrow to f32 here even
+                // though ONNX's T2 constraint allows any numeric dtype.
+                // This silently rounds int64 values above 2^24 - tracked in
+                // #317 as a followup; resolving it properly requires either
+                // an overload of `one_hot_fill` that's generic over
+                // `E: ElementConversion` or a tensor-input one_hot path
+                // that never materializes on/off as host scalars.
                 prelude.extend(quote! {
                     let (__onehot_off, __onehot_on): (f32, f32) = {
                         let __data = #tensor.to_data().convert::<f32>();
@@ -270,15 +275,16 @@ mod tests {
     fn test_one_hot_runtime_depth_and_values() {
         // Opset 11+ gives OneHot all three inputs as tensors, which lands
         // here as Runtime depth and Runtime values.
+        //
+        // Depth dtype here intentionally mirrors the real ONNX backend
+        // test `test_onehot_negative_indices`, which declares depth as
+        // ONNX FLOAT (type 1) — the OneHot spec's T2 constraint allows any
+        // numeric scalar, not just integers, and this path must accept
+        // whatever the upstream model uses. See
+        // `test_one_hot_runtime_depth_int64` below for the i64 variant.
         let config = OneHotConfig::new(
-            OneHotDepthInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(
-                "depth".to_string(),
-                1,
-            )),
-            OneHotValuesInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(
-                "values".to_string(),
-                2,
-            )),
+            OneHotDepthInput::Runtime(onnx_ir::ir::RuntimeInputRef::new("depth".to_string(), 1)),
+            OneHotValuesInput::Runtime(onnx_ir::ir::RuntimeInputRef::new("values".to_string(), 2)),
             -1,
         );
         let node = OneHotNodeBuilder::new("onehot_rt")
@@ -308,6 +314,46 @@ mod tests {
                 };
                 indices
                     .one_hot_fill(__onehot_depth, __onehot_on, __onehot_off, -1i64)
+                    .float()
+                    .cast(burn::tensor::DType::F32)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_one_hot_runtime_depth_int64() {
+        // Companion to test_one_hot_runtime_depth_and_values: some ONNX
+        // models (and the spec's T2 constraint allows it) pass depth as
+        // an i64 tensor rather than f32. The generated prelude should
+        // produce identical code thanks to `to_data().convert::<i64>()`
+        // being dtype-agnostic.
+        let config = OneHotConfig::new(
+            OneHotDepthInput::Runtime(onnx_ir::ir::RuntimeInputRef::new("depth".to_string(), 1)),
+            OneHotValuesInput::Static([0.0, 1.0]),
+            -1,
+        );
+        let node = OneHotNodeBuilder::new("onehot_rt_i64")
+            .input_tensor("indices", 1, DType::I64)
+            .input_scalar_tensor("depth", DType::I64)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            indices: Tensor<B, 1, Int>,
+            depth: Tensor<B, 1, Int>,
+        ) -> Tensor<B, 2> {
+            let output = {
+                let __onehot_depth: usize = {
+                    let __data = depth.to_data().convert::<i64>();
+                    __data.as_slice::<i64>().unwrap()[0] as usize
+                };
+                indices
+                    .one_hot_fill(__onehot_depth, 1f32, 0f32, -1i64)
                     .float()
                     .cast(burn::tensor::DType::F32)
             };
