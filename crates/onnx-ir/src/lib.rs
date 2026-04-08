@@ -9,7 +9,7 @@ mod phases;
 mod pipeline;
 mod processor;
 mod proto_conversion;
-mod protos;
+pub mod protos;
 mod registry;
 mod simplify;
 mod tensor_store;
