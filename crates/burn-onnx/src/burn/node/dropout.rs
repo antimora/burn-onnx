@@ -10,17 +10,23 @@ impl NodeCodegen for onnx_ir::dropout::DropoutNode {
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
-        // Dropout is a no-op in burn-onnx: we only generate inference code,
-        // so the `y` output equals the input regardless of ratio or
-        // training_mode. This matches the `is_noop: true` declaration in
-        // onnx-ir's DropoutProcessor and sidesteps the ratio input entirely
-        // (whether static or runtime). The `--no-simplify` codegen path
-        // keeps the Dropout node instead of eliminating it, so we still
-        // need to emit something here.
+        // Dropout is an identity in inference mode (the only mode burn-onnx
+        // generates). onnx-ir's DropoutProcessor declares `is_noop = true`
+        // for the single-output case, which lets the noop-elimination pass
+        // remove the node when graph simplification runs. This codegen
+        // fires in the cases where that pass can't drop the node:
         //
-        // When the second `mask` output is requested, emit an all-true
-        // Bool tensor with the same shape as the input (every element
-        // survives, which is what training_mode=false yields).
+        //   1. Simplification is disabled (e.g. `onnx2burn --no-simplify`).
+        //   2. The optional `mask` output is present. Noop elimination only
+        //      rewires `output[0]`, so dropping the node would orphan the
+        //      mask; `DropoutProcessor::is_noop` returns false in that case
+        //      and we reach this path.
+        //
+        // Either way we ignore the ratio and training_mode inputs (static
+        // or runtime) and emit the `y` output as an alias of `input`. When
+        // the mask output is requested, we also emit an all-true Bool
+        // tensor of the same shape (every element survives, which is what
+        // training_mode=false yields).
         let input_arg = self.inputs.first().unwrap();
         let input = scope.arg(input_arg);
         let y = arg_to_ident(self.outputs.first().unwrap());

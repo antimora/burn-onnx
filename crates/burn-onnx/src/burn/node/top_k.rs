@@ -18,10 +18,12 @@ impl NodeCodegen for onnx_ir::topk::TopKNode {
 
         let axis = self.config.axis.to_tokens();
 
-        // Runtime `k` comes as a rank-1 single-element tensor in ONNX
-        // opset 10+. Lower it to a local `usize` binding in a prelude so
-        // the main topk_with_indices call stays readable. The prelude
-        // and main call are wrapped in a block to scope the temporaries.
+        // Runtime `k` can reach this path in three shapes: a native scalar
+        // (if an earlier pass has already scalarized it), a rank-0 scalar
+        // tensor, or ONNX opset-10+'s rank-1 single-element tensor. Lower
+        // whichever form to a `usize` local in a prelude block so (1) the
+        // main topk_with_indices call stays readable and (2) multiple
+        // TopK nodes in the same forward() can't collide on `__topk_k`.
         let (prelude, k) = match &self.config.k {
             onnx_ir::topk::TopKInput::Static(k_value) => {
                 (TokenStream::new(), k_value.to_tokens())

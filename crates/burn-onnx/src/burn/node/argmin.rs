@@ -21,7 +21,12 @@ impl NodeCodegen for onnx_ir::node::argmin::ArgMinNode {
         // When ONNX `select_last_index=1`, return the index of the last
         // occurrence of the minimum along the axis. Burn's argmin returns
         // the first occurrence, so we rewrite as
-        //   axis_size - 1 - argmin(flip(input, axis), axis).
+        //   axis_size - 1 - argmin(flip(input, axis), axis)
+        // The same reasoning as argmax applies: ties at positions
+        // i1 < ... < ik in the original land at axis_size-1-ik ... in the
+        // flipped tensor, so Burn's first-occurrence argmin there gives
+        // axis_size-1-ik, and the subtraction recovers ik (the last tied
+        // index), matching ONNX `select_last_index=1` semantics.
         let argmin_expr = if self.config.select_last_index {
             let axis_isize = axis_usize as isize;
             quote! {

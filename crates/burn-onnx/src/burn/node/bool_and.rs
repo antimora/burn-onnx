@@ -52,8 +52,12 @@ impl NodeCodegen for onnx_ir::node::and::AndNode {
                     result
                 }
             },
-            // Shape holds integer 0/1 values (from prior comparison ops); convert
-            // to a Bool tensor (non-zero -> true) and reuse the tensor bool_and.
+            // `And` on a Shape happens when a prior Shape-returning op
+            // (e.g. elementwise comparison of two Shapes in comparison.rs,
+            // which emits a Shape of 0/1 i64s) feeds into And. Convert the
+            // Shape to a 1D Int tensor and compare with 0 to get ONNX's
+            // "non-zero is truthy" Bool semantics, then reuse the on-device
+            // bool_and path.
             (ArgType::Shape(_), rhs_ty) if rhs_ty.is_on_device() => {
                 quote! {
                     Tensor::<B, 1, burn::tensor::Int>::from_data(

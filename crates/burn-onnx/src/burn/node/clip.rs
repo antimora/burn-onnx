@@ -51,9 +51,9 @@ impl NodeCodegen for onnx_ir::clip::ClipNode {
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
         let output = arg_to_ident(self.outputs.first().unwrap());
 
-        // Runtime bounds are evaluated first so that the scope sees the
-        // scalar-tensor args before the main input, matching the order
-        // they appear in `self.inputs`.
+        // Extract bound expressions first so the `match (min_expr, max_expr)`
+        // below is a straight token-stream assembly rather than a nested
+        // branch on the enum structure.
         let min_expr = clip_bound_expr(&self.config.min, &self.inputs, scope);
         let max_expr = clip_bound_expr(&self.config.max, &self.inputs, scope);
         let input = scope.arg(self.inputs.first().unwrap());

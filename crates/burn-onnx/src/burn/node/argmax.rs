@@ -22,7 +22,12 @@ impl NodeCodegen for onnx_ir::node::argmax::ArgMaxNode {
         // occurrence of the maximum along the axis. Burn's argmax returns
         // the first occurrence, so we rewrite as
         //   axis_size - 1 - argmax(flip(input, axis), axis)
-        // which effectively walks the axis in reverse order.
+        // For ties at positions i1 < i2 < ... < ik in the original tensor,
+        // the flipped tensor has those same values at positions
+        // axis_size-1-ik < ... < axis_size-1-i1, so Burn's first-occurrence
+        // argmax on the flipped tensor lands on axis_size-1-ik; subtracting
+        // from axis_size-1 recovers ik, the last tied index in the
+        // original, matching ONNX `select_last_index=1` semantics.
         let argmax_expr = if self.config.select_last_index {
             let axis_isize = axis_usize as isize;
             quote! {

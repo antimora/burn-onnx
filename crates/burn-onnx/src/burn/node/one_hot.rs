@@ -13,10 +13,10 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
-        // Lower auxiliary inputs (depth, values) first so `scope.arg`
-        // visits them in source order. Runtime inputs get bound to local
-        // variables in a small prelude so the main one_hot_fill call stays
-        // readable and we only call `.to_data()` once per runtime tensor.
+        // Runtime depth/values are bound to `__onehot_*` locals inside a
+        // prelude block so (1) the main one_hot_fill call stays readable
+        // and (2) multiple OneHot nodes in the same forward() can't
+        // collide on the temporary names.
         let mut prelude = TokenStream::new();
 
         let depth_expr = match &self.config.depth {
