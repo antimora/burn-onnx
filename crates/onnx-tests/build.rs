@@ -174,6 +174,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/mod/mod_fmod.onnx")
         .input("tests/mod/mod_broadcast_fixed.onnx")
         .input("tests/mod/mod_broadcast_remainder_fixed.onnx")
+        .input("tests/mod/mod_shape.onnx")
         .input("tests/dropout/dropout.onnx")
         .input("tests/elu/elu.onnx")
         .input("tests/empty_graph/empty_graph_scalar.onnx")

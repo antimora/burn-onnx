@@ -52,6 +52,29 @@ impl NodeCodegen for onnx_ir::node::and::AndNode {
                     result
                 }
             },
+            // Shape holds integer 0/1 values (from prior comparison ops); convert
+            // to a Bool tensor (non-zero -> true) and reuse the tensor bool_and.
+            (ArgType::Shape(_), rhs_ty) if rhs_ty.is_on_device() => {
+                quote! {
+                    Tensor::<B, 1, burn::tensor::Int>::from_data(
+                        burn::tensor::TensorData::from(&#lhs_value as &[i64]),
+                        (&self.device, burn::tensor::DType::I64),
+                    )
+                    .not_equal_elem(0i64)
+                    .bool_and(#rhs_value)
+                }
+            }
+            (lhs_ty, ArgType::Shape(_)) if lhs_ty.is_on_device() => {
+                quote! {
+                    #lhs_value.bool_and(
+                        Tensor::<B, 1, burn::tensor::Int>::from_data(
+                            burn::tensor::TensorData::from(&#rhs_value as &[i64]),
+                            (&self.device, burn::tensor::DType::I64),
+                        )
+                        .not_equal_elem(0i64)
+                    )
+                }
+            }
             _ => panic!(
                 "And operation: unsupported input types: lhs={:?}, rhs={:?}",
                 lhs.ty, rhs.ty
@@ -148,6 +171,58 @@ mod tests {
             rhs: Tensor<B, 2, Bool>,
         ) -> Tensor<B, 2, Bool> {
             let output = lhs.bool_and(rhs);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_and_shape_bool_tensor() {
+        let node = AndNodeBuilder::new("and1")
+            .input_shape("lhs", 1)
+            .input_tensor("rhs", 1, DType::Bool(BoolStore::Native))
+            .output_tensor("output", 1, DType::Bool(BoolStore::Native))
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, lhs: [i64; 1], rhs: Tensor<B, 1, Bool>) -> Tensor<B, 1, Bool> {
+            let output = Tensor::<
+                B,
+                1,
+                burn::tensor::Int,
+            >::from_data(
+                    burn::tensor::TensorData::from(&lhs as &[i64]),
+                    (&self.device, burn::tensor::DType::I64),
+                )
+                .not_equal_elem(0i64)
+                .bool_and(rhs);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_and_bool_tensor_shape() {
+        let node = AndNodeBuilder::new("and1")
+            .input_tensor("lhs", 1, DType::Bool(BoolStore::Native))
+            .input_shape("rhs", 1)
+            .output_tensor("output", 1, DType::Bool(BoolStore::Native))
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, lhs: Tensor<B, 1, Bool>, rhs: [i64; 1]) -> Tensor<B, 1, Bool> {
+            let output = lhs
+                .bool_and(
+                    Tensor::<
+                        B,
+                        1,
+                        burn::tensor::Int,
+                    >::from_data(
+                            burn::tensor::TensorData::from(&rhs as &[i64]),
+                            (&self.device, burn::tensor::DType::I64),
+                        )
+                        .not_equal_elem(0i64),
+                );
             output
         }
         ");
