@@ -18,9 +18,14 @@ RUN apt-get update && apt-get install -y \
 
 RUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8
 
-# Install Rust toolchain
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
+# Install Rust toolchain to a shared location so both the root build phase
+# and the non-root runner user can use it.
+ENV RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo \
+    PATH=/opt/cargo/bin:${PATH}
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain stable --no-modify-path && \
+    chmod -R a+rwX /opt/rustup /opt/cargo
 
 # Copy scoreboard test infrastructure
 COPY ./test /root/test
@@ -56,7 +61,7 @@ ENV BURN_RUNNER_DIR="/root/runner"
 ENV ONNX2BURN="/usr/local/bin/onnx2burn"
 ####################################################
 
-RUN useradd -m -u 1000 runner && chown -R runner:runner /root
+RUN useradd -m runner && chown -R runner:runner /root
 USER runner
 WORKDIR /root
 
