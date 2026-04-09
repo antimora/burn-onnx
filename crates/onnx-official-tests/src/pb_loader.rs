@@ -178,6 +178,15 @@ pub enum LoadError {
         actual: &'static str,
     },
     #[error(
+        "{path:?}: {dtype} value {value} in type-specific field overflows the target type \
+         (expected to fit in the narrower representation)"
+    )]
+    ValueOverflow {
+        path: PathBuf,
+        dtype: &'static str,
+        value: i64,
+    },
+    #[error(
         "{path:?}: TensorProto dim[{index}] = {dim} cannot be converted to usize \
          (must be non-negative and fit in the host pointer width)"
     )]
@@ -387,7 +396,17 @@ fn decode_u32(path: &Path, proto: &TensorProto) -> Result<Vec<u32>, LoadError> {
     } else {
         // UINT32 and UINT64 share the `uint64_data` storage slot; UINT32
         // values are just stored as u64 with the high bits zero.
-        Ok(proto.uint64_data.iter().map(|&v| v as u32).collect())
+        proto
+            .uint64_data
+            .iter()
+            .map(|&v| {
+                u32::try_from(v).map_err(|_| LoadError::ValueOverflow {
+                    path: path.to_path_buf(),
+                    dtype: "UINT32",
+                    value: v as i64,
+                })
+            })
+            .collect()
     }
 }
 
@@ -411,20 +430,20 @@ fn decode_u64(path: &Path, proto: &TensorProto) -> Result<Vec<u64>, LoadError> {
 // raw_data, we pack at the native element size (1 byte for i8/u8/bool,
 // 2 bytes for i16/u16).
 
-fn decode_i8(_path: &Path, proto: &TensorProto, _expected: usize) -> Result<Vec<i8>, LoadError> {
+fn decode_i8(path: &Path, proto: &TensorProto, _expected: usize) -> Result<Vec<i8>, LoadError> {
     if !proto.raw_data.is_empty() {
         // i8 has element size 1, so any length is trivially aligned.
         Ok(proto.raw_data.iter().map(|&b| b as i8).collect())
     } else {
-        Ok(proto.int32_data.iter().map(|&v| v as i8).collect())
+        checked_narrow_i32(path, &proto.int32_data, "INT8", |v| i8::try_from(v).ok())
     }
 }
 
-fn decode_u8(_path: &Path, proto: &TensorProto, _expected: usize) -> Result<Vec<u8>, LoadError> {
+fn decode_u8(path: &Path, proto: &TensorProto, _expected: usize) -> Result<Vec<u8>, LoadError> {
     if !proto.raw_data.is_empty() {
         Ok(proto.raw_data.to_vec())
     } else {
-        Ok(proto.int32_data.iter().map(|&v| v as u8).collect())
+        checked_narrow_i32(path, &proto.int32_data, "UINT8", |v| u8::try_from(v).ok())
     }
 }
 
@@ -437,7 +456,7 @@ fn decode_i16(path: &Path, proto: &TensorProto, _expected: usize) -> Result<Vec<
             .map(|c| i16::from_le_bytes([c[0], c[1]]))
             .collect())
     } else {
-        Ok(proto.int32_data.iter().map(|&v| v as i16).collect())
+        checked_narrow_i32(path, &proto.int32_data, "INT16", |v| i16::try_from(v).ok())
     }
 }
 
@@ -450,7 +469,7 @@ fn decode_u16(path: &Path, proto: &TensorProto, _expected: usize) -> Result<Vec<
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect())
     } else {
-        Ok(proto.int32_data.iter().map(|&v| v as u16).collect())
+        checked_narrow_i32(path, &proto.int32_data, "UINT16", |v| u16::try_from(v).ok())
     }
 }
 
@@ -469,6 +488,28 @@ fn decode_bool(
     } else {
         Ok(proto.int32_data.iter().map(|&v| v != 0).collect())
     }
+}
+
+/// Convert each i32 element from `int32_data` into a narrower target
+/// type via `convert`, returning `ValueOverflow` on the first element
+/// that does not fit. Used by the sub-32-bit decoder fallback paths
+/// (INT8, UINT8, INT16, UINT16) where ONNX stores the narrower values
+/// inside the wider `int32_data` field.
+fn checked_narrow_i32<T>(
+    path: &Path,
+    data: &[i32],
+    dtype: &'static str,
+    convert: impl Fn(i32) -> Option<T>,
+) -> Result<Vec<T>, LoadError> {
+    data.iter()
+        .map(|&v| {
+            convert(v).ok_or_else(|| LoadError::ValueOverflow {
+                path: path.to_path_buf(),
+                dtype,
+                value: v as i64,
+            })
+        })
+        .collect()
 }
 
 /// Reject a `raw_data` buffer whose length is not a multiple of the

@@ -178,6 +178,20 @@ impl Dtype {
         }
     }
 
+    /// The concrete Rust element type to use as the type parameter for
+    /// `TensorData::assert_approx_eq::<T>`. Using `f32` for FLOAT and
+    /// `f64` for DOUBLE avoids two problems: (a) `FloatElem<TestBackend>`
+    /// is always `f32` on NdArray which would cause a type mismatch
+    /// against `f64` TensorData, and (b) using a narrower type than the
+    /// decoded values would compare at reduced precision.
+    fn assert_elem_type(self) -> &'static str {
+        match self {
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+            _ => "f32", // unreachable for non-float; caller guards with is_float()
+        }
+    }
+
     /// Whether output comparison should use an approximate float
     /// tolerance (`assert_approx_eq`) or exact equality (`assert_eq`).
     fn is_float(self) -> bool {
@@ -462,10 +476,21 @@ fn forward_signature_is_harnessable(generated_rs: &Path) -> bool {
     let Some(arrow) = slice.find("->") else {
         return true;
     };
-    let Some(brace) = slice[arrow..].find(" {") else {
-        return true;
-    };
-    let return_type = slice[arrow + 2..arrow + brace].trim();
+    // Find the opening brace of the function body. We look for `{`
+    // after the arrow, skipping any amount of whitespace (or a `where`
+    // clause). This is more robust than requiring the exact substring
+    // `" {"` which would break if the code formatter or a future
+    // burn-onnx version reformats the signature across multiple lines.
+    let after_arrow = &slice[arrow + 2..];
+    let brace_pos = after_arrow.find('{').unwrap_or(after_arrow.len());
+    // Strip a trailing `where` clause if present — the return type
+    // sits between `->` and either `where` or `{`, whichever comes
+    // first.
+    let mut return_type = &after_arrow[..brace_pos];
+    if let Some(where_pos) = return_type.find("where") {
+        return_type = &return_type[..where_pos];
+    }
+    let return_type = return_type.trim();
 
     // Patterns we know break the harness' `.to_data()` call:
     //   - `[i64; N]`, `[i32; N]`, `[f32; N]`, `[f64; N]`, etc.
@@ -659,9 +684,10 @@ fn emit_single_test(buf: &mut String, name: &str, meta: &TestMeta) {
         )
         .unwrap();
         if outp.dtype.is_float() {
+            let elem_ty = outp.dtype.assert_elem_type();
             writeln!(
                 buf,
-                "    actual_{idx}_data.assert_approx_eq::<burn::tensor::ops::FloatElem<TestBackend>>\
+                "    actual_{idx}_data.assert_approx_eq::<{elem_ty}>\
                  (&expected_{idx}_data, burn::tensor::Tolerance::default());"
             )
             .unwrap();
