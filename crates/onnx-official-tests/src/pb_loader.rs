@@ -480,7 +480,7 @@ fn check_raw_alignment(
     elem_size: usize,
     dtype: &'static str,
 ) -> Result<(), LoadError> {
-    if raw.len() % elem_size != 0 {
+    if !raw.len().is_multiple_of(elem_size) {
         return Err(LoadError::UnalignedRawData {
             path: path.to_path_buf(),
             len: raw.len(),
