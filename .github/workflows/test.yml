@@ -245,8 +245,21 @@ jobs:
       # posts when the delta is non-empty (the xtask prints the sentinel
       # string `_No changes._` for an empty diff, which we grep for
       # to decide whether to post).
+      # The `if` condition has two guards:
+      #   1. pull_request event — push-to-main has no base to diff.
+      #   2. head.repo.fork == false — fork PRs run with a read-only
+      #      GITHUB_TOKEN and cannot post issue comments; attempting
+      #      would fail the job. Contributors from forks will not get
+      #      the auto-delta comment until a workflow_run-based
+      #      alternative lands as a follow-up.
+      # The `gh pr comment` call also has its own || fallback so an
+      # unexpected permission edge case (e.g. org-level restriction
+      # tightens, or branch protection changes) downgrades to a
+      # warning rather than failing the whole job.
       - name: Expectations delta (diff against origin/main)
-        if: github.event_name == 'pull_request'
+        if: >-
+          github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.fork == false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -266,4 +279,8 @@ jobs:
             echo "No expectations.toml delta against origin/${PR_BASE_REF}; skipping PR comment."
             exit 0
           fi
-          gh pr comment "${PR_NUMBER}" --body-file /tmp/expectations-delta.md --repo "${GITHUB_REPOSITORY}"
+          gh pr comment "${PR_NUMBER}" --body-file /tmp/expectations-delta.md --repo "${GITHUB_REPOSITORY}" || {
+            echo "::warning::failed to post PR comment; expectations delta follows"
+            cat /tmp/expectations-delta.md
+            exit 0
+          }

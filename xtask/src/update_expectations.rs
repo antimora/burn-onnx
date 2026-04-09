@@ -50,6 +50,16 @@ pub struct UpdateExpectationsArgs {
     /// the `#311`/`#314` classifications were computed against.
     #[arg(long)]
     pub debug: bool,
+
+    /// Optional `tracking` value to embed in each demoted entry, e.g.
+    /// `"#321"` to link the demotion to a specific issue or PR. When
+    /// omitted (the default), rewritten entries have no `tracking`
+    /// field at all — the demotion is self-documenting via its
+    /// `reason`, and hard-coding a stale issue reference would be
+    /// actively misleading. Pass a new value each time the demotion
+    /// batch is tied to a specific PR.
+    #[arg(long)]
+    pub tracking: Option<String>,
 }
 
 /// Top-level dispatcher. Runs the test suite, parses failures,
@@ -91,12 +101,14 @@ pub fn handle_command(args: UpdateExpectationsArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    println!(
+    // The demotion plan goes through `info!` so verbosity can be
+    // controlled consistently with the rest of the xtask output.
+    info!(
         "Demoting {} pass entry/entries to fail-compare:",
         demote_candidates.len()
     );
     for name in &demote_candidates {
-        println!("  - {name}");
+        info!("  - {name}");
     }
 
     if args.dry_run {
@@ -104,7 +116,7 @@ pub fn handle_command(args: UpdateExpectationsArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let new_text = apply_demotions(&current_text, &demote_candidates);
+    let new_text = apply_demotions(&current_text, &demote_candidates, args.tracking.as_deref());
     std::fs::write(&expectations_path, new_text)
         .map_err(|e| anyhow::anyhow!("write {}: {e}", expectations_path.display()))?;
     info!(
@@ -210,14 +222,10 @@ fn parse_failure_line(line: &str) -> Option<&str> {
 /// Apply a set of demotions to the expectations.toml text, preserving
 /// comments, blank lines, and the block structure of unrelated
 /// entries. Each demoted entry is rewritten from `status = "pass"`
-/// (with no reason/tracking) to:
-///
-/// ```text
-/// [test_name]
-/// status = "fail-compare"
-/// reason = "demoted by `cargo xtask update-expectations`"
-/// tracking = "#315"
-/// ```
+/// (with no reason/tracking) to a `fail-compare` block carrying an
+/// auto-generated reason and, if `tracking` is `Some`, a `tracking`
+/// field too. A `None` tracking value omits the field entirely
+/// rather than writing a stale or ambiguous reference.
 ///
 /// We do this with line-based editing rather than serde round-trip
 /// because serde would destroy comments, reorder sections, and wipe
@@ -225,7 +233,7 @@ fn parse_failure_line(line: &str) -> Option<&str> {
 /// set is a pass entry today, which means the block currently has
 /// exactly one field (`status = "pass"`) — so replacing the block
 /// is as simple as matching the header and the next non-blank line.
-fn apply_demotions(original: &str, to_demote: &[String]) -> String {
+fn apply_demotions(original: &str, to_demote: &[String], tracking: Option<&str>) -> String {
     let demote_set: std::collections::BTreeSet<&str> =
         to_demote.iter().map(String::as_str).collect();
 
@@ -254,7 +262,12 @@ fn apply_demotions(original: &str, to_demote: &[String]) -> String {
             out.push_str(
                 "reason = \"demoted by `cargo xtask update-expectations` after test failure\"\n",
             );
-            out.push_str("tracking = \"#315\"\n");
+            if let Some(tracking) = tracking {
+                // The tracking reference is written verbatim — the
+                // caller owns escaping concerns. In practice this is
+                // always an issue/PR ref like `#321` or a commit SHA.
+                out.push_str(&format!("tracking = \"{tracking}\"\n"));
+            }
             continue;
         }
         out.push_str(line);
@@ -335,11 +348,11 @@ mod tests {
         assert_eq!(parse_header(""), None);
     }
 
-    /// A single demotion replaces the `[test]`/`status` block inline
-    /// while leaving surrounding blocks, comments, and blank lines
-    /// untouched.
+    /// A single demotion with an explicit tracking reference replaces
+    /// the `[test]`/`status` block inline, writes the tracking field,
+    /// and leaves surrounding blocks / comments / blank lines alone.
     #[test]
-    fn apply_demotions_single_entry() {
+    fn apply_demotions_single_entry_with_tracking() {
         let original = "\
 # header comment
 [test_abs]
@@ -352,12 +365,23 @@ status = \"pass\"
 status = \"skip-codegen\"
 reason = \"something\"
 ";
-        let demoted = apply_demotions(original, &["test_add".to_string()]);
+        let demoted = apply_demotions(original, &["test_add".to_string()], Some("#321"));
         assert!(demoted.contains("[test_abs]\nstatus = \"pass\""));
         assert!(demoted.contains("[test_add]\nstatus = \"fail-compare\""));
-        assert!(demoted.contains("tracking = \"#315\""));
+        assert!(demoted.contains("tracking = \"#321\""));
         // Unrelated rows with extra fields are preserved verbatim.
         assert!(demoted.contains("[test_ceil]\nstatus = \"skip-codegen\"\nreason = \"something\""));
+    }
+
+    /// With `tracking = None`, the rewritten block has no `tracking`
+    /// field at all. This is the default and avoids baking a stale
+    /// issue reference into every demotion.
+    #[test]
+    fn apply_demotions_without_tracking() {
+        let original = "[test_a]\nstatus = \"pass\"\n";
+        let demoted = apply_demotions(original, &["test_a".to_string()], None);
+        assert!(demoted.contains("[test_a]\nstatus = \"fail-compare\""));
+        assert!(!demoted.contains("tracking"));
     }
 
     /// Multiple demotions in the same pass are all applied, and the
@@ -374,7 +398,11 @@ status = \"pass\"
 [test_c]
 status = \"pass\"
 ";
-        let demoted = apply_demotions(original, &["test_c".to_string(), "test_a".to_string()]);
+        let demoted = apply_demotions(
+            original,
+            &["test_c".to_string(), "test_a".to_string()],
+            None,
+        );
         assert!(demoted.contains("[test_a]\nstatus = \"fail-compare\""));
         assert!(demoted.contains("[test_b]\nstatus = \"pass\""));
         assert!(demoted.contains("[test_c]\nstatus = \"fail-compare\""));
@@ -386,13 +414,14 @@ status = \"pass\"
     #[test]
     fn apply_demotions_missing_entry_is_noop() {
         let original = "[test_a]\nstatus = \"pass\"\n";
-        let result = apply_demotions(original, &["test_zzz".to_string()]);
+        let result = apply_demotions(original, &["test_zzz".to_string()], None);
         assert_eq!(result, original);
     }
 
     /// Parser round-trip: a file rewritten by `apply_demotions` must
     /// still parse cleanly through the schema. This is the catch for
-    /// syntactic regressions in the emitter.
+    /// syntactic regressions in the emitter. Run with both tracking
+    /// present and absent so both branches are exercised.
     #[test]
     fn rewritten_file_reparses() {
         let original = "\
@@ -402,10 +431,16 @@ status = \"pass\"
 [test_b]
 status = \"pass\"
 ";
-        let demoted = apply_demotions(original, &["test_a".to_string()]);
+        let demoted = apply_demotions(original, &["test_a".to_string()], Some("#321"));
         let parsed = Expectations::from_toml(PathBuf::from("t.toml"), &demoted).unwrap();
         assert_eq!(parsed.entries["test_a"].status, Status::FailCompare);
         assert_eq!(parsed.entries["test_b"].status, Status::Pass);
-        assert_eq!(parsed.entries["test_a"].tracking.as_deref(), Some("#315"));
+        assert_eq!(parsed.entries["test_a"].tracking.as_deref(), Some("#321"));
+
+        let demoted_no_tracking = apply_demotions(original, &["test_a".to_string()], None);
+        let parsed =
+            Expectations::from_toml(PathBuf::from("t.toml"), &demoted_no_tracking).unwrap();
+        assert_eq!(parsed.entries["test_a"].status, Status::FailCompare);
+        assert!(parsed.entries["test_a"].tracking.is_none());
     }
 }

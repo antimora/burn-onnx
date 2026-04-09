@@ -318,13 +318,12 @@ pub fn render_markdown(base_ref: &str, changes: &Changes) -> String {
         changes.regressions.len(),
         plural(changes.regressions.len())
     ));
-    out.push_str(&format!(
-        "- **{}** sideway{}\n",
-        changes.sideways.len(),
-        plural(changes.sideways.len())
-    ));
-    out.push_str(&format!("- **{}** added\n", changes.added.len(),));
-    out.push_str(&format!("- **{}** removed\n\n", changes.removed.len(),));
+    // `sideways` is not a plural of `sideway`; it's the name of the
+    // category regardless of count. Printing "1 sideway" would read
+    // as a typo.
+    out.push_str(&format!("- **{}** sideways\n", changes.sideways.len()));
+    out.push_str(&format!("- **{}** added\n", changes.added.len()));
+    out.push_str(&format!("- **{}** removed\n\n", changes.removed.len()));
 
     // Detailed bullets per category. Using collapsible `<details>`
     // keeps the comment short by default but lets reviewers click to
