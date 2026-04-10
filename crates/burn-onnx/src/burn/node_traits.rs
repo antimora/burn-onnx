@@ -173,10 +173,21 @@ pub fn arg_to_ident(arg: &Argument) -> proc_macro2::Ident {
 // Tensor snapshot helpers using Flex backend
 // ============================================================================
 
-/// The backend used for tensor transformations during import.
-/// Uses the Flex backend for CPU-based tensor operations during ONNX import.
-/// Flex supports all dtypes (including f64) dynamically per tensor, so precision
-/// is preserved by carrying the original ONNX dtype through `TensorData`.
+/// The backend used for tensor transformations during ONNX import.
+///
+/// Flex is a non-generic backend with a *fixed* compile-time `FloatElem = f32`
+/// and `IntElem = i32`, but its runtime `TensorData` layer is dtype-dynamic:
+/// a `Tensor<Flex, N>` can hold f16/f32/f64/i8–i64/u8–u64/bool data as long as
+/// the dtype is pinned at construction time via `Tensor::from_data(data,
+/// (&device, dtype))` rather than the bare `&device` overload.
+///
+/// **Precision caveat:** callers of this type who want to preserve the ONNX
+/// weight dtype (especially f64) MUST pass the explicit `(device, dtype)` tuple
+/// to `from_data` / `zeros` / `ones`. Using the bare `&device` overload makes
+/// `Tensor::from_data` call `resolve_dtype(None) = f32`, which then invokes
+/// `data.convert_dtype(F32)` and silently truncates f64 weights before the
+/// tensor is ever constructed. The lstm/gru/rnn weight-snapshot helpers in
+/// this module all follow the pinned-dtype pattern for exactly this reason.
 pub type SerializationBackend = burn::backend::Flex;
 
 /// Create a lazy tensor snapshot from an ONNX argument.
