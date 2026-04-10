@@ -22,7 +22,7 @@ impl NodeCodegen for onnx_ir::nonzero::NonZeroNode {
         };
 
         // ONNX spec: NonZero output is always int64. Burn's `argwhere` returns
-        // the backend's default int element type (I32 on Flex, I64 on NdArray),
+        // the backend's default int element type, which varies across backends,
         // so cast to the ONNX-specified dtype to keep the output dtype faithful
         // to the model regardless of backend default.
         let output_dtype_tokens = match &self.outputs.first().unwrap().ty {

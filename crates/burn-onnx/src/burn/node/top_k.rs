@@ -17,8 +17,8 @@ impl NodeCodegen for onnx_ir::topk::TopKNode {
         let indices_output = arg_to_ident(&self.outputs[1]);
 
         // ONNX spec: TopK indices are always int64. Burn's `topk_with_indices`
-        // returns the backend's default int element type (I32 on Flex, I64 on
-        // NdArray), so cast the indices to the ONNX-specified dtype to keep the
+        // returns the backend's default int element type, which varies across
+        // backends, so cast the indices to the ONNX-specified dtype to keep the
         // output dtype faithful to the model regardless of backend default.
         let indices_dtype_tokens = match &self.outputs[1].ty {
             ArgType::Tensor(t) => t.dtype.to_tokens(),

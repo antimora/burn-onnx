@@ -162,8 +162,8 @@ mod tests {
         let output = model.forward(input1);
 
         // The output should be [2, 64] (batch=2 from input shape, 64 from constant).
-        // Shape values in ONNX are int64, so the model's codegen emits an I64 tensor —
-        // construct the expected tensor with explicit I64 dtype so `equal` doesn't hit
+        // Shape values in ONNX are int64, so the model's codegen emits an I64 tensor.
+        // Construct the expected tensor with explicit I64 dtype so `equal` doesn't hit
         // a dtype-mismatch assertion in the backend.
         let expected = Tensor::<TestBackend, 1, burn::prelude::Int>::from_data(
             burn::tensor::TensorData::from([2i64, 64]),

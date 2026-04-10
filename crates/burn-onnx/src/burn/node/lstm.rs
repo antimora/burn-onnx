@@ -110,7 +110,7 @@ fn collect_lstm_snapshots(
     // dtype via `(device, dtype)`. A bare `&device` second argument would let
     // `Tensor::from_data` convert to SerializationBackend's default FloatElem
     // (f32 on Flex), silently truncating f64 weights before they enter the
-    // snapshot pipeline — the later `convert_dtype(dtype)` in
+    // snapshot pipeline. The later `convert_dtype(dtype)` in
     // `create_snapshot_from_data` would restore the dtype tag but not the
     // lost low bits.
     let w_tensor: Tensor<SerializationBackend, 3> =

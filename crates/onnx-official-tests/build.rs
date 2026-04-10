@@ -183,11 +183,10 @@ impl Dtype {
     /// Used when emitting `Tensor::from_data(data, (device, DType::…))` so
     /// the harness pins the tensor's runtime dtype to what the `.pb` source
     /// carries, instead of letting `from_data(data, &device)` silently
-    /// convert to the backend's default IntElem / FloatElem. The backend
-    /// default differs across backends (e.g. Flex's default int is I32
-    /// while NdArray's was I64), and a bare `from_data` would make I64
-    /// source data round-trip through I32 and then fail the later
-    /// `assert_eq` against the I64 expected-value TensorData.
+    /// convert to the backend's default IntElem / FloatElem (which varies
+    /// across backends). A bare `from_data` would otherwise make an I64
+    /// source round-trip through a backend-default int width and then fail
+    /// the later `assert_eq` against the I64 expected-value TensorData.
     fn burn_dtype_tokens(self) -> &'static str {
         match self {
             Self::F32 => "burn::tensor::DType::F32",

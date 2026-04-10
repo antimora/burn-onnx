@@ -51,7 +51,7 @@ mod tests {
 
         // PyTorch f32 ground truth (from conv_transpose2d/conv_transpose2d.py, torch 2.10.0
         // CPU). Tolerance accommodates gemm-order accumulation drift; burn-flex matches
-        // PyTorch to ~2.4e-4 absolute on this ~3060-element output sum.
+        // PyTorch to ~2.4e-4 absolute on this 3240-element output sum ([2, 6, 18, 15]).
         let expected_sum = -134.96603_4_f32;
         assert!(expected_sum.approx_eq(output_sum, (1.0e-3, 2)));
     }

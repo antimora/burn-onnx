@@ -59,7 +59,7 @@ mod tests {
         assert_eq!(output.shape(), expected_shape);
 
         // Verify values: all elements should be 5. The ONNX model's source constant is
-        // int64, so the generated Expand output is I64 — compare via an explicit I64
+        // int64, so the generated Expand output is I64. Compare via an explicit I64
         // TensorData rather than Tensor::from_ints (which defaults to the backend's int).
         let expected = TensorData::from([[5i64, 5], [5, 5]]);
         output.into_data().assert_eq(&expected, true);

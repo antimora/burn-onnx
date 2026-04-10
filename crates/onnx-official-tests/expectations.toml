@@ -182,27 +182,27 @@ status = "pass"
 
 [test_and_bcast3v1d]
 status = "fail-compare"
-reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast — wrong output shape or OOB in simd/scalar.rs"
+reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast - wrong output shape or OOB in simd/scalar.rs"
 tracking = "tracel-ai/burn#4771"
 
 [test_and_bcast3v2d]
 status = "fail-compare"
-reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast — wrong output shape or OOB in simd/scalar.rs"
+reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast - wrong output shape or OOB in simd/scalar.rs"
 tracking = "tracel-ai/burn#4771"
 
 [test_and_bcast4v2d]
 status = "fail-compare"
-reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast — wrong output shape or OOB in simd/scalar.rs"
+reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast - wrong output shape or OOB in simd/scalar.rs"
 tracking = "tracel-ai/burn#4771"
 
 [test_and_bcast4v3d]
 status = "fail-compare"
-reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast — wrong output shape or OOB in simd/scalar.rs"
+reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast - wrong output shape or OOB in simd/scalar.rs"
 tracking = "tracel-ai/burn#4771"
 
 [test_and_bcast4v4d]
 status = "fail-compare"
-reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast — wrong output shape or OOB in simd/scalar.rs"
+reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast - wrong output shape or OOB in simd/scalar.rs"
 tracking = "tracel-ai/burn#4771"
 
 [test_argmax_default_axis_example]
@@ -4373,27 +4373,27 @@ status = "pass"
 
 [test_or_bcast3v1d]
 status = "fail-compare"
-reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast — wrong output shape or OOB in simd/scalar.rs"
+reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast - wrong output shape or OOB in simd/scalar.rs"
 tracking = "tracel-ai/burn#4771"
 
 [test_or_bcast3v2d]
 status = "fail-compare"
-reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast — wrong output shape or OOB in simd/scalar.rs"
+reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast - wrong output shape or OOB in simd/scalar.rs"
 tracking = "tracel-ai/burn#4771"
 
 [test_or_bcast4v2d]
 status = "fail-compare"
-reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast — wrong output shape or OOB in simd/scalar.rs"
+reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast - wrong output shape or OOB in simd/scalar.rs"
 tracking = "tracel-ai/burn#4771"
 
 [test_or_bcast4v3d]
 status = "fail-compare"
-reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast — wrong output shape or OOB in simd/scalar.rs"
+reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast - wrong output shape or OOB in simd/scalar.rs"
 tracking = "tracel-ai/burn#4771"
 
 [test_or_bcast4v4d]
 status = "fail-compare"
-reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast — wrong output shape or OOB in simd/scalar.rs"
+reason = "upstream burn-flex bug: bool binary ops (and/or) don't broadcast - wrong output shape or OOB in simd/scalar.rs"
 tracking = "tracel-ai/burn#4771"
 
 [test_pow]

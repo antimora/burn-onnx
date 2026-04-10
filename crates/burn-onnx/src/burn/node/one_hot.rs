@@ -99,18 +99,15 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
         let output_dtype = output_arg.ty.elem_type();
         let output_dtype_tokens = output_dtype.to_tokens();
 
-        let input_dtype = input_arg.ty.elem_type();
-
         // Build the `one_hot_fill` call as a trailing expression (no
         // `let #output = ...;`). Wrapping the prelude + expression inside
         // a single block scopes the `__onehot_*` temporaries so multiple
         // OneHot nodes in the same forward() don't collide.
         //
         // `one_hot_fill` returns a tensor whose element dtype comes from the
-        // backend's default Int/Float element, *not* from the input tensor's
+        // backend's default Int/Float element, not from the input tensor's
         // runtime dtype. Always cast to the ONNX-specified output dtype so
         // the generated code doesn't leak the backend default (CLAUDE.md).
-        let _ = input_dtype; // kept for doc clarity — no longer branched on
         let body: TokenStream = match (input_kind, output_kind) {
             (TensorKind::Int, TensorKind::Int) | (TensorKind::Float, TensorKind::Float) => {
                 quote! {

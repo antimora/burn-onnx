@@ -204,8 +204,9 @@ def _gen_read_input(idx, name, rust_type):
     The emitted `Tensor::from_data` calls all pin the tensor's runtime dtype
     via `(&device, burn::tensor::DType::X)`. Leaving the second argument as
     a bare `&device` would let burn's `from_data` convert the TensorData to
-    the backend's default Int/Float element type — I32 on Flex, I64 on
-    NdArray — which silently truncates true int64 inputs under Flex and
+    the backend's default Int/Float element type, which varies across
+    backends and can silently truncate an int64 source tensor (for example
+    when the backend's default IntElem is narrower than i64). That also
     violates the project's "explicit dtypes in generated code" rule (see
     .claude/CLAUDE.md). The numpy inputs are cast to the matching precision
     on the Python side before serialization (see `_CATEGORY_TO_NUMPY`), so
