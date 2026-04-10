@@ -108,9 +108,9 @@ mod tests {
     #[test]
     fn constant_tensor_i32_test() {
         // Test that multidimensional i32 tensor constants are properly loaded with correct dtype
-        // Note: The ONNX model has I32 constants, but NdArray<f32> defaults to i64 for Int tensors.
+        // Note: The ONNX model has I32 constants, but the backend's default IntElem may differ.
         // We use from_data with explicit I32 dtype to create tensors that match the model's dtype.
-        // Using from_data() without dtype would convert to the backend's IntElem (i64), causing dtype mismatch.
+        // Using from_data() without dtype would convert to the backend's IntElem, causing a dtype mismatch.
         use burn::tensor::DType;
 
         let device = Default::default();

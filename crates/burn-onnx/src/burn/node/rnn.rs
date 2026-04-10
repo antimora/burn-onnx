@@ -51,7 +51,7 @@ fn to_burn_activation(onnx_activation: RnnActivationFunction) -> ActivationConfi
 /// Collect tensor snapshots for Rnn burnpack serialization.
 ///
 /// This function handles the weight transformation from ONNX's packed RNN format
-/// to Burn's Rnn weight structure using NdArray backend for tensor ops.
+/// to Burn's Rnn weight structure using the Flex CPU backend for tensor ops.
 ///
 /// ONNX Rnn weight layout:
 /// - W: `[num_directions, hidden_size, input_size]`

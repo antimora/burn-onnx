@@ -170,14 +170,14 @@ pub fn arg_to_ident(arg: &Argument) -> proc_macro2::Ident {
 }
 
 // ============================================================================
-// Tensor snapshot helpers using NdArray backend
+// Tensor snapshot helpers using Flex backend
 // ============================================================================
 
 /// The backend used for tensor transformations during import.
-/// Uses the NdArray backend with f64 for CPU-based tensor operations during ONNX import.
-/// We use f64 to preserve maximum precision during intermediate operations,
-/// then convert back to the original dtype when creating snapshots.
-pub type SerializationBackend = burn_ndarray::NdArray<f64>;
+/// Uses the Flex backend for CPU-based tensor operations during ONNX import.
+/// Flex supports all dtypes (including f64) dynamically per tensor, so precision
+/// is preserved by carrying the original ONNX dtype through `TensorData`.
+pub type SerializationBackend = burn::backend::Flex;
 
 /// Create a lazy tensor snapshot from an ONNX argument.
 ///

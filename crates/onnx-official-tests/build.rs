@@ -180,10 +180,10 @@ impl Dtype {
 
     /// The concrete Rust element type to use as the type parameter for
     /// `TensorData::assert_approx_eq::<T>`. Using `f32` for FLOAT and
-    /// `f64` for DOUBLE avoids two problems: (a) `FloatElem<TestBackend>`
-    /// is always `f32` on NdArray which would cause a type mismatch
-    /// against `f64` TensorData, and (b) using a narrower type than the
-    /// decoded values would compare at reduced precision.
+    /// `f64` for DOUBLE avoids two problems: (a) a backend default
+    /// `FloatElem<TestBackend>` that differs from the TensorData dtype
+    /// would cause a type mismatch, and (b) using a narrower type than
+    /// the decoded values would compare at reduced precision.
     fn assert_elem_type(self) -> &'static str {
         match self {
             Self::F32 => "f32",

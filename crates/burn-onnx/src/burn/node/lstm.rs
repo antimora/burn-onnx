@@ -55,7 +55,7 @@ fn to_burn_activation(onnx_activation: LstmActivationFunction) -> ActivationConf
 /// Collect tensor snapshots for LSTM burnpack serialization.
 ///
 /// This function handles the complex weight transformation from ONNX's packed format
-/// to Burn's individual GateController structure using NdArray backend for tensor ops.
+/// to Burn's individual GateController structure using the Flex CPU backend for tensor ops.
 ///
 /// ONNX LSTM weight layout:
 /// - W: `[num_directions, 4*hidden_size, input_size]` - gates ordered as [i, o, f, c]

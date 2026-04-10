@@ -9,8 +9,8 @@ pub struct ModelCheckArgs {
     #[arg(long)]
     pub model: Option<String>,
 
-    /// Cargo features to pass (default: ndarray).
-    #[arg(long, default_value = "ndarray")]
+    /// Cargo features to pass (default: flex).
+    #[arg(long, default_value = "flex")]
     pub features: String,
 
     /// Build in debug mode instead of release.
