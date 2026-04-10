@@ -199,7 +199,18 @@ def _tensor_rank(ty):
 
 
 def _gen_read_input(idx, name, rust_type):
-    """Generate Rust code to read one input from the manifest."""
+    """Generate Rust code to read one input from the manifest.
+
+    The emitted `Tensor::from_data` calls all pin the tensor's runtime dtype
+    via `(&device, burn::tensor::DType::X)`. Leaving the second argument as
+    a bare `&device` would let burn's `from_data` convert the TensorData to
+    the backend's default Int/Float element type — I32 on Flex, I64 on
+    NdArray — which silently truncates true int64 inputs under Flex and
+    violates the project's "explicit dtypes in generated code" rule (see
+    .claude/CLAUDE.md). The numpy inputs are cast to the matching precision
+    on the Python side before serialization (see `_CATEGORY_TO_NUMPY`), so
+    these dtype constants are the correct runtime width for each branch.
+    """
     cat = _rust_type_category(rust_type)
     rank = _tensor_rank(rust_type)
 
@@ -211,7 +222,8 @@ def _gen_read_input(idx, name, rust_type):
             f"        let values: Vec<f32> = bytes.chunks_exact(4)\n"
             f"            .map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();\n"
             f"        Tensor::<B, {rank}>::from_data(\n"
-            f"            TensorData::new(values, info.shape.clone()), &device,\n"
+            f"            TensorData::new(values, info.shape.clone()),\n"
+            f"            (&device, burn::tensor::DType::F32),\n"
             f"        )\n"
             f"    }};\n"
         )
@@ -223,7 +235,8 @@ def _gen_read_input(idx, name, rust_type):
             f"        let values: Vec<i64> = bytes.chunks_exact(8)\n"
             f"            .map(|c| i64::from_le_bytes(c.try_into().unwrap())).collect();\n"
             f"        Tensor::<B, {rank}, Int>::from_data(\n"
-            f"            TensorData::new(values, info.shape.clone()), &device,\n"
+            f"            TensorData::new(values, info.shape.clone()),\n"
+            f"            (&device, burn::tensor::DType::I64),\n"
             f"        )\n"
             f"    }};\n"
         )
@@ -234,7 +247,8 @@ def _gen_read_input(idx, name, rust_type):
             f"        let bytes = std::fs::read(&info.file).expect(\"read input\");\n"
             f"        let values: Vec<bool> = bytes.iter().map(|&b| b != 0).collect();\n"
             f"        Tensor::<B, {rank}, Bool>::from_data(\n"
-            f"            TensorData::new(values, info.shape.clone()), &device,\n"
+            f"            TensorData::new(values, info.shape.clone()),\n"
+            f"            (&device, burn::tensor::DType::Bool(burn::tensor::BoolStore::Native)),\n"
             f"        )\n"
             f"    }};\n"
         )
