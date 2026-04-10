@@ -104,11 +104,8 @@ mod tests {
         // Tests Expand with a fully dynamic shape from a Where/Shape chain.
         // The shape tensor has no static_shape info, exercising the input-rank fallback.
         let device = Default::default();
-        // Use Model::default() to load the real constant from the bpk. Under Flex,
-        // Model::new() leaves the `constant1` param placeholder at the backend-default
-        // int dtype (I32), which collides with the I64 `other` side of mask_where when
-        // the model is executed. The bpk-loaded constant has the correct I64 dtype.
-        let model: expand_dynamic_where::Model<TestBackend> = expand_dynamic_where::Model::default();
+        let model: expand_dynamic_where::Model<TestBackend> =
+            expand_dynamic_where::Model::new(&device);
 
         let input_data = Tensor::<TestBackend, 1>::from_floats([10.0, 20.0, 30.0], &device);
         let input_flag = true;

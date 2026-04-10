@@ -4,7 +4,7 @@ include_models!(one_hot, one_hot_axis0, one_hot_float_values, one_hot_2d);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::{Int, Tensor, TensorData, ops::FloatElem};
+    use burn::tensor::{DType, Int, Tensor, TensorData, ops::FloatElem};
 
     use crate::backend::TestBackend;
     type FT = FloatElem<TestBackend>;
@@ -29,10 +29,16 @@ mod tests {
         let device = Default::default();
         let model = one_hot_axis0::Model::<TestBackend>::new(&device);
 
-        let input: Tensor<TestBackend, 1, Int> = Tensor::from_ints([0, 2, 3], &device);
+        // ONNX OneHot's `indices` input is int64 per spec; construct the test
+        // tensor with explicit I64 dtype rather than relying on the backend's
+        // default Int element.
+        let input: Tensor<TestBackend, 1, Int> = Tensor::from_data(
+            TensorData::from([0i64, 2, 3]),
+            (&device, DType::I64),
+        );
         let output: Tensor<TestBackend, 2, Int> = model.forward(input);
 
-        let expected = TensorData::from([[1i32, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 1]]);
+        let expected = TensorData::from([[1i64, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 1]]);
 
         output.to_data().assert_eq(&expected, true);
     }
@@ -62,12 +68,17 @@ mod tests {
         let device = Default::default();
         let model = one_hot_2d::Model::<TestBackend>::new(&device);
 
-        let input: Tensor<TestBackend, 2, Int> =
-            Tensor::from_data(TensorData::from([[0i32, 1, 2], [3, 0, 1]]), &device);
+        // ONNX OneHot's `indices` input is int64 per spec; pass the dtype
+        // explicitly so the model sees I64 rather than the backend-default
+        // int that `from_data(data, &device)` would produce.
+        let input: Tensor<TestBackend, 2, Int> = Tensor::from_data(
+            TensorData::from([[0i64, 1, 2], [3, 0, 1]]),
+            (&device, DType::I64),
+        );
         let output: Tensor<TestBackend, 3, Int> = model.forward(input);
 
         let expected = TensorData::from([
-            [[1i32, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]],
+            [[1i64, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]],
             [[0, 0, 0, 1], [1, 0, 0, 0], [0, 1, 0, 0]],
         ]);
 
