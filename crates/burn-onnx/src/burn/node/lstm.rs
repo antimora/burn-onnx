@@ -117,8 +117,9 @@ fn collect_lstm_snapshots(
         Tensor::from_data(data_w.clone(), (&device, dtype));
     let r_tensor: Tensor<SerializationBackend, 3> =
         Tensor::from_data(data_r.clone(), (&device, dtype));
-    let b_tensor: Option<Tensor<SerializationBackend, 2>> =
-        data_b.clone().map(|b| Tensor::from_data(b, (&device, dtype)));
+    let b_tensor: Option<Tensor<SerializationBackend, 2>> = data_b
+        .clone()
+        .map(|b| Tensor::from_data(b, (&device, dtype)));
 
     for (dir_idx, dir_prefix) in direction_prefixes.iter().enumerate() {
         // Select direction slice from W and R

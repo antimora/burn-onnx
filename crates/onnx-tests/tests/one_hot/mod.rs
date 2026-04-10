@@ -20,10 +20,8 @@ mod tests {
         // covers the Int->Int one_hot_fill branch where burn-onnx must emit a
         // `.cast(DType::I64)` on top of `one_hot_fill` (which otherwise returns
         // the backend default int).
-        let input: Tensor<TestBackend, 1, Int> = Tensor::from_data(
-            TensorData::from([1i64, 0, 2]),
-            (&device, DType::I64),
-        );
+        let input: Tensor<TestBackend, 1, Int> =
+            Tensor::from_data(TensorData::from([1i64, 0, 2]), (&device, DType::I64));
         let output: Tensor<TestBackend, 2, Int> = model.forward(input);
         let expected = TensorData::from([[0i64, 1, 0], [1, 0, 0], [0, 0, 1]]);
         output.to_data().assert_eq(&expected, true);
