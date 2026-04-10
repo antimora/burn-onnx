@@ -34,7 +34,7 @@ mod tests {
         let input3 = Tensor::<TestBackend, 1, Int>::from_ints([1, 2, 3, 4], &device);
 
         let output = model.forward(input1, input2, input3);
-        let expected = TensorData::from([3i64, 6, 9, 12]);
+        let expected = TensorData::from([3i32, 6, 9, 12]);
 
         output.to_data().assert_eq(&expected, true);
     }

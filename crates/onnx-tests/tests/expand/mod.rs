@@ -14,7 +14,7 @@ include_models!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::{Int, Shape, Tensor};
+    use burn::tensor::{Int, Shape, Tensor, TensorData};
 
     use crate::backend::TestBackend;
 
@@ -58,9 +58,11 @@ mod tests {
 
         assert_eq!(output.shape(), expected_shape);
 
-        // Verify values: all elements should be 5
-        let expected = Tensor::<TestBackend, 2, Int>::from_ints([[5, 5], [5, 5]], &device);
-        output.into_data().assert_eq(&expected.into_data(), true);
+        // Verify values: all elements should be 5. The ONNX model's source constant is
+        // int64, so the generated Expand output is I64 — compare via an explicit I64
+        // TensorData rather than Tensor::from_ints (which defaults to the backend's int).
+        let expected = TensorData::from([[5i64, 5], [5, 5]]);
+        output.into_data().assert_eq(&expected, true);
     }
 
     #[test]
@@ -102,8 +104,11 @@ mod tests {
         // Tests Expand with a fully dynamic shape from a Where/Shape chain.
         // The shape tensor has no static_shape info, exercising the input-rank fallback.
         let device = Default::default();
-        let model: expand_dynamic_where::Model<TestBackend> =
-            expand_dynamic_where::Model::new(&device);
+        // Use Model::default() to load the real constant from the bpk. Under Flex,
+        // Model::new() leaves the `constant1` param placeholder at the backend-default
+        // int dtype (I32), which collides with the I64 `other` side of mask_where when
+        // the model is executed. The bpk-loaded constant has the correct I64 dtype.
+        let model: expand_dynamic_where::Model<TestBackend> = expand_dynamic_where::Model::default();
 
         let input_data = Tensor::<TestBackend, 1>::from_floats([10.0, 20.0, 30.0], &device);
         let input_flag = true;
@@ -128,8 +133,9 @@ mod tests {
         let output = model.forward(input);
 
         assert_eq!(output.shape(), Shape::from([2, 2]));
-        let expected = Tensor::<TestBackend, 2, Int>::from_ints([[3, 4], [3, 4]], &device);
-        output.into_data().assert_eq(&expected.into_data(), true);
+        // Shape values in ONNX are int64; the generated Expand output preserves that dtype.
+        let expected = TensorData::from([[3i64, 4], [3, 4]]);
+        output.into_data().assert_eq(&expected, true);
     }
 
     #[test]

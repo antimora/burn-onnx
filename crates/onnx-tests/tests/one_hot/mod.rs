@@ -32,7 +32,7 @@ mod tests {
         let input: Tensor<TestBackend, 1, Int> = Tensor::from_ints([0, 2, 3], &device);
         let output: Tensor<TestBackend, 2, Int> = model.forward(input);
 
-        let expected = TensorData::from([[1i64, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 1]]);
+        let expected = TensorData::from([[1i32, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 1]]);
 
         output.to_data().assert_eq(&expected, true);
     }
@@ -63,11 +63,11 @@ mod tests {
         let model = one_hot_2d::Model::<TestBackend>::new(&device);
 
         let input: Tensor<TestBackend, 2, Int> =
-            Tensor::from_data(TensorData::from([[0i64, 1, 2], [3, 0, 1]]), &device);
+            Tensor::from_data(TensorData::from([[0i32, 1, 2], [3, 0, 1]]), &device);
         let output: Tensor<TestBackend, 3, Int> = model.forward(input);
 
         let expected = TensorData::from([
-            [[1i64, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]],
+            [[1i32, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]],
             [[0, 0, 0, 1], [1, 0, 0, 0], [0, 1, 0, 0]],
         ]);
 

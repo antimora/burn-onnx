@@ -34,7 +34,7 @@ mod tests {
         let input = Tensor::<TestBackend, 4, Int>::from_ints([[[[1, 2, 3, 4]]]], &device);
         let scalar = 3;
         let output = model.forward(input, scalar);
-        let expected = TensorData::from([[[[-12i64, -12, -12, -12]]]]);
+        let expected = TensorData::from([[[[-12i32, -12, -12, -12]]]]);
 
         output.to_data().assert_eq(&expected, true);
     }
