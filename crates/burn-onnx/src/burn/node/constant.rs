@@ -35,12 +35,13 @@ impl NodeCodegen for onnx_ir::node::constant::ConstantNode {
 
         // For ScalarTensor, embed the actual value in the initializer so Model::new()
         // works without burnpack loading. For regular tensors, use zeros (burnpack loads data).
-        // Both paths pin the param's dtype to the ONNX-declared dtype via `(device,
-        // DType::X)` / `.cast(DType::X)`, because burn's default `zeros`/`from_data`
-        // would otherwise adopt the backend's default Int/Float element type (I32 on
-        // Flex, I64 on NdArray), leaving `Model::new()` placeholder tensors at a dtype
-        // that doesn't match the later burnpack-loaded values — a silent mismatch that
-        // only surfaces at runtime inside dtype-strict ops like `mask_where`.
+        // Both paths pin the param's dtype to the ONNX-declared dtype via the
+        // `(device, DType::X)` tuple form of `zeros`/`from_data`, because the bare
+        // `&device` overloads would otherwise adopt the backend's default Int/Float
+        // element type (I32 on Flex, I64 on NdArray), leaving `Model::new()`
+        // placeholder tensors at a dtype that doesn't match the later burnpack-loaded
+        // values — a silent mismatch that only surfaces at runtime inside dtype-strict
+        // ops like `mask_where`.
         let (ty, init) = if is_scalar_tensor {
             // Generate initializer with the actual scalar value
             if dtype.is_float() {

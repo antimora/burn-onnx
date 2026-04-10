@@ -32,10 +32,8 @@ mod tests {
         // ONNX OneHot's `indices` input is int64 per spec; construct the test
         // tensor with explicit I64 dtype rather than relying on the backend's
         // default Int element.
-        let input: Tensor<TestBackend, 1, Int> = Tensor::from_data(
-            TensorData::from([0i64, 2, 3]),
-            (&device, DType::I64),
-        );
+        let input: Tensor<TestBackend, 1, Int> =
+            Tensor::from_data(TensorData::from([0i64, 2, 3]), (&device, DType::I64));
         let output: Tensor<TestBackend, 2, Int> = model.forward(input);
 
         let expected = TensorData::from([[1i64, 0, 0], [0, 0, 0], [0, 1, 0], [0, 0, 1]]);
