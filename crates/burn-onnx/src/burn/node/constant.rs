@@ -12,6 +12,28 @@ impl NodeCodegen for onnx_ir::node::constant::ConstantNode {
         &self.outputs
     }
 
+    // Coverage note for the (device, DType::X) dtype-pinning in this method:
+    //
+    // There are no inline snapshot tests in this file because constructing a
+    // ConstantNode with a valued input requires `GraphState::register_test_constant`,
+    // which is `pub(crate)` to onnx-ir. Instead, the seven arms below are covered
+    // indirectly via integration tests in `crates/onnx-tests/tests/constant/mod.rs`:
+    //
+    //   * Regular tensor Float  -> `add_constant_f64` (Model::new + F64 Add downstream)
+    //   * Regular tensor Int    -> `add_constant_i64` (Model::new + I64 Add downstream)
+    //                              and `expand::tests::expand_dynamic_where`
+    //                              (Model::new + I64 mask_where downstream)
+    //   * Regular tensor Bool   -> `constant_tensor_bool_test` (Model::default path)
+    //   * Regular default       -> unreachable (the match above exhausts DType)
+    //   * ScalarTensor Float    -> `add_constant_f32` (Model::new + F32 Add)
+    //   * ScalarTensor Int      -> `add_constant_i32` (Model::new + I32 Add)
+    //   * ScalarTensor Bool     -> `or_constant_bool` (Model::new + bool Or)
+    //
+    // If a refactor accidentally drops the `(device, dtype)` pinning from any arm,
+    // the integration test for that dtype will fail inside burn-flex with a
+    // `storage: dtype mismatch` panic. Inline snapshot tests would catch the same
+    // regression closer to the source; that's a follow-up once onnx-ir exposes
+    // `register_test_constant` (or an equivalent) across crate boundaries.
     fn field(&self) -> Option<Field> {
         let output = self.outputs.first().unwrap();
 

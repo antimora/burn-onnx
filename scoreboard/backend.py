@@ -65,13 +65,22 @@ NUMPY_DTYPE_TO_STR = {
     np.dtype("bool"): "bool",
 }
 
-# Rust DType string from TensorData.dtype debug output -> numpy dtype
+# Rust DType string from TensorData.dtype debug output -> numpy dtype.
+#
+# Intentional omission: bf16. bf16 and fp16 are both 2 bytes wide but have
+# different bit layouts (8 exponent bits vs 5), so reading raw bf16 bytes
+# via `np.frombuffer(..., dtype=np.float16)` would be a silent
+# reinterpretation producing garbage values, not a lossy conversion. If a
+# model produces bf16 outputs, we want `_resolve_rust_dtype` to explicitly
+# raise `BackendIsNotSupposedToImplementIt` so the scoreboard skips the
+# model rather than submits wrong results upstream. Support bf16 properly
+# by either (a) teaching the Rust runner to cast bf16 outputs to f32
+# before writing, or (b) reading them as u16 and unpacking manually.
 RUST_DTYPE_TO_NUMPY = {
     "f32": np.float32,
     "f64": np.float64,
     "f16": np.float16,
     "flex32": np.float32,
-    "bf16": np.float16,  # closest numpy equivalent
     "i8": np.int8,
     "i16": np.int16,
     "i32": np.int32,
@@ -476,10 +485,23 @@ def _resolve_rust_dtype(dtype_str):
 
     Burn formats DType as e.g. "F32", "I64", "Bool(native)".
     After .to_lowercase() in the runner: "f32", "i64", "bool(native)".
+
+    Raises `BackendIsNotSupposedToImplementIt` for dtypes the scoreboard
+    cannot safely read back — bf16 (byte layout mismatch with fp16) and
+    any future dtype name we haven't mapped. A silent fallback to f32
+    would cause the scoreboard to submit wrong-answer results upstream
+    when a model produces an unmapped dtype.
     """
     # Strip parenthesized qualifiers: "bool(native)" -> "bool"
     base = dtype_str.split("(")[0].strip()
-    return RUST_DTYPE_TO_NUMPY.get(base, np.float32)
+    numpy_dtype = RUST_DTYPE_TO_NUMPY.get(base)
+    if numpy_dtype is None:
+        raise BackendIsNotSupposedToImplementIt(
+            f"Output dtype '{dtype_str}' is not supported by the burn-onnx "
+            f"scoreboard runner. Mapped dtypes: {sorted(RUST_DTYPE_TO_NUMPY)}. "
+            f"Extend RUST_DTYPE_TO_NUMPY to add support."
+        )
+    return numpy_dtype
 
 
 def _read_output_manifest(output_dir):
