@@ -6,9 +6,14 @@ use super::prelude::*;
 /// Static bounds are inlined as literals. Runtime bounds come from one of
 /// the node's inputs, which is either a native scalar (use directly) or a
 /// scalar tensor (extract via `into_scalar().elem()`). The scalar is
-/// coerced to `f64` for float-typed clips and to `i64` for integer-typed
-/// clips, so we keep full i64 precision instead of rounding through f64
-/// (which loses magnitudes above 2^53).
+/// then coerced via an `as` cast to either `f64` or `i64`, depending on
+/// `input_is_int`. `input_is_int` should mirror the element type of the
+/// tensor being clipped: `true` for signed/unsigned int inputs (keeps
+/// full int64 magnitude), `false` for float inputs (feeds Burn's
+/// `clamp(E, E)` without dtype mixing). Getting `input_is_int` wrong
+/// would silently emit a bound in the wrong dtype and desynchronize the
+/// clamp call, so the caller computes it once from the input tensor's
+/// dtype rather than re-deriving it here.
 fn clip_bound_expr(
     bound: &Option<onnx_ir::node::clip::ClipInput>,
     inputs: &[Argument],

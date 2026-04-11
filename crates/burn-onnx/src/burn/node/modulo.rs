@@ -509,11 +509,15 @@ mod tests {
 
     #[test]
     fn test_remainder_scalar_native_scalar_native_float() {
-        // Floats have identical semantics for Python-style mod and C-style
-        // fmod on non-negative inputs, and Rust's `%` on floats is already
-        // C-style. For `fmod=0` on float ScalarNatives we still use `%`
-        // because there is no signed-integer sign flip to worry about and
-        // `rem_euclid` on floats would silently change results.
+        // ONNX Mod with `fmod=0` on float operands is out of spec: the
+        // ONNX Mod op requires `fmod=1` whenever the operands are
+        // floating-point, so a well-formed graph never reaches this
+        // branch with floats and `fmod=0`. We keep Rust's `%` here
+        // because it matches C-style fmod (which is what `fmod=1` asks
+        // for) and because the signed-int-only `rem_euclid` guard
+        // naturally skips floats. This test just pins that the emitted
+        // code is a plain `%` so any future refactor that conflates the
+        // float and signed-int arms shows up as a snapshot diff.
         let config = ModConfig::new(false);
         let node = ModNodeBuilder::new("mod1")
             .input_scalar("a", DType::F32)

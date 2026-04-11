@@ -137,7 +137,7 @@ impl NodeProcessor for ModuloProcessor {
             }
             if other.rank() != 1 {
                 return Err(ProcessError::Custom(format!(
-                    "Mod: Shape combined with rank-{} tensor is not supported (expected rank 1)",
+                    "Mod: Shape combined with rank-{} {other_dtype:?} tensor is not supported (expected rank 1)",
                     other.rank()
                 )));
             }
@@ -227,5 +227,64 @@ mod tests {
         let config = processor.extract_config(&node, 16).unwrap();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
         assert_eq!(config.fmod, true);
+    }
+
+    /// Mod on Shape + float tensor must be rejected. The codegen arm
+    /// for this combination materializes the Shape as a rank-1 Int
+    /// tensor and calls `.remainder()` / `.fmod()` on it, so the
+    /// counterpart must be integer-typed.
+    #[test]
+    fn shape_mod_float_tensor_rejected() {
+        let mut node = TestNodeBuilder::new(NodeType::Mod, "mod_shape_float")
+            .input_shape("lhs", 3)
+            .input_tensor_f32("rhs", 1, None)
+            .output_tensor_f32("out", 1, None)
+            .build();
+
+        let processor = ModuloProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 16, &prefs);
+        assert!(
+            matches!(result, Err(ProcessError::TypeMismatch { .. })),
+            "expected TypeMismatch, got {result:?}"
+        );
+    }
+
+    /// Mod on Shape + rank-2 int tensor must be rejected. Codegen
+    /// assumes the counterpart is rank 1.
+    #[test]
+    fn shape_mod_rank2_int_tensor_rejected() {
+        let mut node = TestNodeBuilder::new(NodeType::Mod, "mod_shape_rank2")
+            .input_shape("lhs", 3)
+            .input_tensor_i64("rhs", 2, None)
+            .output_tensor_i64("out", 2, None)
+            .build();
+
+        let processor = ModuloProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 16, &prefs);
+        match result {
+            Err(ProcessError::Custom(msg)) => assert!(
+                msg.contains("rank-2") && msg.contains("Mod"),
+                "expected rank-2 message, got: {msg}"
+            ),
+            other => panic!("expected Custom ProcessError, got {other:?}"),
+        }
+    }
+
+    /// Mod on Shape + rank-1 int tensor is the legitimate case and
+    /// must be accepted.
+    #[test]
+    fn shape_mod_rank1_int_tensor_accepted() {
+        let mut node = TestNodeBuilder::new(NodeType::Mod, "mod_shape_rank1")
+            .input_shape("lhs", 3)
+            .input_tensor_i64("rhs", 1, None)
+            .output_tensor_i64("out", 1, None)
+            .build();
+
+        let processor = ModuloProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 16, &prefs);
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
     }
 }

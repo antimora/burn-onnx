@@ -130,13 +130,17 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
         // the generated code doesn't leak the backend default (CLAUDE.md).
         //
         // For the runtime-values int path we call `one_hot_fill(1.0, 0.0)`
-        // to get a 0/1 mask and scale via int64 scalar math:
+        // to get a 0/1 mask and scale via integer scalar math:
         //     result = mask * (on - off) + off
-        // The mul/add happen in the backend's default Int dtype (i64-wide
-        // on typical backends), so the full int64 range is preserved before
-        // the final narrowing cast to the ONNX-specified output dtype.
+        // The backend default IntElem can be narrower than i64 (burn-flex
+        // defaults to i32), so we force an explicit `.cast(I64)` before
+        // `mul_scalar`/`add_scalar`: the scale math then runs in i64 on
+        // every backend, and the final narrowing cast back to the ONNX
+        // output dtype happens in one place.
         let int_scale = quote! {
-            .mul_scalar(__onehot_on_i - __onehot_off_i).add_scalar(__onehot_off_i)
+            .cast(burn::tensor::DType::I64)
+                .mul_scalar(__onehot_on_i - __onehot_off_i)
+                .add_scalar(__onehot_off_i)
         };
         let maybe_scale = if runtime_int_scale {
             int_scale.clone()
@@ -409,8 +413,10 @@ mod tests {
         // int64 precision. The old code path narrowed `values` through f32,
         // which silently rounded magnitudes above 2^24. The fix reads the
         // two values as i64, calls `one_hot_fill(1.0, 0.0)` to get a 0/1
-        // mask, and scales with exact int64 scalar arithmetic before the
-        // final cast to the ONNX-specified output dtype.
+        // mask, explicitly casts that mask to I64 (burn-flex's default
+        // IntElem is i32, so an implicit `.int()` would still lose bits),
+        // then scales via i64 scalar math before the final narrowing
+        // cast to the ONNX-specified output dtype.
         let config = OneHotConfig::new(
             OneHotDepthInput::Static(5),
             OneHotValuesInput::Runtime(onnx_ir::ir::RuntimeInputRef::new("values".to_string(), 1)),
@@ -437,6 +443,52 @@ mod tests {
                 };
                 indices
                     .one_hot_fill(5usize, 1f32, 0f32, -1i64)
+                    .cast(burn::tensor::DType::I64)
+                    .mul_scalar(__onehot_on_i - __onehot_off_i)
+                    .add_scalar(__onehot_off_i)
+                    .cast(burn::tensor::DType::I64)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_one_hot_runtime_values_float_indices_int_output() {
+        // Companion to test_one_hot_runtime_values_int_output but with
+        // float indices, exercising the `(Float, Int)` match arm that
+        // chains `.int()` before the int64 scale. The `.int()` narrows to
+        // the backend default IntElem (i32 on burn-flex), and the
+        // subsequent explicit `.cast(I64)` widens back to i64 so the
+        // scale math stays precise regardless of backend.
+        let config = OneHotConfig::new(
+            OneHotDepthInput::Static(5),
+            OneHotValuesInput::Runtime(onnx_ir::ir::RuntimeInputRef::new("values".to_string(), 1)),
+            -1,
+        );
+        let node = OneHotNodeBuilder::new("onehot_rt_float_to_int")
+            .input_tensor("indices", 1, DType::F32)
+            .input_tensor("values", 1, DType::I64)
+            .output_tensor("output", 2, DType::I64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            indices: Tensor<B, 1>,
+            values: Tensor<B, 1, Int>,
+        ) -> Tensor<B, 2, Int> {
+            let output = {
+                let (__onehot_off_i, __onehot_on_i): (i64, i64) = {
+                    let __data = values.to_data().convert::<i64>();
+                    let __slice = __data.as_slice::<i64>().unwrap();
+                    (__slice[0], __slice[1])
+                };
+                indices
+                    .one_hot_fill(5usize, 1f32, 0f32, -1i64)
+                    .int()
+                    .cast(burn::tensor::DType::I64)
                     .mul_scalar(__onehot_on_i - __onehot_off_i)
                     .add_scalar(__onehot_off_i)
                     .cast(burn::tensor::DType::I64)

@@ -1109,10 +1109,11 @@ mod tests {
         graph
     }
 
-    /// Two Clip nodes feeding into each other with independent runtime
-    /// scalar bounds. The generated `__clip_min` / `__clip_max` temporaries
-    /// must each live inside their own block so the second instance doesn't
-    /// shadow or collide with the first at the outer scope.
+    /// Two Clip nodes chained through a single intermediate tensor,
+    /// each with its own independent runtime scalar bounds. The
+    /// generated `__clip_min` / `__clip_max` temporaries must each
+    /// live inside their own per-node block so clone-tracking and
+    /// name resolution don't interleave across the two instances.
     fn build_two_clip_chain() -> BurnGraph {
         use onnx_ir::clip::{ClipConfig, ClipNodeBuilder};
         use onnx_ir::node::clip::ClipInput;
@@ -1161,9 +1162,11 @@ mod tests {
     /// nodes emit their `__clip_min` / `__clip_max` temporaries inside
     /// per-node block scopes. Both instances should be present in the
     /// generated code, each wrapped in a `let out = { let __clip_min = ... };`
-    /// block. Before the fix, a flat `let __clip_min = ...;` at the outer
-    /// scope would have shadowed the first instance and miscompiled or
-    /// silently used the wrong bound on the second Clip.
+    /// block. Without the wrapper, both `let __clip_min = ...;` bindings
+    /// would land at the outer `forward` scope — still legal Rust, but
+    /// clone-tracking for the runtime-bound inputs and variable resolution
+    /// for downstream consumers would interleave across nodes in
+    /// hard-to-debug ways.
     #[test]
     fn multi_instance_clip_scoping() {
         let graph = build_two_clip_chain();
