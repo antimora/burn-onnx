@@ -6739,19 +6739,29 @@ reason = "Runtime repeats are not supported in burn-onnx"
 tracking = "#314"
 
 [test_top_k]
-status = "pass"
+status = "fail-compare"
+reason = "upstream burn-flex bug: int_select asserts indices must be I64 but the default IntElem is I32 (triggers inside topk_with_indices)"
+tracking = "tracel-ai/burn"
 
 [test_top_k_negative_axis]
-status = "pass"
+status = "fail-compare"
+reason = "upstream burn-flex bug: int_select asserts indices must be I64 but the default IntElem is I32 (triggers inside topk_with_indices)"
+tracking = "tracel-ai/burn"
 
 [test_top_k_same_values]
-status = "pass"
+status = "fail-compare"
+reason = "upstream burn-flex bug: int_select asserts indices must be I64 but the default IntElem is I32 (triggers inside topk_with_indices)"
+tracking = "tracel-ai/burn"
 
 [test_top_k_same_values_2d]
-status = "pass"
+status = "fail-compare"
+reason = "upstream burn-flex bug: int_select asserts indices must be I64 but the default IntElem is I32 (triggers inside topk_with_indices)"
+tracking = "tracel-ai/burn"
 
 [test_top_k_same_values_largest]
-status = "pass"
+status = "fail-compare"
+reason = "upstream burn-flex bug: int_select asserts indices must be I64 but the default IntElem is I32 (triggers inside topk_with_indices)"
+tracking = "tracel-ai/burn"
 
 [test_top_k_smallest]
 status = "skip-codegen"
@@ -6759,7 +6769,9 @@ reason = "Node 'topk1' (TopK): TopK: only largest elements is supported"
 tracking = "#314"
 
 [test_top_k_uint64]
-status = "pass"
+status = "fail-compare"
+reason = "upstream burn-flex bug: int_select asserts indices must be I64 but the default IntElem is I32 (triggers inside topk_with_indices)"
+tracking = "tracel-ai/burn"
 
 [test_training_dropout]
 status = "skip-codegen"
