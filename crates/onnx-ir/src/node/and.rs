@@ -14,7 +14,7 @@
 
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{Argument, Node, RawNode};
+use crate::ir::{ArgType, Argument, Node, RawNode};
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
     same_as_input_broadcast,
@@ -49,6 +49,24 @@ impl NodeProcessor for AndProcessor {
         _opset: usize,
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
+        // Structural validation for Shape combined with an on-device tensor.
+        // burn-onnx codegen materializes the Shape as a rank-1 Int tensor and
+        // then calls `bool_and` on it, which only works if the counterpart is
+        // also rank 1. Reject mismatches here with a clean ProcessError so
+        // users don't see a cryptic deep-burn type error at generated-code
+        // compile time.
+        let lhs_ty = &node.inputs[0].ty;
+        let rhs_ty = &node.inputs[1].ty;
+        if let (ArgType::Shape(_), other) | (other, ArgType::Shape(_)) = (lhs_ty, rhs_ty)
+            && other.is_on_device()
+            && other.rank() != 1
+        {
+            return Err(ProcessError::Custom(format!(
+                "And: Shape combined with rank-{} tensor is not supported (expected rank 1)",
+                other.rank()
+            )));
+        }
+
         same_as_input_broadcast(node);
         Ok(())
     }

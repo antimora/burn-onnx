@@ -72,10 +72,10 @@ impl NodeProcessor for ArgMinProcessor {
             }
         };
 
-        // Get config values before mutating node
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        // Get config values before mutating node. Propagate the error so
+        // invalid attributes (e.g., select_last_index out of range) surface
+        // as a clean ProcessError rather than an `.expect` panic.
+        let config = self.extract_config(node, opset)?;
         let keepdims = config.keepdims;
 
         // For burn compatibility, argmin always outputs a tensor

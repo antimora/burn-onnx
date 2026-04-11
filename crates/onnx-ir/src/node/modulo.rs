@@ -18,7 +18,7 @@
 
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{Argument, AttributeValue, Node, RawNode};
+use crate::ir::{ArgType, Argument, AttributeValue, Node, RawNode};
 use crate::processor::{
     InputPreferences, InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec,
     ProcessError,
@@ -116,6 +116,32 @@ impl NodeProcessor for ModuloProcessor {
         // TODO: Validate input dtypes are numeric - Integer and floating-point types supported - burn/crates/onnx-ir/src/node/modulo.rs:100
         // TODO: Validate both inputs have same dtype - Mixed types should be rejected - burn/crates/onnx-ir/src/node/modulo.rs:100
         // TODO: Add validation that fmod attribute, if present, is either 0 or 1 - Other values are undefined - burn/crates/onnx-ir/src/node/modulo.rs:100
+
+        // Structural validation for Shape combined with an on-device tensor.
+        // burn-onnx codegen for these arms always materializes the Shape as
+        // a rank-1 Int tensor, so it can only handle a rank-1 integer
+        // counterpart. Reject mismatches here (rather than panicking deep
+        // inside codegen or producing silently wrong code) so users see a
+        // clean ProcessError.
+        let lhs_ty = &node.inputs[0].ty;
+        let rhs_ty = &node.inputs[1].ty;
+        if let (ArgType::Shape(_), other) | (other, ArgType::Shape(_)) = (lhs_ty, rhs_ty)
+            && other.is_on_device()
+        {
+            let other_dtype = other.elem_type();
+            if !(other_dtype.is_int() || other_dtype.is_uint()) {
+                return Err(ProcessError::TypeMismatch {
+                    expected: "integer-typed tensor when combined with Shape".to_string(),
+                    actual: format!("{other_dtype:?}"),
+                });
+            }
+            if other.rank() != 1 {
+                return Err(ProcessError::Custom(format!(
+                    "Mod: Shape combined with rank-{} tensor is not supported (expected rank 1)",
+                    other.rank()
+                )));
+            }
+        }
 
         // Output type is same as input with broadcasting
         crate::processor::same_as_input_broadcast(node);

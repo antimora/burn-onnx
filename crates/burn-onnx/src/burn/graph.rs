@@ -1109,6 +1109,82 @@ mod tests {
         graph
     }
 
+    /// Two Clip nodes feeding into each other with independent runtime
+    /// scalar bounds. The generated `__clip_min` / `__clip_max` temporaries
+    /// must each live inside their own block so the second instance doesn't
+    /// shadow or collide with the first at the outer scope.
+    fn build_two_clip_chain() -> BurnGraph {
+        use onnx_ir::clip::{ClipConfig, ClipNodeBuilder};
+        use onnx_ir::node::clip::ClipInput;
+
+        let mut graph = BurnGraph::default();
+
+        let mk = |name: &str, in_tensor: &str, min_name: &str, max_name: &str, out: &str| {
+            ClipNodeBuilder::new(name)
+                .input_tensor(in_tensor, 2, DType::F32)
+                .input_scalar(min_name, DType::F32)
+                .input_scalar(max_name, DType::F32)
+                .output_tensor(out, 2, DType::F32)
+                .config(ClipConfig {
+                    min: Some(ClipInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(
+                        min_name.to_string(),
+                        1,
+                    ))),
+                    max: Some(ClipInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(
+                        max_name.to_string(),
+                        2,
+                    ))),
+                })
+                .build()
+        };
+
+        graph.register(Node::Clip(mk("clip0", "input", "min0", "max0", "t0")));
+        graph.register(Node::Clip(mk("clip1", "t0", "min1", "max1", "t1")));
+
+        graph.register_input_output(
+            vec![
+                "input".to_string(),
+                "min0".to_string(),
+                "max0".to_string(),
+                "min1".to_string(),
+                "max1".to_string(),
+            ],
+            vec!["t1".to_string()],
+            &[],
+            &[],
+        );
+
+        graph
+    }
+
+    /// Regression test for #317, issue 6: verifies that runtime-bound Clip
+    /// nodes emit their `__clip_min` / `__clip_max` temporaries inside
+    /// per-node block scopes. Both instances should be present in the
+    /// generated code, each wrapped in a `let out = { let __clip_min = ... };`
+    /// block. Before the fix, a flat `let __clip_min = ...;` at the outer
+    /// scope would have shadowed the first instance and miscompiled or
+    /// silently used the wrong bound on the second Clip.
+    #[test]
+    fn multi_instance_clip_scoping() {
+        let graph = build_two_clip_chain();
+        let code = format_tokens(graph.codegen());
+
+        // Both clip bodies must appear in the generated forward. We count
+        // occurrences of the temporary name to pin exactly-two scoping
+        // blocks; anything less means the wrapping got dropped, anything
+        // more means a regression leaked a third temporary somewhere.
+        assert_eq!(
+            code.matches("let __clip_min = ").count(),
+            2,
+            "expected exactly two scoped __clip_min temporaries, got:\n{code}"
+        );
+        assert_eq!(
+            code.matches("let __clip_max = ").count(),
+            2,
+            "expected exactly two scoped __clip_max temporaries, got:\n{code}"
+        );
+    }
+
     #[test]
     fn small_graph_uses_flat_codegen() {
         let graph = build_abs_chain(5);
