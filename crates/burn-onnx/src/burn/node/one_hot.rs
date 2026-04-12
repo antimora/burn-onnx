@@ -31,7 +31,11 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
                         // OneHot, but models in the wild occasionally emit
                         // broken graphs; letting a negative i64 wrap to a
                         // huge usize causes OOM or a cryptic deep-burn
-                        // panic, so we fail loudly upstream instead.
+                        // panic, so we clamp invalid negative depths to 0.
+                        // This silently produces a zero-class one_hot result
+                        // for broken models; adding observability
+                        // (`log::warn!` or `debug_assert!`) is tracked in
+                        // tracel-ai/burn-onnx#328.
                         prelude.extend(quote! {
                             let __onehot_depth: usize = (#ident as i64).max(0) as usize;
                         });
@@ -79,42 +83,78 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
         // Runtime values widen through an intermediate scalar because Burn's
         // `one_hot_fill` pins `on_value`/`off_value` to `f32`. For a float
         // output, f32 matches the downstream dtype. For an int output, f32
-        // rounds int64 magnitudes above 2^24, so for the runtime+int case we
-        // take a different path: call `one_hot_fill(1.0, 0.0)` to produce a
-        // 0/1 mask, cast to the int output dtype, then scale via exact
-        // int64 scalar arithmetic. `one_hot_fill`'s off_value=0 / on_value=1
-        // are exactly representable in f32, and all subsequent math is
-        // integer, so the full int64 range is preserved.
-        let (on_value, off_value, runtime_int_scale) = match &self.config.values {
+        // rounds magnitudes above 2^24, so for the runtime+int case we
+        // take a different path: call `one_hot_fill(1.0, 0.0)` to produce
+        // a 0/1 mask, cast to a wide integer (i64 for signed output, u64
+        // for unsigned output), scale via `mul_scalar`/`add_scalar` using
+        // wrapping arithmetic, then narrow to the ONNX-specified output
+        // dtype. `wrapping_sub` is safe here because the mask is always
+        // 0 or 1:
+        //     mask=0: 0 * (on - off) + off = off
+        //     mask=1: (on - off) + off = on  (wrapping math cancels)
+        // Picking `U64` for unsigned outputs preserves the full u64 range;
+        // routing through `i64` would wrap values above i64::MAX.
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum RuntimeValuesMode {
+            /// Output is floating-point; narrow values through f32.
+            Float,
+            /// Output is a signed integer; scale in i64 via wrapping math.
+            SignedInt,
+            /// Output is an unsigned integer; scale in u64 via wrapping math.
+            UnsignedInt,
+        }
+        let runtime_values_mode = match output_kind {
+            TensorKind::Int if output_dtype.is_uint() => RuntimeValuesMode::UnsignedInt,
+            TensorKind::Int => RuntimeValuesMode::SignedInt,
+            _ => RuntimeValuesMode::Float,
+        };
+
+        let (on_value, off_value) = match &self.config.values {
             onnx_ir::one_hot::OneHotValuesInput::Static(v) => {
                 let off = v[0];
                 let on = v[1];
-                (quote! { #on }, quote! { #off }, false)
+                (quote! { #on }, quote! { #off })
             }
             onnx_ir::one_hot::OneHotValuesInput::Runtime(r) => {
                 let arg = &self.inputs[r.input_index];
                 let tensor = scope.arg(arg);
-                if output_kind == TensorKind::Int {
-                    // values layout: [off_value, on_value]. Read as i64 so
-                    // the full int64 range survives.
-                    prelude.extend(quote! {
-                        let (__onehot_off_i, __onehot_on_i): (i64, i64) = {
-                            let __data = #tensor.to_data().convert::<i64>();
-                            let __slice = __data.as_slice::<i64>().unwrap();
-                            (__slice[0], __slice[1])
-                        };
-                    });
-                    // Use a 0/1 mask; the scale is applied later.
-                    (quote! { 1f32 }, quote! { 0f32 }, true)
-                } else {
-                    prelude.extend(quote! {
-                        let (__onehot_off, __onehot_on): (f32, f32) = {
-                            let __data = #tensor.to_data().convert::<f32>();
-                            let __slice = __data.as_slice::<f32>().unwrap();
-                            (__slice[0], __slice[1])
-                        };
-                    });
-                    (quote! { __onehot_on }, quote! { __onehot_off }, false)
+                match runtime_values_mode {
+                    RuntimeValuesMode::UnsignedInt => {
+                        // values layout: [off_value, on_value]. Read as
+                        // u64 so the full u64 range survives.
+                        prelude.extend(quote! {
+                            let (__onehot_off_u, __onehot_on_u): (u64, u64) = {
+                                let __data = #tensor.to_data().convert::<u64>();
+                                let __slice = __data.as_slice::<u64>().unwrap();
+                                (__slice[0], __slice[1])
+                            };
+                        });
+                        // Use a 0/1 mask; the scale is applied later.
+                        (quote! { 1f32 }, quote! { 0f32 })
+                    }
+                    RuntimeValuesMode::SignedInt => {
+                        // values layout: [off_value, on_value]. Read as
+                        // i64 so the full int64 range survives.
+                        prelude.extend(quote! {
+                            let (__onehot_off_i, __onehot_on_i): (i64, i64) = {
+                                let __data = #tensor.to_data().convert::<i64>();
+                                let __slice = __data.as_slice::<i64>().unwrap();
+                                (__slice[0], __slice[1])
+                            };
+                        });
+                        // Use a 0/1 mask; the scale is applied later.
+                        (quote! { 1f32 }, quote! { 0f32 })
+                    }
+                    RuntimeValuesMode::Float => {
+                        prelude.extend(quote! {
+                            let (__onehot_off, __onehot_on): (f32, f32) = {
+                                let __data = #tensor.to_data().convert::<f32>();
+                                let __slice = __data.as_slice::<f32>().unwrap();
+                                (__slice[0], __slice[1])
+                            };
+                        });
+                        (quote! { __onehot_on }, quote! { __onehot_off })
+                    }
                 }
             }
         };
@@ -129,21 +169,35 @@ impl NodeCodegen for onnx_ir::one_hot::OneHotNode {
         // runtime dtype. Always cast to the ONNX-specified output dtype so
         // the generated code doesn't leak the backend default (CLAUDE.md).
         //
-        // For the runtime-values int path we call `one_hot_fill(1.0, 0.0)`
+        // For the runtime-values int paths we call `one_hot_fill(1.0, 0.0)`
         // to get a 0/1 mask and scale via integer scalar math:
         //     result = mask * (on - off) + off
         // The backend default IntElem can be narrower than i64 (burn-flex
-        // defaults to i32), so we force an explicit `.cast(I64)` before
-        // `mul_scalar`/`add_scalar`: the scale math then runs in i64 on
-        // every backend, and the final narrowing cast back to the ONNX
-        // output dtype happens in one place.
-        let int_scale = quote! {
-            .cast(burn::tensor::DType::I64)
-                .mul_scalar(__onehot_on_i - __onehot_off_i)
-                .add_scalar(__onehot_off_i)
-        };
-        let maybe_scale = if runtime_int_scale {
-            int_scale.clone()
+        // defaults to i32), so we force an explicit `.cast(I64|U64)` before
+        // `mul_scalar`/`add_scalar`: the scale math then runs in a type
+        // wide enough to represent every value the output dtype can hold,
+        // and the final narrowing cast back to the ONNX output dtype
+        // happens in one place. `wrapping_sub` is used so the unsigned
+        // case computes correctly (mask=0 -> off; mask=1 -> on, with the
+        // wrap canceling out).
+        let runtime_values_is_runtime = matches!(
+            self.config.values,
+            onnx_ir::one_hot::OneHotValuesInput::Runtime(_)
+        );
+        let maybe_scale = if runtime_values_is_runtime {
+            match runtime_values_mode {
+                RuntimeValuesMode::UnsignedInt => quote! {
+                    .cast(burn::tensor::DType::U64)
+                        .mul_scalar(__onehot_on_u.wrapping_sub(__onehot_off_u))
+                        .add_scalar(__onehot_off_u)
+                },
+                RuntimeValuesMode::SignedInt => quote! {
+                    .cast(burn::tensor::DType::I64)
+                        .mul_scalar(__onehot_on_i.wrapping_sub(__onehot_off_i))
+                        .add_scalar(__onehot_off_i)
+                },
+                RuntimeValuesMode::Float => TokenStream::new(),
+            }
         } else {
             TokenStream::new()
         };
@@ -444,7 +498,7 @@ mod tests {
                 indices
                     .one_hot_fill(5usize, 1f32, 0f32, -1i64)
                     .cast(burn::tensor::DType::I64)
-                    .mul_scalar(__onehot_on_i - __onehot_off_i)
+                    .mul_scalar(__onehot_on_i.wrapping_sub(__onehot_off_i))
                     .add_scalar(__onehot_off_i)
                     .cast(burn::tensor::DType::I64)
             };
@@ -489,9 +543,54 @@ mod tests {
                     .one_hot_fill(5usize, 1f32, 0f32, -1i64)
                     .int()
                     .cast(burn::tensor::DType::I64)
-                    .mul_scalar(__onehot_on_i - __onehot_off_i)
+                    .mul_scalar(__onehot_on_i.wrapping_sub(__onehot_off_i))
                     .add_scalar(__onehot_off_i)
                     .cast(burn::tensor::DType::I64)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_one_hot_runtime_values_uint_output() {
+        // Runtime values with an unsigned output dtype (U64) must read
+        // through u64 and scale in U64 so the full u64 range survives.
+        // Routing through i64 would wrap any on/off value above i64::MAX
+        // into a large negative intermediate, silently producing wrong
+        // results after the final cast. `wrapping_sub` is safe because the
+        // mask is 0 or 1: mask=0 -> 0 + off = off, mask=1 -> (on - off)
+        // + off = on under wrapping arithmetic.
+        let config = OneHotConfig::new(
+            OneHotDepthInput::Static(5),
+            OneHotValuesInput::Runtime(onnx_ir::ir::RuntimeInputRef::new("values".to_string(), 1)),
+            -1,
+        );
+        let node = OneHotNodeBuilder::new("onehot_rt_uint")
+            .input_tensor("indices", 1, DType::I64)
+            .input_tensor("values", 1, DType::U64)
+            .output_tensor("output", 2, DType::U64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            indices: Tensor<B, 1, Int>,
+            values: Tensor<B, 1, Int>,
+        ) -> Tensor<B, 2, Int> {
+            let output = {
+                let (__onehot_off_u, __onehot_on_u): (u64, u64) = {
+                    let __data = values.to_data().convert::<u64>();
+                    let __slice = __data.as_slice::<u64>().unwrap();
+                    (__slice[0], __slice[1])
+                };
+                indices
+                    .one_hot_fill(5usize, 1f32, 0f32, -1i64)
+                    .cast(burn::tensor::DType::U64)
+                    .mul_scalar(__onehot_on_u.wrapping_sub(__onehot_off_u))
+                    .add_scalar(__onehot_off_u)
+                    .cast(burn::tensor::DType::U64)
             };
             output
         }

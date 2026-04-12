@@ -43,8 +43,10 @@ impl NodeCodegen for onnx_ir::topk::TopKNode {
                         // Clamp with `max(0)` before `as usize`. A negative
                         // runtime k is out-of-spec for ONNX TopK; letting a
                         // negative i64 wrap to a huge usize causes OOM or a
-                        // cryptic deep-burn panic. Clamp to zero so the
-                        // failure surfaces as a benign empty-result instead.
+                        // cryptic deep-burn panic. Clamp to zero so a
+                        // broken model produces an empty top-k result
+                        // instead. Adding observability is tracked in
+                        // tracel-ai/burn-onnx#328.
                         quote! { let __topk_k: usize = (#ident as i64).max(0) as usize; }
                     }
                     ArgType::ScalarTensor(_) | ArgType::Tensor(_) => {
