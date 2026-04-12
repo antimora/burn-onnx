@@ -209,9 +209,7 @@ impl NodeProcessor for DftProcessor {
         // Try to extract dft_length for shape inference (if constant)
         let static_dft_length = match node.inputs.get(1) {
             Some(input) if !input.is_optional() => match input.value() {
-                Some(data) => extract_scalar_int(data, "dft_length")
-                    .ok()
-                    .map(|v| v as usize),
+                Some(data) => Some(extract_scalar_int(data, "dft_length")? as usize),
                 None => None,
             },
             _ => None,
