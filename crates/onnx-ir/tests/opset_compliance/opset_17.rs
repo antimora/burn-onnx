@@ -37,9 +37,8 @@ fn hamming_window(graph: &OnnxGraph) {
     insta::assert_snapshot!(format!("{node}"), @r#"
     HammingWindow "hammingwindow1"
       Inputs:
-        _: ScalarNative(I64) [static(0)]
       Outputs:
-        hammingwindow1_out1: F32[?]
+        hammingwindow1_out1: F32[10]
       Config:
         HammingWindowConfig {
             periodic: true,

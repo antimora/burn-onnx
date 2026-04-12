@@ -122,10 +122,31 @@ impl NodeProcessor for HammingWindowProcessor {
 
         let output_dtype = resolve_output_dtype(node)?;
 
+        // Validate size is a compile-time constant and extract static shape
+        let static_shape = match node.inputs[0].value() {
+            Some(data) => {
+                let val = data.scalar_i64().map_err(|e| ProcessError::TypeMismatch {
+                    expected: "scalar integer for size".to_string(),
+                    actual: format!("{e}"),
+                })?;
+                if val < 0 {
+                    return Err(ProcessError::Custom(
+                        "HammingWindow: size must be non-negative".to_string(),
+                    ));
+                }
+                Some(vec![Some(val as usize)])
+            }
+            None => {
+                return Err(ProcessError::Custom(
+                    "HammingWindow: size must be a compile-time constant".to_string(),
+                ));
+            }
+        };
+
         node.outputs[0].ty = ArgType::Tensor(TensorType {
             dtype: output_dtype,
             rank: 1,
-            static_shape: None,
+            static_shape,
         });
 
         Ok(())
@@ -168,10 +189,13 @@ impl NodeProcessor for HammingWindowProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
+    fn build_node(&self, mut builder: RawNode, opset: usize) -> Node {
         let config = self
             .extract_config(&builder, opset)
             .expect("Config extraction failed");
+
+        // Drop the size input: it's baked into config and codegen has no runtime inputs.
+        builder.inputs.clear();
 
         Node::HammingWindow(HammingWindowNode {
             name: builder.name,
@@ -204,6 +228,7 @@ mod tests {
             ArgType::Tensor(t) => {
                 assert_eq!(t.dtype, DType::F32);
                 assert_eq!(t.rank, 1);
+                assert_eq!(t.static_shape, Some(vec![Some(10)]));
             }
             _ => panic!("Expected Tensor output"),
         }
@@ -225,6 +250,7 @@ mod tests {
             ArgType::Tensor(t) => {
                 assert_eq!(t.dtype, DType::F64);
                 assert_eq!(t.rank, 1);
+                assert_eq!(t.static_shape, Some(vec![Some(8)]));
             }
             _ => panic!("Expected Tensor output"),
         }
@@ -261,13 +287,14 @@ mod tests {
 
     #[test]
     fn test_hamming_window_non_constant_size() {
-        let node = TestNodeBuilder::new(NodeType::HammingWindow, "test_hamming")
+        let mut node = TestNodeBuilder::new(NodeType::HammingWindow, "test_hamming")
             .input_scalar_i64("size")
             .output_tensor_f32("output", 0, None)
             .build();
 
         let processor = HammingWindowProcessor;
-        let result = processor.extract_config(&node, 17);
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 17, &prefs);
         assert!(
             matches!(result, Err(ProcessError::Custom(ref msg)) if msg.contains("compile-time constant")),
             "Expected compile-time constant error, got: {result:?}"
@@ -276,13 +303,14 @@ mod tests {
 
     #[test]
     fn test_hamming_window_negative_size() {
-        let node = TestNodeBuilder::new(NodeType::HammingWindow, "test_hamming")
+        let mut node = TestNodeBuilder::new(NodeType::HammingWindow, "test_hamming")
             .input_scalar_tensor_i64("size", Some(-5))
             .output_tensor_f32("output", 0, None)
             .build_with_graph_data(17);
 
         let processor = HammingWindowProcessor;
-        let result = processor.extract_config(&node, 17);
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 17, &prefs);
         assert!(
             matches!(result, Err(ProcessError::Custom(ref msg)) if msg.contains("non-negative")),
             "Expected non-negative error, got: {result:?}"
