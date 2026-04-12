@@ -10,7 +10,9 @@
 
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{ArgType, Argument, DType, Node, RawNode, RuntimeInputRef, TensorDataExt, TensorType};
+use crate::ir::{
+    ArgType, Argument, DType, Node, RawNode, RuntimeInputRef, TensorDataExt, TensorType,
+};
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError, validate_opset,
 };
@@ -197,10 +199,7 @@ impl NodeProcessor for HammingWindowProcessor {
                 }
                 WindowSize::Static(val as usize)
             }
-            None => WindowSize::Runtime(RuntimeInputRef::new(
-                node.inputs[0].name.clone(),
-                0,
-            )),
+            None => WindowSize::Runtime(RuntimeInputRef::new(node.inputs[0].name.clone(), 0)),
         };
 
         Ok(HammingWindowConfig {

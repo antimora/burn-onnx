@@ -43,7 +43,9 @@ mod tests {
     use super::super::test_helpers::*;
     use burn::tensor::DType;
     use insta::assert_snapshot;
-    use onnx_ir::node::hamming_window::{HammingWindowConfig, HammingWindowNodeBuilder, WindowSize};
+    use onnx_ir::node::hamming_window::{
+        HammingWindowConfig, HammingWindowNodeBuilder, WindowSize,
+    };
 
     #[test]
     fn test_hamming_window_static() {
