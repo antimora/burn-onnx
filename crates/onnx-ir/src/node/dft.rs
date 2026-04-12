@@ -89,7 +89,7 @@ impl NodeProcessor for DftProcessor {
         }
     }
 
-    fn lift_constants(&self, node: &mut RawNode, _opset: usize) -> Result<(), ProcessError> {
+    fn lift_constants(&self, node: &mut RawNode, opset: usize) -> Result<(), ProcessError> {
         // Lift dft_length (input[1]) if present and constant
         if let Some(input) = node.inputs.get(1)
             && !input.is_optional()
@@ -98,8 +98,9 @@ impl NodeProcessor for DftProcessor {
             node.inputs[1].to_static()?;
         }
 
-        // Lift axis (input[2]) if present and constant
-        if let Some(input) = node.inputs.get(2)
+        // Lift axis (input[2]) if present and constant (opset 20+ only; opset 17-19 uses attribute)
+        if opset >= 20
+            && let Some(input) = node.inputs.get(2)
             && !input.is_optional()
             && input.is_constant()
         {
@@ -204,7 +205,7 @@ impl NodeProcessor for DftProcessor {
         }
 
         // Resolve axis (default is -2, i.e. last signal dimension)
-        let axis = self.resolve_axis(node, &input_tensor)?;
+        let axis = self.resolve_axis(node, &input_tensor, opset)?;
 
         // Try to extract dft_length for shape inference (if constant)
         let static_dft_length = match node.inputs.get(1) {
@@ -245,7 +246,7 @@ impl NodeProcessor for DftProcessor {
         Ok(())
     }
 
-    fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
+    fn extract_config(&self, node: &RawNode, opset: usize) -> Result<Self::Config, ProcessError> {
         let input_tensor = match &node.inputs[0].ty {
             ArgType::Tensor(tensor) => tensor.clone(),
             _ => {
@@ -268,7 +269,7 @@ impl NodeProcessor for DftProcessor {
             .map(|v| v.clone().into_i64() != 0)
             .unwrap_or(false);
 
-        let axis = self.resolve_axis(node, &input_tensor)?;
+        let axis = self.resolve_axis(node, &input_tensor, opset)?;
 
         // Extract dft_length from input[1] if present
         let dft_length = match node.inputs.get(1) {
@@ -321,24 +322,36 @@ impl NodeProcessor for DftProcessor {
 }
 
 impl DftProcessor {
-    /// Resolve the axis parameter from input[2] or default (-2)
+    /// Resolve the axis parameter.
+    ///
+    /// In opset 17-19, axis is an attribute. In opset 20+, it moved to input[2].
     fn resolve_axis(
         &self,
         node: &RawNode,
         input_tensor: &TensorType,
+        opset: usize,
     ) -> Result<usize, ProcessError> {
         let rank = input_tensor.rank as i64;
 
-        let raw_axis: i64 = match node.inputs.get(2) {
-            Some(input) if !input.is_optional() => match input.value() {
-                Some(data) => extract_scalar_int(data, "axis")?,
-                None => {
-                    return Err(ProcessError::Custom(
-                        "DFT: axis must be a compile-time constant".to_string(),
-                    ));
-                }
-            },
-            _ => -2, // Default: last signal axis (second-to-last dim)
+        let raw_axis: i64 = if opset < 20 {
+            // Opset 17-19: axis is an attribute
+            node.attrs
+                .get("axis")
+                .map(|v| v.clone().into_i64())
+                .unwrap_or(-2)
+        } else {
+            // Opset 20+: axis is an optional input
+            match node.inputs.get(2) {
+                Some(input) if !input.is_optional() => match input.value() {
+                    Some(data) => extract_scalar_int(data, "axis")?,
+                    None => {
+                        return Err(ProcessError::Custom(
+                            "DFT: axis must be a compile-time constant".to_string(),
+                        ));
+                    }
+                },
+                _ => -2,
+            }
         };
 
         // Validate axis range: [-r, -2] union [0, r-2]
@@ -545,12 +558,12 @@ mod tests {
 
     #[test]
     fn test_dft_axis_out_of_range() {
+        // Opset 17: axis is an attribute
         let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
             .input_tensor_f32("input", 3, Some(vec![1, 16, 1]))
-            .input_tensor_i64_data("dft_length", vec![16], vec![])
-            .input_tensor_i64_data("axis", vec![2], vec![]) // axis=2 is last dim (invalid for rank 3)
             .output_tensor_f32("output", 0, None)
-            .build_with_graph_data(17);
+            .attr_int("axis", 2) // axis=2 is last dim (invalid for rank 3)
+            .build();
 
         let processor = DftProcessor;
         let prefs = OutputPreferences::new();
@@ -560,7 +573,49 @@ mod tests {
     }
 
     #[test]
-    fn test_dft_with_static_axis() {
+    fn test_dft_axis_out_of_range_opset20() {
+        // Opset 20: axis is an input
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 3, Some(vec![1, 16, 1]))
+            .input_tensor_i64_data("dft_length", vec![16], vec![])
+            .input_tensor_i64_data("axis", vec![2], vec![])
+            .output_tensor_f32("output", 0, None)
+            .build_with_graph_data(20);
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 20, &prefs);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("axis"));
+    }
+
+    #[test]
+    fn test_dft_with_axis_attribute_opset17() {
+        // Opset 17: axis is an attribute
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 4, Some(vec![2, 8, 16, 1]))
+            .output_tensor_f32("output", 0, None)
+            .attr_int("onesided", 1)
+            .attr_int("axis", 1)
+            .build();
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 17, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.rank, 4);
+                let shape = t.static_shape.as_ref().unwrap();
+                assert_eq!(shape, &vec![Some(2), Some(5), Some(16), Some(2)]);
+            }
+            _ => panic!("Expected Tensor output"),
+        }
+    }
+
+    #[test]
+    fn test_dft_with_axis_input_opset20() {
+        // Opset 20: axis is an input
         let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
             .input_tensor_f32("input", 4, Some(vec![2, 8, 16, 1]))
             .add_input(
@@ -574,11 +629,11 @@ mod tests {
             .input_tensor_i64_data("axis", vec![1], vec![])
             .output_tensor_f32("output", 0, None)
             .attr_int("onesided", 1)
-            .build_with_graph_data(17);
+            .build_with_graph_data(20);
 
         let processor = DftProcessor;
         let prefs = OutputPreferences::new();
-        processor.infer_types(&mut node, 17, &prefs).unwrap();
+        processor.infer_types(&mut node, 20, &prefs).unwrap();
 
         match &node.outputs[0].ty {
             ArgType::Tensor(t) => {
