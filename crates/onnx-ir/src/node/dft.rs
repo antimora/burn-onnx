@@ -34,11 +34,15 @@ use crate::processor::{
 fn extract_scalar_int(data: TensorData, name: &str) -> Result<i64, ProcessError> {
     if let Ok(slice) = data.as_slice::<i64>() {
         slice.first().copied().ok_or_else(|| {
-            ProcessError::Custom(format!("DFT: {name} constant must contain at least one element"))
+            ProcessError::Custom(format!(
+                "DFT: {name} constant must contain at least one element"
+            ))
         })
     } else if let Ok(slice) = data.as_slice::<i32>() {
         slice.first().copied().map(i64::from).ok_or_else(|| {
-            ProcessError::Custom(format!("DFT: {name} constant must contain at least one element"))
+            ProcessError::Custom(format!(
+                "DFT: {name} constant must contain at least one element"
+            ))
         })
     } else {
         Err(ProcessError::Custom(format!(
@@ -205,7 +209,9 @@ impl NodeProcessor for DftProcessor {
         // Try to extract dft_length for shape inference (if constant)
         let static_dft_length = match node.inputs.get(1) {
             Some(input) if !input.is_optional() => match input.value() {
-                Some(data) => extract_scalar_int(data, "dft_length").ok().map(|v| v as usize),
+                Some(data) => extract_scalar_int(data, "dft_length")
+                    .ok()
+                    .map(|v| v as usize),
                 None => None,
             },
             _ => None,
@@ -221,8 +227,7 @@ impl NodeProcessor for DftProcessor {
             *out_shape.last_mut().unwrap() = Some(2);
 
             // Effective DFT length: dft_length if provided, otherwise the input dim
-            let effective_n = static_dft_length
-                .or_else(|| out_shape.get(axis).copied().flatten());
+            let effective_n = static_dft_length.or_else(|| out_shape.get(axis).copied().flatten());
 
             if let Some(n) = effective_n {
                 out_shape[axis] = Some(if onesided { n / 2 + 1 } else { n });
@@ -340,8 +345,8 @@ impl DftProcessor {
 
         // Validate axis range: [-r, -2] union [0, r-2]
         // The last dimension is reserved for real/complex encoding, so axis = -1 is invalid.
-        let valid = (raw_axis >= -rank && raw_axis <= -2)
-            || (raw_axis >= 0 && raw_axis <= rank - 2);
+        let valid =
+            (raw_axis >= -rank && raw_axis <= -2) || (raw_axis >= 0 && raw_axis <= rank - 2);
         if !valid {
             return Err(ProcessError::Custom(format!(
                 "DFT: axis {raw_axis} out of valid range [-{rank}, -2] or [0, {}] for input rank {rank}",
