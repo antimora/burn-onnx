@@ -29,10 +29,7 @@ impl Default for WindowSize {
 /// ONNX spec constrains the output to float types (F16, BF16, F32, F64). Integer
 /// types are rejected with `InvalidAttribute` because a window function produces
 /// coefficients in `[0, 1]` that would silently truncate to mostly zeros.
-pub(crate) fn resolve_output_dtype(
-    node: &RawNode,
-    op_name: &str,
-) -> Result<DType, ProcessError> {
+pub(crate) fn resolve_output_dtype(node: &RawNode, op_name: &str) -> Result<DType, ProcessError> {
     let dtype = match node.attrs.get("output_datatype") {
         Some(val) => {
             let dt_i32 = val.clone().into_i32();

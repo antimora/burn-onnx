@@ -1,5 +1,9 @@
 use crate::include_models;
-include_models!(hamming_window, hamming_window_symmetric, hamming_window_runtime);
+include_models!(
+    hamming_window,
+    hamming_window_symmetric,
+    hamming_window_runtime
+);
 
 #[cfg(test)]
 mod tests {

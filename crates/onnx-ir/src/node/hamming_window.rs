@@ -10,7 +10,9 @@
 
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{ArgType, Argument, DType, Node, RawNode, RuntimeInputRef, TensorDataExt, TensorType};
+use crate::ir::{
+    ArgType, Argument, DType, Node, RawNode, RuntimeInputRef, TensorDataExt, TensorType,
+};
 use crate::node::window_common::resolve_output_dtype;
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError, validate_opset,
@@ -174,7 +176,10 @@ impl NodeProcessor for HammingWindowProcessor {
 
     fn build_node(&self, mut builder: RawNode, opset: usize) -> Node {
         let config = self.extract_config(&builder, opset).unwrap_or_else(|e| {
-            panic!("{OP_NAME} ({}): config extraction failed: {e}", builder.name)
+            panic!(
+                "{OP_NAME} ({}): config extraction failed: {e}",
+                builder.name
+            )
         });
 
         // Drop the size input if static (baked into config).
