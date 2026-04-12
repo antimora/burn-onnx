@@ -1,0 +1,475 @@
+//! # DFT (Discrete Fourier Transform)
+//!
+//! Computes the discrete Fourier Transform (or its inverse) of the input.
+//!
+//! **ONNX Spec**: <https://onnx.ai/onnx/operators/onnx__DFT.html>
+//!
+//! ## Opset Versions
+//! - **Opset 17**: Initial version
+//! - **Opset 20**: Updated type constraints
+//!
+//! ## Supported Configurations
+//!
+//! Only forward real-input DFT maps to Burn's signal API:
+//! - Forward real DFT with `onesided=1`: maps to `burn::tensor::signal::rfft`
+//! - Forward real DFT with `onesided=0`: rfft + conjugate symmetry reconstruction
+//!
+//! Not supported (will produce a codegen error):
+//! - Inverse DFT (`inverse=1`): ONNX uses complex-to-complex IDFT, but Burn only
+//!   provides `irfft` (inverse of real FFT), which is a different operation
+//! - Complex-to-complex forward DFT (complex input with trailing dim = 2)
+//!
+//! ## Type Constraints
+//! - **T1**: tensor(bfloat16), tensor(double), tensor(float), tensor(float16)
+//! - **T2**: tensor(int32), tensor(int64)
+
+use onnx_ir_derive::NodeBuilder;
+
+use crate::ir::{ArgType, Argument, Node, RawNode, TensorType};
+use crate::processor::{
+    InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError, validate_opset,
+};
+
+/// Configuration for the DFT operation
+#[derive(Debug, Clone, Default)]
+pub struct DftConfig {
+    /// Whether to compute the inverse DFT (default: false)
+    pub inverse: bool,
+    /// Whether to produce onesided output for real input (default: false)
+    pub onesided: bool,
+    /// The axis along which to perform the DFT (resolved to positive index)
+    pub axis: usize,
+    /// Optional DFT length (None means use the signal dimension size)
+    pub dft_length: Option<usize>,
+}
+
+/// Node representation for DFT operation
+#[derive(Debug, Clone, NodeBuilder)]
+pub struct DftNode {
+    pub name: String,
+    pub inputs: Vec<Argument>,
+    pub outputs: Vec<Argument>,
+    pub config: DftConfig,
+}
+
+pub(crate) struct DftProcessor;
+
+impl NodeProcessor for DftProcessor {
+    type Config = DftConfig;
+
+    fn spec(&self) -> NodeSpec {
+        NodeSpec {
+            min_opset: 17,
+            max_opset: None,
+            inputs: InputSpec::Range(1, 3),
+            outputs: OutputSpec::Exact(1),
+        }
+    }
+
+    fn lift_constants(&self, node: &mut RawNode, _opset: usize) -> Result<(), ProcessError> {
+        // Lift dft_length (input[1]) if present and constant
+        if let Some(input) = node.inputs.get(1)
+            && !input.is_optional()
+            && input.is_constant()
+        {
+            node.inputs[1].to_static()?;
+        }
+
+        // Lift axis (input[2]) if present and constant
+        if let Some(input) = node.inputs.get(2)
+            && !input.is_optional()
+            && input.is_constant()
+        {
+            node.inputs[2].to_static()?;
+        }
+
+        Ok(())
+    }
+
+    fn infer_types(
+        &self,
+        node: &mut RawNode,
+        opset: usize,
+        _output_preferences: &OutputPreferences,
+    ) -> Result<(), ProcessError> {
+        validate_opset(opset, 17)?;
+
+        let input_tensor = match &node.inputs[0].ty {
+            ArgType::Tensor(tensor) => tensor.clone(),
+            _ => {
+                return Err(ProcessError::TypeMismatch {
+                    expected: "Tensor".to_string(),
+                    actual: format!("{:?}", node.inputs[0].ty),
+                });
+            }
+        };
+
+        if input_tensor.rank < 2 {
+            return Err(ProcessError::Custom(format!(
+                "DFT: input must have rank >= 2 (got rank {}). \
+                 The last dimension represents real/complex components.",
+                input_tensor.rank
+            )));
+        }
+
+        // Determine if input is real or complex from the trailing dimension
+        let is_real_input = match &input_tensor.static_shape {
+            Some(shape) => match shape.last() {
+                Some(Some(1)) => true,
+                Some(Some(2)) => false,
+                Some(Some(d)) => {
+                    return Err(ProcessError::Custom(format!(
+                        "DFT: last dimension must be 1 (real) or 2 (complex), got {d}"
+                    )));
+                }
+                _ => {
+                    // Unknown static shape for last dim; assume real (most common)
+                    true
+                }
+            },
+            None => true, // No static shape; assume real
+        };
+
+        let onesided = node
+            .attrs
+            .get("onesided")
+            .map(|v| v.clone().into_i64() != 0)
+            .unwrap_or(false);
+
+        // Validate: complex input cannot be onesided
+        if !is_real_input && onesided {
+            return Err(ProcessError::Custom(
+                "DFT: onesided output is not possible with complex input".to_string(),
+            ));
+        }
+
+        // Resolve axis (default is -2, i.e. last signal dimension)
+        let axis = self.resolve_axis(node, &input_tensor)?;
+
+        // Output is always complex: same shape but last dim = 2
+        // If onesided, the signal axis dimension becomes floor(N/2) + 1
+        let out_rank = input_tensor.rank;
+        let out_static_shape = if let Some(shape) = &input_tensor.static_shape {
+            let mut out_shape = shape.clone();
+            // Last dim is always 2 (complex output)
+            *out_shape.last_mut().unwrap() = Some(2);
+
+            // If onesided, adjust the signal axis dimension
+            if onesided {
+                if let Some(Some(n)) = out_shape.get(axis) {
+                    out_shape[axis] = Some(n / 2 + 1);
+                }
+            }
+
+            Some(out_shape)
+        } else {
+            None
+        };
+
+        node.outputs[0].ty = ArgType::Tensor(TensorType {
+            dtype: input_tensor.dtype,
+            rank: out_rank,
+            static_shape: out_static_shape,
+        });
+
+        Ok(())
+    }
+
+    fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
+        let input_tensor = match &node.inputs[0].ty {
+            ArgType::Tensor(tensor) => tensor.clone(),
+            _ => {
+                return Err(ProcessError::TypeMismatch {
+                    expected: "Tensor".to_string(),
+                    actual: format!("{:?}", node.inputs[0].ty),
+                });
+            }
+        };
+
+        let inverse = node
+            .attrs
+            .get("inverse")
+            .map(|v| v.clone().into_i64() != 0)
+            .unwrap_or(false);
+
+        let onesided = node
+            .attrs
+            .get("onesided")
+            .map(|v| v.clone().into_i64() != 0)
+            .unwrap_or(false);
+
+        let axis = self.resolve_axis(node, &input_tensor)?;
+
+        // Extract dft_length from input[1] if present
+        let dft_length = match node.inputs.get(1) {
+            Some(input) if !input.is_optional() => match input.value() {
+                Some(data) => {
+                    let val = data.as_slice::<i64>().unwrap()[0];
+                    Some(val as usize)
+                }
+                None => {
+                    return Err(ProcessError::Custom(
+                        "DFT: dft_length must be a compile-time constant".to_string(),
+                    ));
+                }
+            },
+            _ => None,
+        };
+
+        Ok(DftConfig {
+            inverse,
+            onesided,
+            axis,
+            dft_length,
+        })
+    }
+
+    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
+        let config = self
+            .extract_config(&builder, opset)
+            .expect("Config extraction failed");
+
+        Node::Dft(DftNode {
+            name: builder.name,
+            inputs: builder.inputs,
+            outputs: builder.outputs,
+            config,
+        })
+    }
+}
+
+impl DftProcessor {
+    /// Resolve the axis parameter from input[2] or default (-2)
+    fn resolve_axis(
+        &self,
+        node: &RawNode,
+        input_tensor: &TensorType,
+    ) -> Result<usize, ProcessError> {
+        let rank = input_tensor.rank as i64;
+
+        let raw_axis: i64 = match node.inputs.get(2) {
+            Some(input) if !input.is_optional() => match input.value() {
+                Some(data) => data.as_slice::<i64>().unwrap()[0],
+                None => {
+                    return Err(ProcessError::Custom(
+                        "DFT: axis must be a compile-time constant".to_string(),
+                    ));
+                }
+            },
+            _ => -2, // Default: last signal axis (second-to-last dim)
+        };
+
+        // Validate axis range: [-r, -2] union [0, r-2]
+        if raw_axis < -rank || raw_axis > rank - 2 {
+            return Err(ProcessError::Custom(format!(
+                "DFT: axis {raw_axis} out of valid range [-{rank}, {}] for input rank {rank}",
+                rank - 2
+            )));
+        }
+
+        // Resolve negative axis
+        let axis = if raw_axis < 0 {
+            (rank + raw_axis) as usize
+        } else {
+            raw_axis as usize
+        };
+
+        Ok(axis)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{DType, NodeType};
+    use crate::node::test_utils::TestNodeBuilder;
+    use crate::processor::OutputPreferences;
+
+    #[test]
+    fn test_dft_forward_real_onesided() {
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 3, Some(vec![1, 16, 1]))
+            .add_input("", ArgType::Tensor(TensorType { dtype: DType::I64, rank: 0, static_shape: None })) // optional dft_length
+            .add_input("", ArgType::Tensor(TensorType { dtype: DType::I64, rank: 0, static_shape: None })) // optional axis
+            .output_tensor_f32("output", 0, None)
+            .attr_int("onesided", 1)
+            .build();
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 17, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.rank, 3);
+                assert_eq!(t.dtype, DType::F32);
+                // onesided: signal dim 16 -> 16/2+1 = 9, last dim = 2
+                let shape = t.static_shape.as_ref().unwrap();
+                assert_eq!(shape, &vec![Some(1), Some(9), Some(2)]);
+            }
+            _ => panic!("Expected Tensor output"),
+        }
+    }
+
+    #[test]
+    fn test_dft_forward_real_twosided() {
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 3, Some(vec![1, 16, 1]))
+            .output_tensor_f32("output", 0, None)
+            .build();
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 17, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.rank, 3);
+                // Non-onesided: signal dim stays 16, last dim = 2
+                let shape = t.static_shape.as_ref().unwrap();
+                assert_eq!(shape, &vec![Some(1), Some(16), Some(2)]);
+            }
+            _ => panic!("Expected Tensor output"),
+        }
+    }
+
+    #[test]
+    fn test_dft_inverse_complex() {
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 3, Some(vec![1, 16, 2]))
+            .output_tensor_f32("output", 0, None)
+            .attr_int("inverse", 1)
+            .build();
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 17, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.rank, 3);
+                let shape = t.static_shape.as_ref().unwrap();
+                assert_eq!(shape, &vec![Some(1), Some(16), Some(2)]);
+            }
+            _ => panic!("Expected Tensor output"),
+        }
+    }
+
+    #[test]
+    fn test_dft_complex_onesided_rejected() {
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 3, Some(vec![1, 16, 2]))
+            .output_tensor_f32("output", 0, None)
+            .attr_int("onesided", 1)
+            .build();
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 17, &prefs);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("onesided"));
+    }
+
+    #[test]
+    fn test_dft_rank_too_low() {
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 1, None)
+            .output_tensor_f32("output", 0, None)
+            .build();
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 17, &prefs);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_dft_opset_too_low() {
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 3, Some(vec![1, 16, 1]))
+            .output_tensor_f32("output", 0, None)
+            .build();
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 16, &prefs);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_dft_preserves_dtype() {
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f64("input", 3, Some(vec![1, 16, 1]))
+            .output_tensor_f32("output", 0, None)
+            .attr_int("onesided", 1)
+            .build();
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 17, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => assert_eq!(t.dtype, DType::F64),
+            _ => panic!("Expected Tensor output"),
+        }
+    }
+
+    #[test]
+    fn test_dft_config_extraction() {
+        let node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 3, Some(vec![1, 16, 1]))
+            .output_tensor_f32("output", 0, None)
+            .attr_int("inverse", 1)
+            .attr_int("onesided", 1)
+            .build();
+
+        let processor = DftProcessor;
+        let config = processor.extract_config(&node, 17).unwrap();
+
+        assert!(config.inverse);
+        assert!(config.onesided);
+        assert_eq!(config.axis, 1); // default -2 on rank 3 = 1
+        assert_eq!(config.dft_length, None);
+    }
+
+    #[test]
+    fn test_dft_axis_out_of_range() {
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 3, Some(vec![1, 16, 1]))
+            .input_tensor_i64_data("dft_length", vec![16], vec![])
+            .input_tensor_i64_data("axis", vec![2], vec![]) // axis=2 is last dim (invalid for rank 3)
+            .output_tensor_f32("output", 0, None)
+            .build_with_graph_data(17);
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 17, &prefs);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("axis"));
+    }
+
+    #[test]
+    fn test_dft_with_static_axis() {
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 4, Some(vec![2, 8, 16, 1]))
+            .add_input("", ArgType::Tensor(TensorType { dtype: DType::I64, rank: 0, static_shape: None })) // optional dft_length
+            .input_tensor_i64_data("axis", vec![1], vec![])
+            .output_tensor_f32("output", 0, None)
+            .attr_int("onesided", 1)
+            .build_with_graph_data(17);
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 17, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.rank, 4);
+                // axis=1, dim=8, onesided -> 8/2+1=5
+                let shape = t.static_shape.as_ref().unwrap();
+                assert_eq!(shape, &vec![Some(2), Some(5), Some(16), Some(2)]);
+            }
+            _ => panic!("Expected Tensor output"),
+        }
+    }
+}
