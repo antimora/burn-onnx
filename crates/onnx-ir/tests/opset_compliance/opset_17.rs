@@ -43,7 +43,9 @@ fn hamming_window(graph: &OnnxGraph) {
         HammingWindowConfig {
             periodic: true,
             output_dtype: F32,
-            size: 10,
+            size: Static(
+                10,
+            ),
         }
     "#);
 }
@@ -60,7 +62,9 @@ fn hann_window(graph: &OnnxGraph) {
         HannWindowConfig {
             periodic: true,
             output_dtype: F32,
-            size: 10,
+            size: Static(
+                10,
+            ),
         }
     "#);
 }

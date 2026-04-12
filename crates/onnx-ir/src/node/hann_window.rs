@@ -10,11 +10,26 @@
 
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{ArgType, Argument, DType, Node, RawNode, TensorDataExt, TensorType};
+use crate::ir::{ArgType, Argument, DType, Node, RawNode, RuntimeInputRef, TensorDataExt, TensorType};
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError, validate_opset,
 };
 use crate::proto_conversion::element_type_from_proto;
+
+/// Represents either a static or runtime window size.
+#[derive(Debug, Clone)]
+pub enum WindowSize {
+    /// Size known at compile time.
+    Static(usize),
+    /// Size determined at runtime from a graph input.
+    Runtime(RuntimeInputRef),
+}
+
+impl Default for WindowSize {
+    fn default() -> Self {
+        Self::Static(0)
+    }
+}
 
 /// Configuration for the HannWindow operation.
 #[derive(Debug, Clone)]
@@ -23,8 +38,8 @@ pub struct HannWindowConfig {
     pub periodic: bool,
     /// The output data type.
     pub output_dtype: DType,
-    /// The window size (must be a compile-time constant).
-    pub size: usize,
+    /// The window size.
+    pub size: WindowSize,
 }
 
 impl Default for HannWindowConfig {
@@ -32,7 +47,7 @@ impl Default for HannWindowConfig {
         Self {
             periodic: true,
             output_dtype: DType::F32,
-            size: 0,
+            size: WindowSize::default(),
         }
     }
 }
@@ -84,6 +99,18 @@ impl NodeProcessor for HannWindowProcessor {
         }
     }
 
+    fn input_preferences(
+        &self,
+        node: &RawNode,
+        _opset: usize,
+    ) -> Result<Option<crate::processor::InputPreferences>, ProcessError> {
+        use crate::processor::{ArgPreference, InputPreferences};
+
+        let mut prefs = InputPreferences::new();
+        prefs = prefs.add(&node.inputs[0].name, ArgPreference::ScalarNative);
+        Ok(Some(prefs))
+    }
+
     fn lift_constants(&self, node: &mut RawNode, _opset: usize) -> Result<(), ProcessError> {
         if !node.inputs.is_empty() && node.inputs[0].is_constant() {
             node.inputs[0].to_static()?;
@@ -122,7 +149,7 @@ impl NodeProcessor for HannWindowProcessor {
 
         let output_dtype = resolve_output_dtype(node)?;
 
-        // Validate size is a compile-time constant and extract static shape
+        // Extract static shape if size is a constant
         let static_shape = match node.inputs[0].value() {
             Some(data) => {
                 let val = data.scalar_i64().map_err(|e| ProcessError::TypeMismatch {
@@ -136,11 +163,7 @@ impl NodeProcessor for HannWindowProcessor {
                 }
                 Some(vec![Some(val as usize)])
             }
-            None => {
-                return Err(ProcessError::Custom(
-                    "HannWindow: size must be a compile-time constant".to_string(),
-                ));
-            }
+            None => None,
         };
 
         node.outputs[0].ty = ArgType::Tensor(TensorType {
@@ -161,7 +184,6 @@ impl NodeProcessor for HannWindowProcessor {
 
         let output_dtype = resolve_output_dtype(node)?;
 
-        // Extract size from the constant input
         let size = match node.inputs[0].value() {
             Some(data) => {
                 let val = data.scalar_i64().map_err(|e| ProcessError::TypeMismatch {
@@ -173,13 +195,12 @@ impl NodeProcessor for HannWindowProcessor {
                         "HannWindow: size must be non-negative".to_string(),
                     ));
                 }
-                val as usize
+                WindowSize::Static(val as usize)
             }
-            None => {
-                return Err(ProcessError::Custom(
-                    "HannWindow: size must be a compile-time constant".to_string(),
-                ));
-            }
+            None => WindowSize::Runtime(RuntimeInputRef::new(
+                node.inputs[0].name.clone(),
+                0,
+            )),
         };
 
         Ok(HannWindowConfig {
@@ -194,8 +215,10 @@ impl NodeProcessor for HannWindowProcessor {
             .extract_config(&builder, opset)
             .expect("Config extraction failed");
 
-        // Drop the size input: it's baked into config and codegen has no runtime inputs.
-        builder.inputs.clear();
+        // Drop the size input if static (baked into config).
+        if matches!(config.size, WindowSize::Static(_)) {
+            builder.inputs.clear();
+        }
 
         Node::HannWindow(HannWindowNode {
             name: builder.name,
@@ -267,26 +290,12 @@ mod tests {
         let processor = HannWindowProcessor;
         let config = processor.extract_config(&node, 17).unwrap();
         assert!(!config.periodic);
-        assert_eq!(config.size, 10);
+        assert!(matches!(config.size, WindowSize::Static(10)));
         assert_eq!(config.output_dtype, DType::F32);
     }
 
     #[test]
-    fn test_hann_window_periodic() {
-        let node = TestNodeBuilder::new(NodeType::HannWindow, "test_hann")
-            .input_scalar_tensor_i64("size", Some(8))
-            .output_tensor_f32("output", 0, None)
-            .attr_int("periodic", 1)
-            .build_with_graph_data(17);
-
-        let processor = HannWindowProcessor;
-        let config = processor.extract_config(&node, 17).unwrap();
-        assert!(config.periodic);
-        assert_eq!(config.size, 8);
-    }
-
-    #[test]
-    fn test_hann_window_non_constant_size() {
+    fn test_hann_window_runtime_size() {
         let mut node = TestNodeBuilder::new(NodeType::HannWindow, "test_hann")
             .input_scalar_i64("size")
             .output_tensor_f32("output", 0, None)
@@ -294,11 +303,20 @@ mod tests {
 
         let processor = HannWindowProcessor;
         let prefs = OutputPreferences::new();
-        let result = processor.infer_types(&mut node, 17, &prefs);
-        assert!(
-            matches!(result, Err(ProcessError::Custom(ref msg)) if msg.contains("compile-time constant")),
-            "Expected compile-time constant error, got: {result:?}"
-        );
+        processor.infer_types(&mut node, 17, &prefs).unwrap();
+
+        // Output shape is unknown for runtime size
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.rank, 1);
+                assert_eq!(t.static_shape, None);
+            }
+            _ => panic!("Expected Tensor output"),
+        }
+
+        // Config should have Runtime variant
+        let config = processor.extract_config(&node, 17).unwrap();
+        assert!(matches!(config.size, WindowSize::Runtime(_)));
     }
 
     #[test]
