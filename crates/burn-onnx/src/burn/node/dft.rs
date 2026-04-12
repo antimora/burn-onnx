@@ -96,34 +96,39 @@ fn forward_rfft_full(
             #dft_length_code
             let n = signal.dims()[#axis];
             let (re_half, im_half) = rfft(signal, #axis);
-
-            // Mirror conjugate symmetry: X[N-k] = conj(X[k])
-            // For the mirror, take bins [1..mirror_len] (excludes DC and Nyquist),
-            // reverse them, and negate the imaginary part.
             let half_len = re_half.dims()[#axis];
             let mirror_len = n - half_len;
-            let mirror_re = re_half
-                .clone()
-                .narrow(#axis, 1, mirror_len)
-                .flip([#flip_axis]);
-            let mirror_im = im_half
-                .clone()
-                .narrow(#axis, 1, mirror_len)
-                .flip([#flip_axis])
-                .neg();
 
-            let re_full = Tensor::<B, #signal_rank>::cat(
-                [re_half, mirror_re].to_vec(), #axis,
-            );
-            let im_full = Tensor::<B, #signal_rank>::cat(
-                [im_half, mirror_im].to_vec(), #axis,
-            );
+            if mirror_len == 0 {
+                // Degenerate case (n <= 1): no mirrored bins to reconstruct
+                Tensor::<B, #signal_rank>::stack::<#out_rank>(
+                    [re_half, im_half].to_vec(),
+                    #signal_rank,
+                )
+            } else {
+                // Mirror conjugate symmetry: X[N-k] = conj(X[k])
+                let mirror_re = re_half
+                    .clone()
+                    .narrow(#axis, 1, mirror_len)
+                    .flip([#flip_axis]);
+                let mirror_im = im_half
+                    .clone()
+                    .narrow(#axis, 1, mirror_len)
+                    .flip([#flip_axis])
+                    .neg();
 
-            // Stack along new last dim: [.., N] + [.., N] -> [.., N, 2]
-            Tensor::<B, #signal_rank>::stack::<#out_rank>(
-                [re_full, im_full].to_vec(),
-                #signal_rank,
-            )
+                let re_full = Tensor::<B, #signal_rank>::cat(
+                    [re_half, mirror_re].to_vec(), #axis,
+                );
+                let im_full = Tensor::<B, #signal_rank>::cat(
+                    [im_half, mirror_im].to_vec(), #axis,
+                );
+
+                Tensor::<B, #signal_rank>::stack::<#out_rank>(
+                    [re_full, im_full].to_vec(),
+                    #signal_rank,
+                )
+            }
         };
     }
 }
@@ -136,7 +141,7 @@ fn dft_length_adjustment(config: &DftConfig, axis: usize) -> TokenStream {
                 let signal = {
                     let current_len = signal.dims()[#axis];
                     if current_len < #dft_length {
-                        let mut pad_shape = signal.dims().to_vec();
+                        let mut pad_shape = signal.dims();
                         pad_shape[#axis] = #dft_length - current_len;
                         let padding = Tensor::zeros(pad_shape, &signal.device());
                         Tensor::cat([signal, padding].to_vec(), #axis)
@@ -209,15 +214,25 @@ mod tests {
                 let (re_half, im_half) = rfft(signal, 1usize);
                 let half_len = re_half.dims()[1usize];
                 let mirror_len = n - half_len;
-                let mirror_re = re_half.clone().narrow(1usize, 1, mirror_len).flip([1isize]);
-                let mirror_im = im_half
-                    .clone()
-                    .narrow(1usize, 1, mirror_len)
-                    .flip([1isize])
-                    .neg();
-                let re_full = Tensor::<B, 2usize>::cat([re_half, mirror_re].to_vec(), 1usize);
-                let im_full = Tensor::<B, 2usize>::cat([im_half, mirror_im].to_vec(), 1usize);
-                Tensor::<B, 2usize>::stack::<3usize>([re_full, im_full].to_vec(), 2usize)
+                if mirror_len == 0 {
+                    Tensor::<B, 2usize>::stack::<3usize>([re_half, im_half].to_vec(), 2usize)
+                } else {
+                    let mirror_re = re_half.clone().narrow(1usize, 1, mirror_len).flip([1isize]);
+                    let mirror_im = im_half
+                        .clone()
+                        .narrow(1usize, 1, mirror_len)
+                        .flip([1isize])
+                        .neg();
+                    let re_full = Tensor::<
+                        B,
+                        2usize,
+                    >::cat([re_half, mirror_re].to_vec(), 1usize);
+                    let im_full = Tensor::<
+                        B,
+                        2usize,
+                    >::cat([im_half, mirror_im].to_vec(), 1usize);
+                    Tensor::<B, 2usize>::stack::<3usize>([re_full, im_full].to_vec(), 2usize)
+                }
             };
             output
         }
@@ -246,7 +261,7 @@ mod tests {
                 let signal = {
                     let current_len = signal.dims()[1usize];
                     if current_len < 32usize {
-                        let mut pad_shape = signal.dims().to_vec();
+                        let mut pad_shape = signal.dims();
                         pad_shape[1usize] = 32usize - current_len;
                         let padding = Tensor::zeros(pad_shape, &signal.device());
                         Tensor::cat([signal, padding].to_vec(), 1usize)
