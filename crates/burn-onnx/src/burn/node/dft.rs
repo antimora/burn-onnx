@@ -21,35 +21,15 @@ impl NodeCodegen for onnx_ir::node::dft::DftNode {
             other => unreachable!("DFT input type validated in onnx-ir, got {other:?}"),
         };
 
-        // Determine if input is real (trailing dim = 1) or complex (trailing dim = 2)
-        let is_real_input = match &input_tensor.static_shape {
-            Some(shape) => matches!(shape.last(), Some(Some(1))),
-            None => true,
-        };
-
         let input_rank = input_tensor.rank;
         let config = &self.config;
 
-        if config.inverse {
-            // ONNX inverse DFT is a full complex-to-complex IDFT.
-            // Burn only provides irfft (inverse of real FFT), which is a different operation:
-            // irfft takes onesided spectrum and produces real output with different length.
-            // A proper inverse DFT requires ifft which Burn does not yet provide.
-            panic!(
-                "DFT: inverse DFT (inverse=1) is not supported. \
-                 Burn's irfft is the inverse of rfft (onesided real FFT), \
-                 which differs from ONNX's complex-to-complex inverse DFT. \
-                 A full ifft implementation in Burn is needed to support this."
-            );
-        } else if config.onesided && is_real_input {
+        // Unsupported configurations (inverse, complex input) are rejected
+        // in onnx-ir's infer_types with ProcessError. These branches are unreachable.
+        if config.onesided {
             forward_rfft(config, input, output, input_rank)
-        } else if !config.onesided && is_real_input {
-            forward_rfft_full(config, input, output, input_rank)
         } else {
-            panic!(
-                "DFT: complex-to-complex DFT is not supported by Burn's current signal API. \
-                 Only real-input forward DFT (onesided or full) is supported."
-            );
+            forward_rfft_full(config, input, output, input_rank)
         }
     }
 
@@ -106,6 +86,7 @@ fn forward_rfft_full(
     let out_rank = input_rank;
     let axis = config.axis;
     let squeeze_dim = signal_rank as isize;
+    let flip_axis = axis as isize; // flip() takes &[isize]
 
     let dft_length_code = dft_length_adjustment(config, axis);
 
@@ -117,21 +98,19 @@ fn forward_rfft_full(
             let (re_half, im_half) = rfft(signal, #axis);
 
             // Mirror conjugate symmetry: X[N-k] = conj(X[k])
+            // For the mirror, take bins [1..mirror_len] (excludes DC and Nyquist),
+            // reverse them, and negate the imaginary part.
             let half_len = re_half.dims()[#axis];
+            let mirror_len = n - half_len;
             let mirror_re = re_half
                 .clone()
-                .narrow(#axis, 1, half_len - 1)
-                .flip([#axis]);
+                .narrow(#axis, 1, mirror_len)
+                .flip([#flip_axis]);
             let mirror_im = im_half
                 .clone()
-                .narrow(#axis, 1, half_len - 1)
-                .flip([#axis])
+                .narrow(#axis, 1, mirror_len)
+                .flip([#flip_axis])
                 .neg();
-
-            // For even N, the Nyquist bin appears only once
-            let mirror_len = n - half_len;
-            let mirror_re = mirror_re.narrow(#axis, 0, mirror_len);
-            let mirror_im = mirror_im.narrow(#axis, 0, mirror_len);
 
             let re_full = Tensor::<B, #signal_rank>::cat(
                 [re_half, mirror_re].to_vec(), #axis,
@@ -187,6 +166,7 @@ mod tests {
             onesided: true,
             axis: 1,
             dft_length: None,
+            is_real_input: true,
         };
         let node = DftNodeBuilder::new("dft1")
             .input_tensor("input", 3, DType::F32)
@@ -213,6 +193,7 @@ mod tests {
             onesided: false,
             axis: 1,
             dft_length: None,
+            is_real_input: true,
         };
         let node = DftNodeBuilder::new("dft1")
             .input_tensor("input", 3, DType::F32)
@@ -227,15 +208,13 @@ mod tests {
                 let n = signal.dims()[1usize];
                 let (re_half, im_half) = rfft(signal, 1usize);
                 let half_len = re_half.dims()[1usize];
-                let mirror_re = re_half.clone().narrow(1usize, 1, half_len - 1).flip([1usize]);
+                let mirror_len = n - half_len;
+                let mirror_re = re_half.clone().narrow(1usize, 1, mirror_len).flip([1isize]);
                 let mirror_im = im_half
                     .clone()
-                    .narrow(1usize, 1, half_len - 1)
-                    .flip([1usize])
+                    .narrow(1usize, 1, mirror_len)
+                    .flip([1isize])
                     .neg();
-                let mirror_len = n - half_len;
-                let mirror_re = mirror_re.narrow(1usize, 0, mirror_len);
-                let mirror_im = mirror_im.narrow(1usize, 0, mirror_len);
                 let re_full = Tensor::<B, 2usize>::cat([re_half, mirror_re].to_vec(), 1usize);
                 let im_full = Tensor::<B, 2usize>::cat([im_half, mirror_im].to_vec(), 1usize);
                 Tensor::<B, 2usize>::stack::<3usize>([re_full, im_full].to_vec(), 2usize)
@@ -252,6 +231,7 @@ mod tests {
             onesided: true,
             axis: 1,
             dft_length: Some(32),
+            is_real_input: true,
         };
         let node = DftNodeBuilder::new("dft1")
             .input_tensor("input", 3, DType::F32)
@@ -284,37 +264,4 @@ mod tests {
         ");
     }
 
-    #[test]
-    #[should_panic(expected = "inverse DFT")]
-    fn test_dft_inverse_unsupported() {
-        let config = DftConfig {
-            inverse: true,
-            onesided: false,
-            axis: 1,
-            dft_length: None,
-        };
-        let node = DftNodeBuilder::new("dft1")
-            .input_tensor_shape("input", vec![1, 9, 2], DType::F32)
-            .output_tensor("output", 3, DType::F32)
-            .config(config)
-            .build();
-        codegen_forward_default(&node);
-    }
-
-    #[test]
-    #[should_panic(expected = "complex-to-complex")]
-    fn test_dft_complex_input_unsupported() {
-        let config = DftConfig {
-            inverse: false,
-            onesided: false,
-            axis: 1,
-            dft_length: None,
-        };
-        let node = DftNodeBuilder::new("dft1")
-            .input_tensor_shape("input", vec![1, 8, 2], DType::F32)
-            .output_tensor("output", 3, DType::F32)
-            .config(config)
-            .build();
-        codegen_forward_default(&node);
-    }
 }

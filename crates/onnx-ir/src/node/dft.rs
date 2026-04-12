@@ -41,6 +41,8 @@ pub struct DftConfig {
     pub axis: usize,
     /// Optional DFT length (None means use the signal dimension size)
     pub dft_length: Option<usize>,
+    /// Whether the input is real (trailing dim = 1) or complex (trailing dim = 2)
+    pub is_real_input: bool,
 }
 
 /// Node representation for DFT operation
@@ -112,7 +114,9 @@ impl NodeProcessor for DftProcessor {
             )));
         }
 
-        // Determine if input is real or complex from the trailing dimension
+        // Determine if input is real or complex from the trailing dimension.
+        // The trailing dim must be statically known (1 = real, 2 = complex) because
+        // the codegen strategy is fundamentally different for each case.
         let is_real_input = match &input_tensor.static_shape {
             Some(shape) => match shape.last() {
                 Some(Some(1)) => true,
@@ -123,12 +127,28 @@ impl NodeProcessor for DftProcessor {
                     )));
                 }
                 _ => {
-                    // Unknown static shape for last dim; assume real (most common)
-                    true
+                    return Err(ProcessError::Custom(
+                        "DFT: last dimension must be statically known as 1 (real) or 2 (complex). \
+                         Ensure the ONNX model has static shapes on the DFT input."
+                            .to_string(),
+                    ));
                 }
             },
-            None => true, // No static shape; assume real
+            None => {
+                return Err(ProcessError::Custom(
+                    "DFT: input shape must be statically known. \
+                     The last dimension determines real (1) vs complex (2) input."
+                        .to_string(),
+                ));
+            }
         };
+
+        // Extract attributes
+        let inverse = node
+            .attrs
+            .get("inverse")
+            .map(|v| v.clone().into_i64() != 0)
+            .unwrap_or(false);
 
         let onesided = node
             .attrs
@@ -136,7 +156,26 @@ impl NodeProcessor for DftProcessor {
             .map(|v| v.clone().into_i64() != 0)
             .unwrap_or(false);
 
-        // Validate: complex input cannot be onesided
+        // Reject unsupported configurations early with clear errors
+        if inverse {
+            return Err(ProcessError::Custom(
+                "DFT: inverse DFT (inverse=1) is not supported. \
+                 Burn's irfft is the inverse of rfft (onesided real FFT), \
+                 which differs from ONNX's complex-to-complex inverse DFT. \
+                 A full ifft implementation in Burn is needed to support this."
+                    .to_string(),
+            ));
+        }
+
+        if !is_real_input {
+            return Err(ProcessError::Custom(
+                "DFT: complex-to-complex DFT is not supported by Burn's current signal API. \
+                 Only real-input forward DFT (onesided or full) is supported."
+                    .to_string(),
+            ));
+        }
+
+        // Validate: complex input cannot be onesided (unreachable now, but kept for spec completeness)
         if !is_real_input && onesided {
             return Err(ProcessError::Custom(
                 "DFT: onesided output is not possible with complex input".to_string(),
@@ -216,11 +255,18 @@ impl NodeProcessor for DftProcessor {
             _ => None,
         };
 
+        // Determine is_real_input from trailing dim (validated in infer_types)
+        let is_real_input = match &input_tensor.static_shape {
+            Some(shape) => matches!(shape.last(), Some(Some(1))),
+            _ => true, // infer_types rejects unknown shapes, so this is a safe fallback
+        };
+
         Ok(DftConfig {
             inverse,
             onesided,
             axis,
             dft_length,
+            is_real_input,
         })
     }
 
@@ -334,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dft_inverse_complex() {
+    fn test_dft_inverse_rejected() {
         let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
             .input_tensor_f32("input", 3, Some(vec![1, 16, 2]))
             .output_tensor_f32("output", 0, None)
@@ -343,37 +389,43 @@ mod tests {
 
         let processor = DftProcessor;
         let prefs = OutputPreferences::new();
-        processor.infer_types(&mut node, 17, &prefs).unwrap();
-
-        match &node.outputs[0].ty {
-            ArgType::Tensor(t) => {
-                assert_eq!(t.rank, 3);
-                let shape = t.static_shape.as_ref().unwrap();
-                assert_eq!(shape, &vec![Some(1), Some(16), Some(2)]);
-            }
-            _ => panic!("Expected Tensor output"),
-        }
+        let result = processor.infer_types(&mut node, 17, &prefs);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("inverse"));
     }
 
     #[test]
-    fn test_dft_complex_onesided_rejected() {
+    fn test_dft_complex_input_rejected() {
         let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
             .input_tensor_f32("input", 3, Some(vec![1, 16, 2]))
             .output_tensor_f32("output", 0, None)
-            .attr_int("onesided", 1)
             .build();
 
         let processor = DftProcessor;
         let prefs = OutputPreferences::new();
         let result = processor.infer_types(&mut node, 17, &prefs);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("onesided"));
+        assert!(result.unwrap_err().to_string().contains("complex-to-complex"));
+    }
+
+    #[test]
+    fn test_dft_unknown_shape_rejected() {
+        let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
+            .input_tensor_f32("input", 3, None)
+            .output_tensor_f32("output", 0, None)
+            .build();
+
+        let processor = DftProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 17, &prefs);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("statically known"));
     }
 
     #[test]
     fn test_dft_rank_too_low() {
         let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
-            .input_tensor_f32("input", 1, None)
+            .input_tensor_f32("input", 1, Some(vec![8]))
             .output_tensor_f32("output", 0, None)
             .build();
 
@@ -430,6 +482,7 @@ mod tests {
         assert!(config.onesided);
         assert_eq!(config.axis, 1); // default -2 on rank 3 = 1
         assert_eq!(config.dft_length, None);
+        assert!(config.is_real_input);
     }
 
     #[test]

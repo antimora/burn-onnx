@@ -1,5 +1,5 @@
 use crate::include_models;
-include_models!(dft_onesided);
+include_models!(dft_onesided, dft_full);
 
 #[cfg(test)]
 mod tests {
@@ -21,12 +21,6 @@ mod tests {
         let output = model.forward(input);
 
         // Expected onesided DFT output: [1, 5, 2]
-        // FFT([1,2,3,4,5,6,7,8]) onesided:
-        //   bin 0: 36.0 + 0.0j
-        //   bin 1: -4.0 + 9.6569j
-        //   bin 2: -4.0 + 4.0j
-        //   bin 3: -4.0 + 1.6569j
-        //   bin 4: -4.0 + 0.0j
         let expected = burn::tensor::Tensor::<TestBackend, 3>::from_floats(
             [
                 [
@@ -35,6 +29,42 @@ mod tests {
                     [-4.0, 4.0],
                     [-4.0, 1.656_854_3],
                     [-4.0, 0.0],
+                ],
+            ],
+            &device,
+        );
+
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected.to_data(), burn::tensor::Tolerance::default());
+    }
+
+    #[test]
+    fn dft_full_spectrum() {
+        let device = Default::default();
+        let model: dft_full::Model<TestBackend> = dft_full::Model::new(&device);
+
+        // Input: [1, 8, 1] real signal [1, 2, 3, 4, 5, 6, 7, 8]
+        let input = burn::tensor::Tensor::<TestBackend, 3>::from_floats(
+            [[[1.0], [2.0], [3.0], [4.0], [5.0], [6.0], [7.0], [8.0]]],
+            &device,
+        );
+
+        let output = model.forward(input);
+
+        // Expected full DFT output: [1, 8, 2]
+        // Full spectrum = onesided + conjugate mirror
+        let expected = burn::tensor::Tensor::<TestBackend, 3>::from_floats(
+            [
+                [
+                    [36.0f32, 0.0],
+                    [-4.0, 9.656_855],
+                    [-4.0, 4.0],
+                    [-4.0, 1.656_854_3],
+                    [-4.0, 0.0],
+                    [-4.0, -1.656_854_3],
+                    [-4.0, -4.0],
+                    [-4.0, -9.656_855],
                 ],
             ],
             &device,
