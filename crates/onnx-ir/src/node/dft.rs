@@ -194,10 +194,8 @@ impl NodeProcessor for DftProcessor {
             *out_shape.last_mut().unwrap() = Some(2);
 
             // If onesided, adjust the signal axis dimension
-            if onesided {
-                if let Some(Some(n)) = out_shape.get(axis) {
-                    out_shape[axis] = Some(n / 2 + 1);
-                }
+            if onesided && let Some(Some(n)) = out_shape.get(axis) {
+                out_shape[axis] = Some(n / 2 + 1);
             }
 
             Some(out_shape)
@@ -335,8 +333,22 @@ mod tests {
     fn test_dft_forward_real_onesided() {
         let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
             .input_tensor_f32("input", 3, Some(vec![1, 16, 1]))
-            .add_input("", ArgType::Tensor(TensorType { dtype: DType::I64, rank: 0, static_shape: None })) // optional dft_length
-            .add_input("", ArgType::Tensor(TensorType { dtype: DType::I64, rank: 0, static_shape: None })) // optional axis
+            .add_input(
+                "",
+                ArgType::Tensor(TensorType {
+                    dtype: DType::I64,
+                    rank: 0,
+                    static_shape: None,
+                }),
+            ) // optional dft_length
+            .add_input(
+                "",
+                ArgType::Tensor(TensorType {
+                    dtype: DType::I64,
+                    rank: 0,
+                    static_shape: None,
+                }),
+            ) // optional axis
             .output_tensor_f32("output", 0, None)
             .attr_int("onesided", 1)
             .build();
@@ -405,7 +417,12 @@ mod tests {
         let prefs = OutputPreferences::new();
         let result = processor.infer_types(&mut node, 17, &prefs);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("complex-to-complex"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("complex-to-complex")
+        );
     }
 
     #[test]
@@ -505,7 +522,14 @@ mod tests {
     fn test_dft_with_static_axis() {
         let mut node = TestNodeBuilder::new(NodeType::Dft, "test_dft")
             .input_tensor_f32("input", 4, Some(vec![2, 8, 16, 1]))
-            .add_input("", ArgType::Tensor(TensorType { dtype: DType::I64, rank: 0, static_shape: None })) // optional dft_length
+            .add_input(
+                "",
+                ArgType::Tensor(TensorType {
+                    dtype: DType::I64,
+                    rank: 0,
+                    static_shape: None,
+                }),
+            ) // optional dft_length
             .input_tensor_i64_data("axis", vec![1], vec![])
             .output_tensor_f32("output", 0, None)
             .attr_int("onesided", 1)
