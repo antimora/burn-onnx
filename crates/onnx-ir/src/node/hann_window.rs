@@ -10,28 +10,15 @@
 
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{
-    ArgType, Argument, DType, Node, RawNode, RuntimeInputRef, TensorDataExt, TensorType,
-};
+use crate::ir::{ArgType, Argument, DType, Node, RawNode, RuntimeInputRef, TensorDataExt, TensorType};
+use crate::node::window_common::resolve_output_dtype;
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError, validate_opset,
 };
-use crate::proto_conversion::element_type_from_proto;
 
-/// Represents either a static or runtime window size.
-#[derive(Debug, Clone)]
-pub enum WindowSize {
-    /// Size known at compile time.
-    Static(usize),
-    /// Size determined at runtime from a graph input.
-    Runtime(RuntimeInputRef),
-}
+pub use crate::node::window_common::WindowSize;
 
-impl Default for WindowSize {
-    fn default() -> Self {
-        Self::Static(0)
-    }
-}
+const OP_NAME: &str = "HannWindow";
 
 /// Configuration for the HannWindow operation.
 #[derive(Debug, Clone)]
@@ -64,30 +51,6 @@ pub struct HannWindowNode {
 }
 
 pub(crate) struct HannWindowProcessor;
-
-/// Resolve the output_datatype attribute (default: FLOAT).
-fn resolve_output_dtype(node: &RawNode) -> Result<DType, ProcessError> {
-    let dtype = match node.attrs.get("output_datatype") {
-        Some(val) => {
-            let dt_i32 = val.clone().into_i32();
-            element_type_from_proto(dt_i32).map_err(|e| ProcessError::InvalidAttribute {
-                name: "output_datatype".to_string(),
-                reason: e,
-            })?
-        }
-        None => DType::F32,
-    };
-
-    // ONNX spec constrains T2 to float types
-    if !matches!(dtype, DType::F16 | DType::BF16 | DType::F32 | DType::F64) {
-        return Err(ProcessError::InvalidAttribute {
-            name: "output_datatype".to_string(),
-            reason: format!("must be a float type, got {dtype:?}"),
-        });
-    }
-
-    Ok(dtype)
-}
 
 impl NodeProcessor for HannWindowProcessor {
     type Config = HannWindowConfig;
@@ -149,7 +112,7 @@ impl NodeProcessor for HannWindowProcessor {
             });
         }
 
-        let output_dtype = resolve_output_dtype(node)?;
+        let output_dtype = resolve_output_dtype(node, OP_NAME)?;
 
         // Extract static shape if size is a constant
         let static_shape = match node.inputs[0].value() {
@@ -159,9 +122,9 @@ impl NodeProcessor for HannWindowProcessor {
                     actual: format!("{e}"),
                 })?;
                 if val < 0 {
-                    return Err(ProcessError::Custom(
-                        "HannWindow: size must be non-negative".to_string(),
-                    ));
+                    return Err(ProcessError::Custom(format!(
+                        "{OP_NAME}: size must be non-negative, got {val}"
+                    )));
                 }
                 Some(vec![Some(val as usize)])
             }
@@ -184,7 +147,7 @@ impl NodeProcessor for HannWindowProcessor {
             .map(|v| v.clone().into_i64() != 0)
             .unwrap_or(true);
 
-        let output_dtype = resolve_output_dtype(node)?;
+        let output_dtype = resolve_output_dtype(node, OP_NAME)?;
 
         let size = match node.inputs[0].value() {
             Some(data) => {
@@ -193,9 +156,9 @@ impl NodeProcessor for HannWindowProcessor {
                     actual: format!("{e}"),
                 })?;
                 if val < 0 {
-                    return Err(ProcessError::Custom(
-                        "HannWindow: size must be non-negative".to_string(),
-                    ));
+                    return Err(ProcessError::Custom(format!(
+                        "{OP_NAME}: size must be non-negative, got {val}"
+                    )));
                 }
                 WindowSize::Static(val as usize)
             }
@@ -210,9 +173,9 @@ impl NodeProcessor for HannWindowProcessor {
     }
 
     fn build_node(&self, mut builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(&builder, opset).unwrap_or_else(|e| {
+            panic!("{OP_NAME} ({}): config extraction failed: {e}", builder.name)
+        });
 
         // Drop the size input if static (baked into config).
         if matches!(config.size, WindowSize::Static(_)) {
@@ -304,7 +267,6 @@ mod tests {
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 17, &prefs).unwrap();
 
-        // Output shape is unknown for runtime size
         match &node.outputs[0].ty {
             ArgType::Tensor(t) => {
                 assert_eq!(t.rank, 1);
@@ -313,9 +275,45 @@ mod tests {
             _ => panic!("Expected Tensor output"),
         }
 
-        // Config should have Runtime variant
         let config = processor.extract_config(&node, 17).unwrap();
         assert!(matches!(config.size, WindowSize::Runtime(_)));
+    }
+
+    #[test]
+    fn test_hann_window_i32_input_runtime() {
+        // i32 runtime input (not a constant) - exercises the input dtype validation for i32
+        let mut node = TestNodeBuilder::new(NodeType::HannWindow, "test_hann")
+            .input_tensor_i32("size", 0, None)
+            .output_tensor_f32("output", 0, None)
+            .build();
+
+        let processor = HannWindowProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 17, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.dtype, DType::F32);
+                assert_eq!(t.rank, 1);
+            }
+            _ => panic!("Expected Tensor output"),
+        }
+    }
+
+    #[test]
+    fn test_hann_window_float_input_rejected() {
+        let mut node = TestNodeBuilder::new(NodeType::HannWindow, "test_hann")
+            .input_scalar_f32("size")
+            .output_tensor_f32("output", 0, None)
+            .build();
+
+        let processor = HannWindowProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 17, &prefs);
+        assert!(
+            matches!(result, Err(ProcessError::TypeMismatch { .. })),
+            "Expected type mismatch for float input, got: {result:?}"
+        );
     }
 
     #[test]

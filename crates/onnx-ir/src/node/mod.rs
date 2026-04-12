@@ -98,6 +98,7 @@ pub mod group_norm;
 pub mod gru;
 pub mod hamming_window;
 pub mod hann_window;
+pub mod window_common;
 pub mod hard_sigmoid;
 pub mod hard_swish;
 pub mod hardmax;

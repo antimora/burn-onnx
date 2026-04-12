@@ -23,7 +23,11 @@ impl NodeCodegen for onnx_ir::node::hann_window::HannWindowNode {
             WindowSize::Runtime(runtime_ref) => {
                 let arg = &self.inputs[runtime_ref.input_index];
                 let name = arg_to_ident(arg);
-                quote! { #name as usize }
+                quote! { {
+                    let __size = #name;
+                    assert!(__size >= 0, "HannWindow: size must be non-negative, got {}", __size);
+                    __size as usize
+                } }
             }
         };
 
@@ -104,12 +108,24 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r"
+        assert_snapshot!(code, @r#"
         pub fn forward(&self, size: i64) -> Tensor<B, 1> {
-            let output = hann_window::<B>(size as usize, true, &self.device)
+            let output = hann_window::<
+                B,
+            >(
+                    {
+                        let __size = size;
+                        assert!(
+                            __size >= 0, "HannWindow: size must be non-negative, got {}", __size
+                        );
+                        __size as usize
+                    },
+                    true,
+                    &self.device,
+                )
                 .cast(burn::tensor::DType::F32);
             output
         }
-        ");
+        "#);
     }
 }
