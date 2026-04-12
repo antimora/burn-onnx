@@ -112,4 +112,3 @@ fn sum(graph: &OnnxGraph) {
         sum1_out1: F32[2, 3, 4]
     "#);
 }
-

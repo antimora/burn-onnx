@@ -647,4 +647,3 @@ fn thresholded_relu(graph: &OnnxGraph) {
         }
     "#);
 }
-

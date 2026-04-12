@@ -27,4 +27,3 @@ fn concat(graph: &OnnxGraph) {
         }
     "#);
 }
-

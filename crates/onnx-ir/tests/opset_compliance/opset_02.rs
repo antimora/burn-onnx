@@ -68,4 +68,3 @@ fn split(graph: &OnnxGraph) {
         }
     "#);
 }
-

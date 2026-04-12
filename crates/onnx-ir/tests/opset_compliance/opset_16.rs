@@ -358,4 +358,3 @@ fn where_op(graph: &OnnxGraph) {
         where1_out1: F32[2, 3]
     "#);
 }
-

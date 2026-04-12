@@ -75,4 +75,3 @@ fn shape(graph: &OnnxGraph) {
         }
     "#);
 }
-

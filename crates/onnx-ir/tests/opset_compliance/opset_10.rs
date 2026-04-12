@@ -240,4 +240,3 @@ fn top_k(graph: &OnnxGraph) {
         }
     "#);
 }
-
