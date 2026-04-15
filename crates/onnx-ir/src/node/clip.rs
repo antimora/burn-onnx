@@ -361,12 +361,13 @@ mod tests {
     #[test]
     fn test_clip_config_no_min_max() {
         let node = create_test_node_with_attributes(None, None);
-        let node = node;
         let processor = ClipProcessor;
 
-        // Extract config first - this should fail with an error
-        let result = processor.extract_config(&node, 16);
-        assert!(matches!(result, Err(ProcessError::Custom(_))));
+        // Neither min nor max present -> identity. Extract should succeed
+        // and return None for both bounds; codegen handles the pass-through.
+        let config = processor.extract_config(&node, 16).unwrap();
+        assert!(config.min.is_none());
+        assert!(config.max.is_none());
     }
 
     #[test]

@@ -6312,13 +6312,11 @@ status = "pass"
 status = "pass"
 
 [test_squeeze]
-status = "skip-codegen"
-reason = "Runtime squeeze axes not yet supported in burn-onnx"
-tracking = "#314"
+status = "pass"
 
 [test_squeeze_negative_axes]
-status = "skip-codegen"
-reason = "Runtime squeeze axes not yet supported in burn-onnx"
+status = "fail-compare"
+reason = "runtime squeeze axes: negative indices are normalized but burn squeeze_dims still rejects multi-axis squeeze; needs ordering fix"
 tracking = "#314"
 
 [test_stft]
