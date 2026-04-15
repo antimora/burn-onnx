@@ -167,6 +167,68 @@ fn verify_expectations_match_tests() {
         intersection.is_empty(),
         "test(s) appear in both HARNESS_TESTS and CODEGEN_ONLY_TESTS: {intersection:?}"
     );
+
+    // ---- Cross-check 4: every FailCompare row shows up in the fail-compare manifest ----
+    //
+    // Mirrors cross-check 2 for the drift-check manifests. A FailCompare
+    // entry missing from both FAIL_COMPARE_RUNNERS and
+    // FAIL_COMPARE_CODEGEN_ONLY means build.rs silently dropped it,
+    // which would defeat the drift check's purpose.
+    let fc_runners: std::collections::BTreeSet<&str> =
+        FAIL_COMPARE_RUNNERS.iter().map(|(n, _)| *n).collect();
+    let fc_codegen_only: std::collections::BTreeSet<&str> =
+        FAIL_COMPARE_CODEGEN_ONLY.iter().copied().collect();
+    let fc_union: std::collections::BTreeSet<&str> =
+        fc_runners.union(&fc_codegen_only).copied().collect();
+    let declared_fail_compare: std::collections::BTreeSet<&str> = expectations
+        .entries
+        .iter()
+        .filter(|(_, entry)| entry.status == Status::FailCompare)
+        .map(|(k, _)| k.as_str())
+        .collect();
+    let fc_not_in_manifest: Vec<&&str> = declared_fail_compare.difference(&fc_union).collect();
+    let fc_manifest_not_in_decl: Vec<&&str> =
+        fc_union.difference(&declared_fail_compare).collect();
+    assert!(
+        fc_not_in_manifest.is_empty() && fc_manifest_not_in_decl.is_empty(),
+        "fail-compare list and build.rs manifest have drifted.\n  \
+         FailCompare in expectations.toml but missing from manifest: {fc_not_in_manifest:?}\n  \
+         In fail-compare manifest but not marked FailCompare:         {fc_manifest_not_in_decl:?}"
+    );
+    let fc_intersection: Vec<_> = fc_runners.intersection(&fc_codegen_only).collect();
+    assert!(
+        fc_intersection.is_empty(),
+        "test(s) appear in both FAIL_COMPARE_RUNNERS and FAIL_COMPARE_CODEGEN_ONLY: {fc_intersection:?}"
+    );
+}
+
+/// Drift check: every `status = "fail-compare"` entry must still fail
+/// when run against the reference output. If a runner returns `false`
+/// (comparison succeeded), the underlying bug has been fixed — usually
+/// via an upstream burn rev bump — and the reviewer needs to flip the
+/// row to `status = "pass"` so it joins the regular harness.
+///
+/// Without this check, fail-compare entries stay in limbo indefinitely:
+/// the build.rs pass-list filter excludes them from the harness, so
+/// they produce zero signal when upstream is fixed.
+///
+/// Only entries that successfully introspected end up in
+/// `FAIL_COMPARE_RUNNERS`; the rest are in `FAIL_COMPARE_CODEGEN_ONLY`
+/// and can't be runtime-checked here (dynamic shape, rank-0 I/O, etc.).
+#[test]
+fn verify_fail_compare_still_fails() {
+    let mut now_passing: Vec<&str> = Vec::new();
+    for (name, runner) in FAIL_COMPARE_RUNNERS {
+        // `true` means the comparison still fails (bug still present,
+        // no drift). `false` means it now passes and the row is stale.
+        if !runner() {
+            now_passing.push(*name);
+        }
+    }
+    assert!(
+        now_passing.is_empty(),
+        "fail-compare entries that now pass; flip their status to \"pass\" in expectations.toml:\n  {now_passing:#?}"
+    );
 }
 
 /// Negative gate: prove that the comparison path inside a harness
