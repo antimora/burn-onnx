@@ -26,6 +26,13 @@
 
 #![allow(clippy::approx_constant)]
 
+// Some generated model files use `alloc::vec::Vec` in runtime codegen
+// (gathernd, slice with runtime tensor indices, tile with runtime
+// repeats). Pull the alloc crate into scope so those paths resolve
+// when the test binary links the generated modules. onnx-tests does
+// the same in its own test_mod.rs.
+extern crate alloc;
+
 mod backend;
 
 use std::path::PathBuf;

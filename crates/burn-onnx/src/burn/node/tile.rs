@@ -13,17 +13,44 @@ impl NodeCodegen for onnx_ir::tile::TileNode {
         let input = scope.arg(self.inputs.first().unwrap());
         let output = arg_to_ident(self.outputs.first().unwrap());
 
-        // Extract static repeats from the enum wrapper
-        let repeats_vec = match &self.config.repeats {
-            onnx_ir::tile::TileInput::Static(repeats) => repeats,
-            onnx_ir::tile::TileInput::Runtime(_) => {
-                panic!("Runtime repeats are not supported in burn-onnx")
+        match &self.config.repeats {
+            onnx_ir::tile::TileInput::Static(repeats_vec) => {
+                let repeats = repeats_vec.iter().map(|r| r.to_tokens());
+                quote! {
+                    let #output = #input.repeat(&[#(#repeats),*]);
+                }
             }
-        };
-        let repeats = repeats_vec.iter().map(|r| r.to_tokens());
-
-        quote! {
-            let #output = #input.repeat(&[#(#repeats),*]);
+            onnx_ir::tile::TileInput::Runtime(runtime_ref) => {
+                // Runtime repeats: the value is known only at forward()
+                // time. Shape inputs are native `[i64; N]`; tensor
+                // inputs need a to_data() round-trip. Convert to
+                // Vec<usize> and call .repeat() with a slice.
+                let repeats_arg = &self.inputs[runtime_ref.input_index];
+                let repeats_expr = scope.arg(repeats_arg);
+                let to_vec_usize = match &repeats_arg.ty {
+                    ArgType::Shape(_) => quote! {
+                        let __repeats: alloc::vec::Vec<usize> =
+                            #repeats_expr.iter().map(|&v| v as usize).collect();
+                    },
+                    _ => quote! {
+                        let __repeats: alloc::vec::Vec<usize> =
+                            #repeats_expr
+                                .to_data()
+                                .convert::<i64>()
+                                .into_vec::<i64>()
+                                .unwrap()
+                                .into_iter()
+                                .map(|v| v as usize)
+                                .collect();
+                    },
+                };
+                quote! {
+                    let #output = {
+                        #to_vec_usize
+                        #input.repeat(&__repeats)
+                    };
+                }
+            }
         }
     }
 }

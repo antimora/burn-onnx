@@ -161,31 +161,48 @@ fn generate_tensor_slice(
                 let end_data_var = quote! { end_data };
                 let end_vec_var = quote! { end_vec };
 
-                // Check if axes are provided (from onnx-ir with ONNX spec defaults)
-                if let Some(onnx_ir::slice::SliceInput::Static(ref axes)) = node.config.axes {
-                    // Build ranges respecting the axes
-                    let mut ranges = vec![quote! { .. }; rank];
-                    for (idx, &axis) in axes.iter().enumerate() {
-                        let axis_idx = axis as usize;
-                        if axis_idx < rank {
-                            let vec_idx = proc_macro2::Literal::usize_unsuffixed(idx);
-                            ranges[axis_idx] = quote! {
-                                #start_vec_var[#vec_idx] as usize..#end_vec_var[#vec_idx] as usize
-                            };
-                        }
+                // Check if axes are provided (from onnx-ir with ONNX spec defaults).
+                // If absent, fall back to the ONNX default: axes = 0..len(starts)
+                // (contiguous leading dims). This covers the common case where
+                // a model omits the axes input entirely.
+                let axes_vec: Vec<i64> = match &node.config.axes {
+                    Some(onnx_ir::slice::SliceInput::Static(axes)) => axes.clone(),
+                    _ => {
+                        // ONNX default: axes = [0, 1, ..., len(starts) - 1]. For
+                        // a 1-D starts tensor with a statically known shape that
+                        // length equals its first dim; if it isn't known we fall
+                        // back to the full input rank, which matches the common
+                        // case where starts/ends span every dimension.
+                        let n = match &start_arg.ty {
+                            ArgType::Tensor(t) => t
+                                .static_shape
+                                .as_ref()
+                                .and_then(|s| s.first().copied().flatten())
+                                .unwrap_or(rank),
+                            _ => rank,
+                        };
+                        (0..n as i64).collect()
                     }
-
-                    return quote! {
-                        let #start_data_var = #start_name.to_data();
-                        let #start_vec_var: alloc::vec::Vec<i64> = #start_data_var.iter::<i64>().collect();
-                        let #end_data_var = #end_name.to_data();
-                        let #end_vec_var: alloc::vec::Vec<i64> = #end_data_var.iter::<i64>().collect();
-                        let #output = #input.slice(s![#(#ranges),*]);
-                    };
-                } else {
-                    // No axes - slice all dimensions (ONNX spec default would have provided axes)
-                    panic!("Axes must be provided by onnx-ir for tensor slice");
+                };
+                // Build ranges respecting the axes
+                let mut ranges = vec![quote! { .. }; rank];
+                for (idx, &axis) in axes_vec.iter().enumerate() {
+                    let axis_idx = axis as usize;
+                    if axis_idx < rank {
+                        let vec_idx = proc_macro2::Literal::usize_unsuffixed(idx);
+                        ranges[axis_idx] = quote! {
+                            #start_vec_var[#vec_idx] as usize..#end_vec_var[#vec_idx] as usize
+                        };
+                    }
                 }
+
+                return quote! {
+                    let #start_data_var = #start_name.to_data();
+                    let #start_vec_var: alloc::vec::Vec<i64> = #start_data_var.iter::<i64>().collect();
+                    let #end_data_var = #end_name.to_data();
+                    let #end_vec_var: alloc::vec::Vec<i64> = #end_data_var.iter::<i64>().collect();
+                    let #output = #input.slice(s![#(#ranges),*]);
+                };
             } else if matches!(
                 (&start_arg.ty, &end_arg.ty),
                 (

@@ -152,6 +152,13 @@ impl NodeProcessor for PadProcessor {
             node.inputs[2].to_static()?;
         }
 
+        // Lift axes input (input[3]) if present and not optional. Axes
+        // is opset 18+; if constant, extract_config will expand the
+        // selective pads to full-rank pads.
+        if node.inputs.len() > 3 && !node.inputs[3].is_optional() && node.inputs[3].is_constant() {
+            node.inputs[3].to_static()?;
+        }
+
         Ok(())
     }
 
@@ -207,12 +214,6 @@ impl NodeProcessor for PadProcessor {
         }
 
         fn get_pads(node: &RawNode) -> Result<PadInput, ProcessError> {
-            if node.inputs.len() >= 4 {
-                return Err(ProcessError::Custom(
-                    "Pad: axes input is not supported".to_string(),
-                ));
-            }
-
             let input_dim = match &node.inputs.first().unwrap().ty {
                 ArgType::Tensor(tensor) => tensor.rank,
                 _ => {
@@ -223,13 +224,48 @@ impl NodeProcessor for PadProcessor {
                 }
             };
 
+            // Opset 18+ introduces an optional `axes` input at index 3. When
+            // present, `pads` describes only the axes listed (length
+            // 2*len(axes)) rather than every dimension (2*input_dim). We
+            // support the static-axes case by expanding the selective pads
+            // to a full-rank pads vector where unlisted dimensions get
+            // (0, 0). Runtime axes is rejected.
+            let axes = match node.get_input(3) {
+                None => None,
+                Some(input) => match input.value() {
+                    None => {
+                        return Err(ProcessError::Custom(
+                            "Pad: runtime axes input is not supported".to_string(),
+                        ));
+                    }
+                    Some(tensor_data) => {
+                        let raw = tensor_data.to_i64_vec().map_err(|e| {
+                            ProcessError::TypeMismatch {
+                                expected: "i64-compatible tensor for axes".to_string(),
+                                actual: e.to_string(),
+                            }
+                        })?;
+                        Some(normalize_axes(&raw, input_dim)?)
+                    }
+                },
+            };
+            let pads_len_expected = match &axes {
+                Some(a) => a.len(),
+                None => input_dim,
+            };
+
             // Check for pads attribute first (takes precedence)
             // "paddings" in opset 1, "pads" in opset 2+
             for (key, value) in node.attrs.iter() {
                 if key.as_str() == "pads" || key.as_str() == "paddings" {
                     let flat = parse_i64s_as_usize(&value.clone().into_i64s(), "pads")?;
-                    validate_pads_len(&flat, input_dim, "pads")?;
-                    return Ok(PadInput::Static(onnx_pads_to_pairs(&flat)));
+                    validate_pads_len_with_axes(&flat, pads_len_expected, "pads")?;
+                    let pairs = onnx_pads_to_pairs(&flat);
+                    let full = match &axes {
+                        Some(a) => expand_axes_pads_to_full(&pairs, a, input_dim),
+                        None => pairs,
+                    };
+                    return Ok(PadInput::Static(full));
                 }
             }
 
@@ -237,6 +273,11 @@ impl NodeProcessor for PadProcessor {
             if let Some(input) = node.get_input(1) {
                 match input.value() {
                     None => {
+                        if axes.is_some() {
+                            return Err(ProcessError::Custom(
+                                "Pad: runtime pads with static axes is not supported".to_string(),
+                            ));
+                        }
                         return Ok(PadInput::Runtime(RuntimeInputRef::new(
                             input.name.clone(),
                             1,
@@ -251,8 +292,13 @@ impl NodeProcessor for PadProcessor {
                                     actual: e.to_string(),
                                 })?;
                         let flat = parse_i64s_as_usize(&raw, "pads")?;
-                        validate_pads_len(&flat, input_dim, "pads")?;
-                        return Ok(PadInput::Static(onnx_pads_to_pairs(&flat)));
+                        validate_pads_len_with_axes(&flat, pads_len_expected, "pads")?;
+                        let pairs = onnx_pads_to_pairs(&flat);
+                        let full = match &axes {
+                            Some(a) => expand_axes_pads_to_full(&pairs, a, input_dim),
+                            None => pairs,
+                        };
+                        return Ok(PadInput::Static(full));
                     }
                 }
             }
@@ -260,6 +306,46 @@ impl NodeProcessor for PadProcessor {
             Err(ProcessError::Custom(
                 "Pad: pads should be given as attribute or as input".to_string(),
             ))
+        }
+
+        /// Normalize ONNX `axes` values: negative indices become
+        /// `rank + axis`. Reject duplicates and out-of-range values.
+        fn normalize_axes(axes: &[i64], rank: usize) -> Result<Vec<usize>, ProcessError> {
+            let r = rank as i64;
+            let mut out = Vec::with_capacity(axes.len());
+            for &a in axes {
+                let norm = if a < 0 { a + r } else { a };
+                if norm < 0 || norm >= r {
+                    return Err(ProcessError::InvalidAttribute {
+                        name: "axes".to_string(),
+                        reason: format!("axis {a} out of range for rank {rank}"),
+                    });
+                }
+                let nu = norm as usize;
+                if out.contains(&nu) {
+                    return Err(ProcessError::InvalidAttribute {
+                        name: "axes".to_string(),
+                        reason: format!("duplicate axis {nu}"),
+                    });
+                }
+                out.push(nu);
+            }
+            Ok(out)
+        }
+
+        /// Given per-axis `(before, after)` pad pairs listed in the same
+        /// order as `axes`, produce a full-rank pads vector where any
+        /// dimension not in `axes` has `(0, 0)`.
+        fn expand_axes_pads_to_full(
+            pairs: &[(usize, usize)],
+            axes: &[usize],
+            rank: usize,
+        ) -> Vec<(usize, usize)> {
+            let mut full = vec![(0usize, 0usize); rank];
+            for (i, &axis) in axes.iter().enumerate() {
+                full[axis] = pairs[i];
+            }
+            full
         }
 
         /// Parse i64 values as usize, rejecting negatives.
@@ -281,13 +367,15 @@ impl NodeProcessor for PadProcessor {
                 .collect()
         }
 
-        /// Validate that pads length matches 2 * input_dim.
-        fn validate_pads_len(
+        /// Validate that pads length matches 2 * num_axes, where
+        /// `num_axes` is either the input rank (no axes input) or the
+        /// length of the axes vector.
+        fn validate_pads_len_with_axes(
             pads: &[usize],
-            input_dim: usize,
+            num_axes: usize,
             attr_name: &str,
         ) -> Result<(), ProcessError> {
-            if pads.len() != input_dim * 2 {
+            if pads.len() != num_axes * 2 {
                 return Err(ProcessError::InvalidAttribute {
                     name: attr_name.to_string(),
                     reason: "pads should be a 1D tensor of shape [2 * num_axes]".to_string(),

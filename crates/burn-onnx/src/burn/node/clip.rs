@@ -126,7 +126,10 @@ impl NodeCodegen for onnx_ir::clip::ClipNode {
                     #input.clamp_max(__clip_max)
                 };
             },
-            (None, None) => panic!("Clip node must have at least one min or max value"),
+            // Both bounds absent -> identity clip per ONNX spec.
+            (None, None) => quote! {
+                let #output = #input;
+            },
         }
     }
 }

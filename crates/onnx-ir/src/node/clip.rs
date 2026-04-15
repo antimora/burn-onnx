@@ -154,12 +154,9 @@ impl NodeProcessor for ClipProcessor {
             max_result = get_clip_input(node, 2, "max");
         }
 
-        // Validate that at least one of min or max is specified
-        if min_result.is_none() && max_result.is_none() {
-            return Err(ProcessError::Custom(
-                "Clip operation requires at least one of min or max to be specified".to_string(),
-            ));
-        }
+        // Neither min nor max specified -> Clip is identity. ONNX
+        // explicitly allows this; the codegen handles the "both None"
+        // branch as a pass-through.
 
         let config = ClipConfig {
             min: min_result,
