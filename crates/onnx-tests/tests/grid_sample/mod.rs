@@ -57,7 +57,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "nearest interpolation not yet implemented in burn-flex"]
     fn grid_sample_nearest() {
         // Test grid_sample with nearest neighbor interpolation
         let device = Default::default();
