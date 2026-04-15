@@ -6584,34 +6584,22 @@ tracking = "#314"
 status = "pass"
 
 [test_training_dropout]
-status = "skip-codegen"
-reason = "Runtime input is not implemented for Dropout"
-tracking = "#314"
+status = "pass"
 
 [test_training_dropout_default]
-status = "skip-codegen"
-reason = "Runtime input is not implemented for Dropout"
-tracking = "#314"
+status = "pass"
 
 [test_training_dropout_default_mask]
-status = "skip-codegen"
-reason = "Runtime input is not implemented for Dropout"
-tracking = "#314"
+status = "pass"
 
 [test_training_dropout_mask]
-status = "skip-codegen"
-reason = "Runtime input is not implemented for Dropout"
-tracking = "#314"
+status = "pass"
 
 [test_training_dropout_zero_ratio]
-status = "skip-codegen"
-reason = "Runtime input is not implemented for Dropout"
-tracking = "#314"
+status = "pass"
 
 [test_training_dropout_zero_ratio_mask]
-status = "skip-codegen"
-reason = "Runtime input is not implemented for Dropout"
-tracking = "#314"
+status = "pass"
 
 [test_transpose_all_permutations_0]
 status = "pass"
