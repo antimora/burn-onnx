@@ -187,8 +187,7 @@ fn verify_expectations_match_tests() {
         .map(|(k, _)| k.as_str())
         .collect();
     let fc_not_in_manifest: Vec<&&str> = declared_fail_compare.difference(&fc_union).collect();
-    let fc_manifest_not_in_decl: Vec<&&str> =
-        fc_union.difference(&declared_fail_compare).collect();
+    let fc_manifest_not_in_decl: Vec<&&str> = fc_union.difference(&declared_fail_compare).collect();
     assert!(
         fc_not_in_manifest.is_empty() && fc_manifest_not_in_decl.is_empty(),
         "fail-compare list and build.rs manifest have drifted.\n  \
