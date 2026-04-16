@@ -489,9 +489,7 @@ fn main() {
             // Fail-compare is a best-effort pipeline: a vendored-file
             // I/O failure is on the same level as "codegen panicked" —
             // warn and skip so one bad entry doesn't abort the batch.
-            println!(
-                "cargo:warning=failed to stage fail-compare entry `{name}` ({e}); skipping"
-            );
+            println!("cargo:warning=failed to stage fail-compare entry `{name}` ({e}); skipping");
             fail_compare_codegen_panic.push(name.clone());
             continue;
         }
