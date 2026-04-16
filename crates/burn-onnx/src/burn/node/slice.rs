@@ -161,25 +161,32 @@ fn generate_tensor_slice(
                 let end_data_var = quote! { end_data };
                 let end_vec_var = quote! { end_vec };
 
-                // ONNX default: axes = 0..len(starts). Prefer the static
-                // len-of-starts whenever we know it (from the starts tensor's
-                // static_shape); otherwise fall back to the input rank, which
-                // matches the common "slice every dimension" case. Runtime
-                // axes (e.g. test_slice ships `axes` as a forward argument)
-                // is not yet expanded here — the Static length at least
-                // keeps `start_vec[i]` indexing in range at runtime.
-                let axes_vec: Vec<i64> = match &node.config.axes {
-                    Some(onnx_ir::slice::SliceInput::Static(axes)) => axes.clone(),
+                // ONNX default: axes = 0..len(starts). onnx-ir applies this
+                // at extract_config time whenever the starts length is known
+                // (static values, or a tensor with a known first-dim
+                // static_shape). If we still don't have static axes, fall
+                // back to the input rank AND emit a runtime length assertion
+                // so a len(starts) != rank mismatch (rare but not
+                // impossible) surfaces as a clear panic rather than a
+                // silent out-of-range index.
+                let (axes_vec, expected_len): (Vec<i64>, Option<usize>) = match &node.config.axes {
+                    Some(onnx_ir::slice::SliceInput::Static(axes)) => (axes.clone(), Some(axes.len())),
                     _ => {
-                        let n = match &start_arg.ty {
+                        let n_static = match &start_arg.ty {
                             ArgType::Tensor(t) => t
                                 .static_shape
                                 .as_ref()
-                                .and_then(|s| s.first().copied().flatten())
-                                .unwrap_or(rank),
-                            _ => rank,
+                                .and_then(|s| s.first().copied().flatten()),
+                            _ => None,
                         };
-                        (0..n as i64).collect()
+                        let n = n_static.unwrap_or(rank);
+                        // Only enforce a runtime length check when the
+                        // fallback to `rank` was used — if the Static
+                        // length was known we already trust it.
+                        (
+                            (0..n as i64).collect(),
+                            if n_static.is_none() { Some(n) } else { None },
+                        )
                     }
                 };
                 // Build ranges respecting the axes
@@ -193,12 +200,28 @@ fn generate_tensor_slice(
                         };
                     }
                 }
+                let len_assertion = if let Some(n) = expected_len {
+                    let n_lit = proc_macro2::Literal::usize_unsuffixed(n);
+                    quote! {
+                        assert!(
+                            #start_vec_var.len() == #n_lit && #end_vec_var.len() == #n_lit,
+                            "Slice: runtime starts/ends length ({}, {}) does not match \
+                             the codegen-assumed default axes length ({}); the ONNX model \
+                             either needs an explicit axes input or the starts tensor needs \
+                             a static_shape so onnx-ir can derive axes at IR time",
+                            #start_vec_var.len(), #end_vec_var.len(), #n_lit
+                        );
+                    }
+                } else {
+                    quote! {}
+                };
 
                 return quote! {
                     let #start_data_var = #start_name.to_data();
                     let #start_vec_var: alloc::vec::Vec<i64> = #start_data_var.iter::<i64>().collect();
                     let #end_data_var = #end_name.to_data();
                     let #end_vec_var: alloc::vec::Vec<i64> = #end_data_var.iter::<i64>().collect();
+                    #len_assertion
                     let #output = #input.slice(s![#(#ranges),*]);
                 };
             } else if matches!(
