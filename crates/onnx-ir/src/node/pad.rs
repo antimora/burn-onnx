@@ -239,12 +239,13 @@ impl NodeProcessor for PadProcessor {
                         ));
                     }
                     Some(tensor_data) => {
-                        let raw = tensor_data.to_i64_vec().map_err(|e| {
-                            ProcessError::TypeMismatch {
-                                expected: "i64-compatible tensor for axes".to_string(),
-                                actual: e.to_string(),
-                            }
-                        })?;
+                        let raw =
+                            tensor_data
+                                .to_i64_vec()
+                                .map_err(|e| ProcessError::TypeMismatch {
+                                    expected: "i64-compatible tensor for axes".to_string(),
+                                    actual: e.to_string(),
+                                })?;
                         Some(normalize_axes(&raw, input_dim)?)
                     }
                 },
