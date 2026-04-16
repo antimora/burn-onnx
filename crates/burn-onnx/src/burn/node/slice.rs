@@ -170,7 +170,9 @@ fn generate_tensor_slice(
                 // impossible) surfaces as a clear panic rather than a
                 // silent out-of-range index.
                 let (axes_vec, expected_len): (Vec<i64>, Option<usize>) = match &node.config.axes {
-                    Some(onnx_ir::slice::SliceInput::Static(axes)) => (axes.clone(), Some(axes.len())),
+                    Some(onnx_ir::slice::SliceInput::Static(axes)) => {
+                        (axes.clone(), Some(axes.len()))
+                    }
                     _ => {
                         let n_static = match &start_arg.ty {
                             ArgType::Tensor(t) => t
