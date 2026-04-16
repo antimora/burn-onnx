@@ -60,6 +60,7 @@ mod tests {
     use super::super::test_helpers::*;
     use burn::tensor::DType;
     use insta::assert_snapshot;
+    use onnx_ir::ir::RuntimeInputRef;
     use onnx_ir::tile::{TileConfig, TileInput, TileNode, TileNodeBuilder};
 
     fn create_tile_node(name: &str, repeats: Vec<usize>) -> TileNode {
@@ -93,6 +94,62 @@ mod tests {
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<B, 2>) -> Tensor<B, 2> {
             let output = input.repeat(&[1, 2, 3]);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_tile_runtime_tensor() {
+        let config = TileConfig {
+            repeats: TileInput::Runtime(RuntimeInputRef::new("repeats".to_string(), 1)),
+        };
+        let node = TileNodeBuilder::new("tile_rt")
+            .input_tensor("input", 2, DType::F32)
+            .input_tensor("repeats", 1, DType::I64)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<B, 2>, repeats: Tensor<B, 1, Int>) -> Tensor<B, 2> {
+            let output = {
+                let __repeats: alloc::vec::Vec<usize> = repeats
+                    .to_data()
+                    .convert::<i64>()
+                    .into_vec::<i64>()
+                    .unwrap()
+                    .into_iter()
+                    .map(|v| v as usize)
+                    .collect();
+                input.repeat(&__repeats)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_tile_runtime_shape() {
+        let config = TileConfig {
+            repeats: TileInput::Runtime(RuntimeInputRef::new("repeats".to_string(), 1)),
+        };
+        let node = TileNodeBuilder::new("tile_rt_shape")
+            .input_tensor("input", 2, DType::F32)
+            .input_shape("repeats", 2)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<B, 2>, repeats: [i64; 2]) -> Tensor<B, 2> {
+            let output = {
+                let __repeats: alloc::vec::Vec<usize> = repeats
+                    .iter()
+                    .map(|&v| v as usize)
+                    .collect();
+                input.repeat(&__repeats)
+            };
             output
         }
         ");

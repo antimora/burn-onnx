@@ -30,16 +30,21 @@
 //!
 //! # Pass-list discipline
 //!
-//! Only tests with `status = "pass"` in `expectations.toml` are fed to
-//! `ModelGen`. Any `skip-codegen` / `fail-compare` entry is read purely
-//! as documentation — the build script never attempts to codegen it and
-//! never emits a `#[test]` function for it. This is the "option (c)"
-//! trade-off from the M2 design discussion: a mislabeled pass entry
-//! that actually panics in codegen will fail the build with a path-
-//! qualified message pointing at the entry, and the contributor fixes
-//! the expectations row before re-running. The alternative (wrapping
-//! `ModelGen` in `catch_unwind`) adds noisy warnings that hide real
-//! regressions.
+//! Tests with `status = "pass"` are fed to a single batch `ModelGen`
+//! call. A mislabeled pass entry that actually panics in codegen
+//! fails the build with a path-qualified message pointing at the
+//! entry, and the contributor fixes the expectations row before
+//! re-running.
+//!
+//! Tests with `status = "fail-compare"` go through a separate
+//! per-file `ModelGen` wrapped in `catch_unwind`, so one codegen
+//! panic doesn't abort the drift check. Each introspectable
+//! fail-compare entry gets a `fn fail_compare_<name>() -> bool`
+//! runner driven from `verify_fail_compare_still_fails`.
+//!
+//! `skip-codegen`, `skip-compile`, and `flaky` entries are read as
+//! documentation only — the build script never attempts to codegen
+//! or run them.
 //!
 //! # Introspection
 //!
@@ -454,25 +459,18 @@ fn main() {
     // by reclassifying the offending entry (see module docs).
     model_gen.out_dir("model/").run_from_script();
 
-    // Fail-compare entries go through a separate, best-effort pipeline
-    // with per-file isolation so a panic in one doesn't block the rest
-    // of the drift check. The runners are called by
-    // `verify_fail_compare_still_fails` in tests/test_mod.rs; if any
-    // stop failing (upstream bug fixed), the drift check flags the
-    // entry so the reviewer can flip it to `status = "pass"`.
+    // Fail-compare runs per-file under catch_unwind so one panic
+    // doesn't block the rest of the drift check. A panic here means
+    // the entry has regressed past "fail-compare" and should be
+    // downgraded to "skip-codegen"; we warn and keep going rather
+    // than aborting the build.
     //
-    // Unlike the pass batch, fail-compare is *not* gated on codegen
-    // success: these entries were classified long before the current
-    // upstream state, and "fail-compare" means "incorrect output at
-    // runtime" — if codegen itself now panics, the entry has simply
-    // regressed further (and should be downgraded to skip-codegen),
-    // which we surface as a cargo warning rather than a build abort.
-    // Fail-compare entries whose codegen panicked. Tracked separately
-    // from `fail_compare_codegen_only` so we don't try to `include!`
-    // a .rs file that was never written. Both sets get merged into the
-    // FAIL_COMPARE_CODEGEN_ONLY manifest list for the expectations
-    // cross-check, but only `fail_compare_codegen_only` participates
-    // in models.rs module emission.
+    // Entries whose codegen panicked get tracked in
+    // `fail_compare_codegen_panic` separately from
+    // `fail_compare_codegen_only` because we don't want to try to
+    // `include!` a .rs file that was never written. Both sets merge
+    // into the FAIL_COMPARE_CODEGEN_ONLY manifest for the
+    // expectations cross-check.
     let mut fail_compare_codegen_panic: Vec<String> = Vec::new();
 
     for name in &fail_compare_names {
@@ -488,7 +486,14 @@ fn main() {
 
         let dst = staged.join(format!("{name}.onnx"));
         if let Err(e) = fs::copy(&src, &dst) {
-            panic!("copy {} -> {}: {e}", src.display(), dst.display());
+            // Fail-compare is a best-effort pipeline: a vendored-file
+            // I/O failure is on the same level as "codegen panicked" —
+            // warn and skip so one bad entry doesn't abort the batch.
+            println!(
+                "cargo:warning=failed to stage fail-compare entry `{name}` ({e}); skipping"
+            );
+            fail_compare_codegen_panic.push(name.clone());
+            continue;
         }
 
         let introspect_result = introspect(&src);
@@ -499,9 +504,18 @@ fn main() {
             fc_gen.out_dir("model/").run_from_script();
         }));
 
-        if codegen_result.is_err() {
+        if let Err(payload) = codegen_result {
+            // `catch_unwind` hands back `Box<dyn Any + Send>`; ModelGen
+            // panics typically carry a `&'static str` or `String`.
+            // Surface it in the warning so a reviewer can triage without
+            // re-running locally.
+            let msg = payload
+                .downcast_ref::<&'static str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<opaque panic payload>".to_string());
             println!(
-                "cargo:warning=fail-compare entry `{name}` now panics in codegen; \
+                "cargo:warning=fail-compare entry `{name}` now panics in codegen: {msg}; \
                  consider downgrading to status = \"skip-codegen\""
             );
             fail_compare_codegen_panic.push(name.clone());
@@ -744,11 +758,19 @@ enum TestMode {
     FailCompare,
 }
 
-/// Emit one test function into `buf`. The body (input load, forward,
-/// compare) is identical across modes — only the wrapper differs:
-/// Pass lets panics propagate into `#[test]` failure; FailCompare
-/// wraps the body in `catch_unwind` and returns `is_err()` so the
-/// drift check can detect the bug getting fixed silently.
+/// Emit one test function into `buf`.
+///
+/// Pass mode emits a `#[test]` that panics on mismatch. FailCompare
+/// mode emits `fn fail_compare_<name>() -> bool`: setup (model + .pb
+/// loads) runs at the top level so its panics propagate as real test
+/// failures, and only the forward call and reference comparison are
+/// wrapped in `catch_unwind`. Returning `is_err()` from that wrap
+/// means "comparison still fails as expected"; `Ok(())` means the
+/// upstream bug has been fixed and the entry should be flipped to
+/// `pass`. This split matters: without it, a regression in
+/// `pb_loader` or tensor construction would panic inside the wrap
+/// and read as "still failing" across every fail-compare entry at
+/// once, silently masking the real breakage.
 fn emit_single_test(buf: &mut String, name: &str, meta: &TestMeta, mode: TestMode) {
     match mode {
         TestMode::Pass => {
@@ -759,11 +781,6 @@ fn emit_single_test(buf: &mut String, name: &str, meta: &TestMeta, mode: TestMod
         TestMode::FailCompare => {
             writeln!(buf, "#[allow(non_snake_case, dead_code)]").unwrap();
             writeln!(buf, "fn fail_compare_{name}() -> bool {{").unwrap();
-            writeln!(
-                buf,
-                "    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{"
-            )
-            .unwrap();
         }
     }
     writeln!(buf, "    let device = Default::default();").unwrap();
@@ -818,6 +835,19 @@ fn emit_single_test(buf: &mut String, name: &str, meta: &TestMeta, mode: TestMod
     }
 
     // ---- Call forward ----
+    //
+    // For FailCompare mode, wrap forward + compare in `catch_unwind` so
+    // an expected comparison mismatch is captured as `Err(_)` rather
+    // than aborting the drift loop. Setup above (model + .pb loads)
+    // stays outside the wrap: a panic there is a real harness
+    // regression and must not be conflated with "still-failing".
+    if matches!(mode, TestMode::FailCompare) {
+        writeln!(
+            buf,
+            "    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{"
+        )
+        .unwrap();
+    }
     let call_args = input_bindings.join(", ");
     if meta.outputs.len() == 1 {
         writeln!(buf, "    let output_0 = model.forward({call_args});").unwrap();

@@ -189,4 +189,72 @@ mod tests {
         }
         ");
     }
+
+    #[test]
+    fn test_squeeze_runtime_axes_tensor() {
+        use onnx_ir::ir::RuntimeInputRef;
+        let config = SqueezeConfig {
+            axes: Some(SqueezeInput::Runtime(RuntimeInputRef::new(
+                "axes".to_string(),
+                1,
+            ))),
+        };
+        let node = SqueezeNodeBuilder::new("squeeze_rt")
+            .input_tensor("input", 3, DType::F32)
+            .input_tensor("axes", 1, DType::I64)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<B, 3>, axes: Tensor<B, 1, Int>) -> Tensor<B, 2> {
+            let output = {
+                let __raw_axes: alloc::vec::Vec<i64> = axes
+                    .to_data()
+                    .convert::<i64>()
+                    .into_vec::<i64>()
+                    .unwrap();
+                let __rank: i64 = 3;
+                let __axes: alloc::vec::Vec<isize> = __raw_axes
+                    .into_iter()
+                    .map(|v| (if v < 0 { v + __rank } else { v }) as isize)
+                    .collect();
+                input.squeeze_dims::<2>(&__axes)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_squeeze_runtime_axes_shape() {
+        use onnx_ir::ir::RuntimeInputRef;
+        let config = SqueezeConfig {
+            axes: Some(SqueezeInput::Runtime(RuntimeInputRef::new(
+                "axes".to_string(),
+                1,
+            ))),
+        };
+        let node = SqueezeNodeBuilder::new("squeeze_rt_shape")
+            .input_tensor("input", 3, DType::F32)
+            .input_shape("axes", 1)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<B, 3>, axes: [i64; 1]) -> Tensor<B, 2> {
+            let output = {
+                let __raw_axes: alloc::vec::Vec<i64> = axes.iter().copied().collect();
+                let __rank: i64 = 3;
+                let __axes: alloc::vec::Vec<isize> = __raw_axes
+                    .into_iter()
+                    .map(|v| (if v < 0 { v + __rank } else { v }) as isize)
+                    .collect();
+                input.squeeze_dims::<2>(&__axes)
+            };
+            output
+        }
+        ");
+    }
 }

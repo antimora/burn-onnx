@@ -223,17 +223,47 @@ fn verify_expectations_match_tests() {
 /// and can't be runtime-checked here (dynamic shape, rank-0 I/O, etc.).
 #[test]
 fn verify_fail_compare_still_fails() {
-    let mut now_passing: Vec<&str> = Vec::new();
-    for (name, runner) in FAIL_COMPARE_RUNNERS {
-        // `true` means the comparison still fails (bug still present,
-        // no drift). `false` means it now passes and the row is stale.
-        if !runner() {
-            now_passing.push(*name);
-        }
-    }
+    let now_passing = collect_now_passing(FAIL_COMPARE_RUNNERS);
     assert!(
         now_passing.is_empty(),
         "fail-compare entries that now pass; flip their status to \"pass\" in expectations.toml:\n  {now_passing:#?}"
+    );
+}
+
+/// Walk a runner table and return the names whose runner reports
+/// `false` (comparison now passes, i.e. the upstream fix has landed).
+/// Factored out of `verify_fail_compare_still_fails` so the drift
+/// polarity itself can be unit-tested — see `drift_gate_polarity`.
+fn collect_now_passing<'a>(runners: &'a [(&'a str, fn() -> bool)]) -> Vec<&'a str> {
+    runners
+        .iter()
+        .filter_map(|(name, runner)| if !runner() { Some(*name) } else { None })
+        .collect()
+}
+
+/// Drift-gate self-test: `collect_now_passing` must identify runners
+/// that report `false` and ignore those that report `true`. Without
+/// this check, a future refactor that inverts the boolean (e.g.,
+/// swapping the `result.is_err()` in the generated FailCompare body)
+/// would silently green the gate forever. Mirrors
+/// `negative_gate_actually_gates` for the comparison machinery.
+#[test]
+fn drift_gate_polarity() {
+    fn still_failing() -> bool {
+        true
+    }
+    fn now_passing() -> bool {
+        false
+    }
+    let table: &[(&str, fn() -> bool)] = &[
+        ("still_failing_entry", still_failing),
+        ("now_passing_entry", now_passing),
+    ];
+    let flagged = collect_now_passing(table);
+    assert_eq!(
+        flagged,
+        vec!["now_passing_entry"],
+        "drift gate should flag only the runner that returns false"
     );
 }
 

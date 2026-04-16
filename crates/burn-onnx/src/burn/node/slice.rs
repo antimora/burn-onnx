@@ -161,18 +161,16 @@ fn generate_tensor_slice(
                 let end_data_var = quote! { end_data };
                 let end_vec_var = quote! { end_vec };
 
-                // Check if axes are provided (from onnx-ir with ONNX spec defaults).
-                // If absent, fall back to the ONNX default: axes = 0..len(starts)
-                // (contiguous leading dims). This covers the common case where
-                // a model omits the axes input entirely.
+                // ONNX default: axes = 0..len(starts). Prefer the static
+                // len-of-starts whenever we know it (from the starts tensor's
+                // static_shape); otherwise fall back to the input rank, which
+                // matches the common "slice every dimension" case. Runtime
+                // axes (e.g. test_slice ships `axes` as a forward argument)
+                // is not yet expanded here — the Static length at least
+                // keeps `start_vec[i]` indexing in range at runtime.
                 let axes_vec: Vec<i64> = match &node.config.axes {
                     Some(onnx_ir::slice::SliceInput::Static(axes)) => axes.clone(),
                     _ => {
-                        // ONNX default: axes = [0, 1, ..., len(starts) - 1]. For
-                        // a 1-D starts tensor with a statically known shape that
-                        // length equals its first dim; if it isn't known we fall
-                        // back to the full input rank, which matches the common
-                        // case where starts/ends span every dimension.
                         let n = match &start_arg.ty {
                             ArgType::Tensor(t) => t
                                 .static_shape
@@ -981,6 +979,54 @@ mod tests {
         pub fn forward(&self, tensor: Tensor<B, 2>, begin: [i64; 1]) -> Tensor<B, 2> {
             let chunk = tensor.slice(s![begin[0]..10, ..]);
             chunk
+        }
+        ");
+    }
+
+    #[test]
+    fn test_slice_runtime_tensor_default_axes() {
+        // Both starts/ends arrive as runtime 1-D tensors and no axes
+        // input is provided. starts has a static_shape of [2], so the
+        // codegen should default axes to [0, 1] (not the input rank 3).
+        let config = SliceConfig {
+            starts: SliceInput::Runtime(RuntimeInputRef {
+                name: "starts".to_string(),
+                input_index: 1,
+            }),
+            ends: SliceInput::Runtime(RuntimeInputRef {
+                name: "ends".to_string(),
+                input_index: 2,
+            }),
+            axes: None,
+            steps: None,
+        };
+        let node = SliceNodeBuilder::new("slice1")
+            .input_tensor("x", 3, DType::F32)
+            .input_tensor_shape("starts", vec![2], DType::I64)
+            .input_tensor_shape("ends", vec![2], DType::I64)
+            .output_tensor("y", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            x: Tensor<B, 3>,
+            starts: Tensor<B, 1, Int>,
+            ends: Tensor<B, 1, Int>,
+        ) -> Tensor<B, 3> {
+            let start_data = starts.to_data();
+            let start_vec: alloc::vec::Vec<i64> = start_data.iter::<i64>().collect();
+            let end_data = ends.to_data();
+            let end_vec: alloc::vec::Vec<i64> = end_data.iter::<i64>().collect();
+            let y = x
+                .slice(
+                    s![
+                        start_vec[0] as usize..end_vec[0] as usize, start_vec[1] as usize
+                        ..end_vec[1] as usize, ..
+                    ],
+                );
+            y
         }
         ");
     }
