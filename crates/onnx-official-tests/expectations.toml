@@ -901,33 +901,33 @@ status = "pass"
 
 [test_averagepool_3d_default]
 status = "skip-codegen"
-reason = "Only avg_pool 1d and 2d are supported"
-tracking = "#314"
+reason = "Burn lacks native AvgPool3d primitive"
+tracking = "#343"
 
 [test_averagepool_3d_dilations_large_count_include_pad_is_0_ceil_mode_is_False]
 status = "skip-codegen"
-reason = "Only avg_pool 1d and 2d are supported"
-tracking = "#314"
+reason = "Burn lacks native AvgPool3d primitive"
+tracking = "#343"
 
 [test_averagepool_3d_dilations_large_count_include_pad_is_0_ceil_mode_is_True]
 status = "skip-codegen"
-reason = "Only avg_pool 1d and 2d are supported"
-tracking = "#314"
+reason = "Burn lacks native AvgPool3d primitive"
+tracking = "#343"
 
 [test_averagepool_3d_dilations_large_count_include_pad_is_1_ceil_mode_is_False]
 status = "skip-codegen"
-reason = "Only avg_pool 1d and 2d are supported"
-tracking = "#314"
+reason = "Burn lacks native AvgPool3d primitive"
+tracking = "#343"
 
 [test_averagepool_3d_dilations_large_count_include_pad_is_1_ceil_mode_is_True]
 status = "skip-codegen"
-reason = "Only avg_pool 1d and 2d are supported"
-tracking = "#314"
+reason = "Burn lacks native AvgPool3d primitive"
+tracking = "#343"
 
 [test_averagepool_3d_dilations_small]
 status = "skip-codegen"
-reason = "Only avg_pool 1d and 2d are supported"
-tracking = "#314"
+reason = "Burn lacks native AvgPool3d primitive"
+tracking = "#343"
 
 [test_basic_conv_with_padding]
 status = "skip-codegen"
@@ -3620,23 +3620,23 @@ tracking = "tracel-ai/burn-onnx"
 
 [test_maxpool_3d_default]
 status = "skip-codegen"
-reason = "Only max_pool 1d and 2d are supported"
-tracking = "#314"
+reason = "Burn lacks native MaxPool3d primitive"
+tracking = "#343"
 
 [test_maxpool_3d_dilations]
 status = "skip-codegen"
-reason = "Only max_pool 1d and 2d are supported"
-tracking = "#314"
+reason = "Burn lacks native MaxPool3d primitive"
+tracking = "#343"
 
 [test_maxpool_3d_dilations_use_ref_impl]
 status = "skip-codegen"
-reason = "Only max_pool 1d and 2d are supported"
-tracking = "#314"
+reason = "Burn lacks native MaxPool3d primitive"
+tracking = "#343"
 
 [test_maxpool_3d_dilations_use_ref_impl_large]
 status = "skip-codegen"
-reason = "Only max_pool 1d and 2d are supported"
-tracking = "#314"
+reason = "Burn lacks native MaxPool3d primitive"
+tracking = "#343"
 
 [test_maxpool_with_argmax_2d_precomputed_pads]
 status = "skip-compile"

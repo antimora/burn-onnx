@@ -231,6 +231,10 @@ impl ProcessorRegistry {
             Box::new(crate::node::avg_pool2d::AvgPool2dProcessor),
         );
         registry.register(
+            NodeType::AveragePool3d,
+            Box::new(crate::node::avg_pool3d::AvgPool3dProcessor),
+        );
+        registry.register(
             NodeType::LpPool1d,
             Box::new(crate::node::lp_pool1d::LpPool1dProcessor),
         );
@@ -245,6 +249,10 @@ impl ProcessorRegistry {
         registry.register(
             NodeType::MaxPool2d,
             Box::new(crate::node::max_pool2d::MaxPool2dProcessor),
+        );
+        registry.register(
+            NodeType::MaxPool3d,
+            Box::new(crate::node::max_pool3d::MaxPool3dProcessor),
         );
 
         // Global pooling operations

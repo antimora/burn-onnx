@@ -289,10 +289,12 @@ define_node_enum! {
     ConvTranspose3d => conv_transpose3d::ConvTranspose3dNode,
     AveragePool1d => avg_pool1d::AveragePool1dNode,
     AveragePool2d => avg_pool2d::AveragePool2dNode,
+    AveragePool3d => avg_pool3d::AveragePool3dNode,
     LpPool1d => lp_pool1d::LpPool1dNode,
     LpPool2d => lp_pool2d::LpPool2dNode,
     MaxPool1d => max_pool1d::MaxPool1dNode,
     MaxPool2d => max_pool2d::MaxPool2dNode,
+    MaxPool3d => max_pool3d::MaxPool3dNode,
     GlobalAveragePool => global_avg_pool::GlobalAveragePoolNode,
     GlobalMaxPool => unsupported::GlobalMaxPoolNode,
 

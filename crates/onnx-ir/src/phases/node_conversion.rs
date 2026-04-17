@@ -397,14 +397,16 @@ fn remap_node_type(node: &mut RawNode) {
             remap_node_with_kernel_shape(node, |spatial_dims| match spatial_dims {
                 1 => NodeType::MaxPool1d,
                 2 => NodeType::MaxPool2d,
-                _ => panic!("Only max_pool 1d and 2d are supported"),
+                3 => NodeType::MaxPool3d,
+                _ => panic!("Only max_pool 1d, 2d, and 3d are supported"),
             })
         }
         NodeType::AveragePool => {
             remap_node_with_kernel_shape(node, |spatial_dims| match spatial_dims {
                 1 => NodeType::AveragePool1d,
                 2 => NodeType::AveragePool2d,
-                _ => panic!("Only avg_pool 1d and 2d are supported"),
+                3 => NodeType::AveragePool3d,
+                _ => panic!("Only avg_pool 1d, 2d, and 3d are supported"),
             })
         }
         NodeType::LpPool => remap_node_with_kernel_shape(node, |spatial_dims| match spatial_dims {

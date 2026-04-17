@@ -164,10 +164,12 @@ impl_node_codegen_dispatch! {
     // Pooling ops
     AveragePool1d,
     AveragePool2d,
+    AveragePool3d,
     LpPool1d,
     LpPool2d,
     MaxPool1d,
     MaxPool2d,
+    MaxPool3d,
     GlobalAveragePool,
 
     // Normalization ops
