@@ -1,7 +1,9 @@
 use crate::include_models;
 include_models!(
     mean_variance_normalization_default_axes,
-    mean_variance_normalization_custom_axes
+    mean_variance_normalization_custom_axes,
+    mean_variance_normalization_all_axes,
+    mean_variance_normalization_negative_axes
 );
 
 #[cfg(test)]
@@ -12,8 +14,8 @@ mod tests {
     use crate::backend::TestBackend;
     type FT = FloatElem<TestBackend>;
 
-    // Input generated via np.random.seed(42), shape [2, 3, 4, 5]. Shared by both
-    // tests so we can compare the two axis configurations on the same data.
+    // Input generated via np.random.seed(42), shape [2, 3, 4, 5]. Shared by all
+    // tests so we can compare axis configurations on the same data.
     fn test_input(
         device: &<TestBackend as burn::tensor::backend::Backend>::Device,
     ) -> Tensor<TestBackend, 4> {
@@ -144,7 +146,6 @@ mod tests {
 
     #[test]
     fn mean_variance_normalization_default_axes() {
-        // Default axes [0, 2, 3]: per-channel normalization across batch + spatial.
         let device = Default::default();
         let model: mean_variance_normalization_default_axes::Model<TestBackend> =
             mean_variance_normalization_default_axes::Model::default();
@@ -201,7 +202,6 @@ mod tests {
 
     #[test]
     fn mean_variance_normalization_custom_axes() {
-        // Custom axes [1, 2]: normalize across channel + first spatial dim.
         let device = Default::default();
         let model: mean_variance_normalization_custom_axes::Model<TestBackend> =
             mean_variance_normalization_custom_axes::Model::default();
@@ -320,5 +320,149 @@ mod tests {
         output
             .to_data()
             .assert_approx_eq::<FT>(&expected, Tolerance::default());
+    }
+
+    #[test]
+    fn mean_variance_normalization_all_axes() {
+        // Reduces to a scalar mean and variance, exercising full broadcast back
+        // to the input shape through Burn's `mean_dims` keepdims behavior.
+        let device = Default::default();
+        let model: mean_variance_normalization_all_axes::Model<TestBackend> =
+            mean_variance_normalization_all_axes::Model::default();
+
+        let output = model.forward(test_input(&device));
+
+        let expected = TensorData::from([
+            [
+                [
+                    [0.62497290, -0.06413268, 0.78881670, 1.73877420, -0.16819556],
+                    [-0.16817774, 1.79974630, 0.91877030, -0.42357590, 0.67472680],
+                    [
+                        -0.41700292,
+                        -0.41951206,
+                        0.34850532,
+                        -1.99045530,
+                        -1.78603650,
+                    ],
+                    [
+                        -0.52430063,
+                        -1.01324960,
+                        0.42695212,
+                        -0.89950866,
+                        -1.44677420,
+                    ],
+                ],
+                [
+                    [
+                        1.67650180,
+                        -0.15910440,
+                        0.15920208,
+                        -1.46027960,
+                        -0.50486964,
+                    ],
+                    [
+                        0.20629550,
+                        -1.16318940,
+                        0.49364102,
+                        -0.56592100,
+                        -0.23064083,
+                    ],
+                    [-0.56707996, 2.09608840, 0.07126984, -1.06195510, 0.97857820],
+                    [
+                        -1.23899380,
+                        0.31258523,
+                        -2.04079940,
+                        -1.35548630,
+                        0.29955974,
+                    ],
+                ],
+                [
+                    [
+                        0.88733280,
+                        0.27189374,
+                        -0.03958882,
+                        -0.24085289,
+                        -1.51863710,
+                    ],
+                    [
+                        -0.69528790,
+                        -0.41398713,
+                        1.23315140,
+                        0.45882675,
+                        -1.82740840,
+                    ],
+                    [0.43762730, -0.33199003, -0.64870690, 0.74973464, 1.20480200],
+                    [1.09658230, -0.82483685, -0.24965280, 0.44541872, 1.14462050],
+                ],
+            ],
+            [
+                [
+                    [
+                        -0.43410260,
+                        -0.11556739,
+                        -1.11472400,
+                        -1.21225660,
+                        0.96770510,
+                    ],
+                    [1.55776680, 0.00776916, 1.17499400, 0.47838032, -0.61419370],
+                    [0.47811943, 1.75506010, 0.04703766, 1.78393520, -2.75714090],
+                    [0.97788110, 0.18038477, -0.23857787, 0.18550030, -2.07107640],
+                ],
+                [
+                    [
+                        -0.15247963,
+                        0.47347128,
+                        1.68979100,
+                        -0.47653120,
+                        -0.79149395,
+                    ],
+                    [-0.45861042, 1.07935080, 0.44269225, -0.48900062, 0.64293720],
+                    [
+                        0.19127026,
+                        1.13713220,
+                        -0.67598015,
+                        -0.26967525,
+                        -0.33961478,
+                    ],
+                    [-1.50235080, 0.40727988, 0.36922583, 0.09146695, -0.16866632],
+                ],
+                [
+                    [
+                        -1.45010270,
+                        -0.37058455,
+                        -0.28601074,
+                        -0.78474770,
+                        -0.08911649,
+                    ],
+                    [0.52441070, 2.13288640, 0.27537686, 0.36542220, 0.00512573],
+                    [-1.99641430, 0.05714362, 0.15128198, 2.75913240, -0.12284068],
+                    [0.41316956, 0.04824692, -1.18238140, 1.32615750, 0.90194720],
+                ],
+            ],
+        ]);
+
+        output
+            .to_data()
+            .assert_approx_eq::<FT>(&expected, Tolerance::default());
+    }
+
+    #[test]
+    fn mean_variance_normalization_negative_axes() {
+        // `axes=[-4, -2, -1]` on a rank-4 input resolves to `[0, 2, 3]`, so the
+        // output must match `mean_variance_normalization_default_axes` exactly.
+        let device = Default::default();
+        let model: mean_variance_normalization_negative_axes::Model<TestBackend> =
+            mean_variance_normalization_negative_axes::Model::default();
+
+        let default_model: mean_variance_normalization_default_axes::Model<TestBackend> =
+            mean_variance_normalization_default_axes::Model::default();
+
+        let input = test_input(&device);
+        let output = model.forward(input.clone());
+        let expected = default_model.forward(input);
+
+        output
+            .to_data()
+            .assert_approx_eq::<FT>(&expected.to_data(), Tolerance::default());
     }
 }

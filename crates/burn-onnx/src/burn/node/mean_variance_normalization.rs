@@ -14,21 +14,17 @@ impl NodeCodegen for MeanVarianceNormalizationNode {
         let input = scope.arg(self.inputs.first().unwrap());
         let output = arg_to_ident(self.outputs.first().unwrap());
 
-        // Chain `.mean_dim(ax)` calls for each axis. Burn's `mean_dim` keeps the
-        // reduced dimension as size 1, so the result broadcasts cleanly against
-        // the original tensor regardless of how many axes we reduce over.
-        let mean_chain = self.config.axes.iter().map(|&ax| {
-            let ax = ax.to_tokens();
-            quote! { .mean_dim(#ax) }
-        });
-        let mean_chain: TokenStream = mean_chain.collect();
+        // `mean_dims` folds over each axis with `mean_dim`, which keeps the
+        // reduced dimension as size 1 so `mean` / `variance` broadcast back
+        // against the original tensor shape.
+        let axes: Vec<_> = self.config.axes.iter().map(|ax| ax.to_tokens()).collect();
 
         quote! {
             let #output = {
                 let x = #input;
-                let mean = x.clone() #mean_chain;
+                let mean = x.clone().mean_dims(&[#(#axes),*]);
                 let centered = x - mean;
-                let variance = centered.clone().powf_scalar(2f32) #mean_chain;
+                let variance = centered.clone().powf_scalar(2f32).mean_dims(&[#(#axes),*]);
                 centered / variance.sqrt()
             };
         }
@@ -56,14 +52,9 @@ mod tests {
         pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
             let output = {
                 let x = input;
-                let mean = x.clone().mean_dim(0).mean_dim(2).mean_dim(3);
+                let mean = x.clone().mean_dims(&[0, 2, 3]);
                 let centered = x - mean;
-                let variance = centered
-                    .clone()
-                    .powf_scalar(2f32)
-                    .mean_dim(0)
-                    .mean_dim(2)
-                    .mean_dim(3);
+                let variance = centered.clone().powf_scalar(2f32).mean_dims(&[0, 2, 3]);
                 centered / variance.sqrt()
             };
             output
@@ -83,9 +74,9 @@ mod tests {
         pub fn forward(&self, input: Tensor<B, 3>) -> Tensor<B, 3> {
             let output = {
                 let x = input;
-                let mean = x.clone().mean_dim(1);
+                let mean = x.clone().mean_dims(&[1]);
                 let centered = x - mean;
-                let variance = centered.clone().powf_scalar(2f32).mean_dim(1);
+                let variance = centered.clone().powf_scalar(2f32).mean_dims(&[1]);
                 centered / variance.sqrt()
             };
             output
@@ -105,14 +96,9 @@ mod tests {
         pub fn forward(&self, input: Tensor<B, 4>) -> Tensor<B, 4> {
             let output = {
                 let x = input.clone();
-                let mean = x.clone().mean_dim(0).mean_dim(2).mean_dim(3);
+                let mean = x.clone().mean_dims(&[0, 2, 3]);
                 let centered = x - mean;
-                let variance = centered
-                    .clone()
-                    .powf_scalar(2f32)
-                    .mean_dim(0)
-                    .mean_dim(2)
-                    .mean_dim(3);
+                let variance = centered.clone().powf_scalar(2f32).mean_dims(&[0, 2, 3]);
                 centered / variance.sqrt()
             };
             output

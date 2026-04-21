@@ -9,10 +9,11 @@
 
 # Generates ONNX models and expected outputs for MeanVarianceNormalization tests.
 #
-# Two configurations are produced:
-#   * default axes ([0, 2, 3]) — normalize across batch + spatial, per-channel
-#   * custom axes ([1, 2])     — normalize across channel + one spatial dim,
-#                                exercising the non-default axes code path.
+# Four configurations are produced:
+#   * default axes ([0, 2, 3]): normalize across batch + spatial, per-channel
+#   * custom axes ([1, 2]): non-default axes code path
+#   * all axes ([0, 1, 2, 3]): reduces to a scalar mean, exercises full broadcast
+#   * negative axes ([-4, -2, -1]): equivalent to [0, 2, 3] after resolution
 
 import numpy as np
 import onnx
@@ -72,3 +73,5 @@ def build_model(axes, suffix, input_shape=(2, 3, 4, 5)):
 if __name__ == "__main__":
     build_model(axes=None, suffix="default_axes")
     build_model(axes=[1, 2], suffix="custom_axes")
+    build_model(axes=[0, 1, 2, 3], suffix="all_axes")
+    build_model(axes=[-4, -2, -1], suffix="negative_axes")

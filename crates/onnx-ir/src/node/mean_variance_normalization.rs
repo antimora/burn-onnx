@@ -25,7 +25,8 @@ use onnx_ir_derive::NodeBuilder;
 #[derive(Debug, Clone, new)]
 pub struct MeanVarianceNormalizationConfig {
     /// Axes along which mean and variance are computed. Resolved to positive
-    /// indices and sorted. Defaults to `[0, 2, 3]` per the ONNX spec.
+    /// indices, sorted ascending, and deduplicated. Defaults to `[0, 2, 3]`
+    /// per the ONNX spec.
     pub axes: Vec<usize>,
 }
 
@@ -84,9 +85,11 @@ impl NodeProcessor for MeanVarianceNormalizationProcessor {
             });
         }
 
-        // Validate axes against the input rank to surface shape errors early.
+        // Run axes validation for its side effect of surfacing out-of-range
+        // errors during type inference. The resolved axes are rebuilt later in
+        // `extract_config`; we discard the value here rather than caching it.
         let rank = tensor_ty.rank;
-        let _ = extract_axes(node, rank)?;
+        extract_axes(node, rank)?;
 
         crate::processor::same_as_input(node);
 
@@ -125,9 +128,9 @@ impl NodeProcessor for MeanVarianceNormalizationProcessor {
 /// Parse the `axes` attribute, resolve negative indices against `rank`, sort, and
 /// deduplicate. Falls back to `[0, 2, 3]` per the ONNX default.
 fn extract_axes(node: &RawNode, rank: usize) -> Result<Vec<usize>, ProcessError> {
-    let raw_axes: Vec<i64> = match node.attrs.get("axes") {
-        Some(value) => value.clone().into_i64s(),
-        None => vec![0, 2, 3],
+    let (raw_axes, from_default): (Vec<i64>, bool) = match node.attrs.get("axes") {
+        Some(value) => (value.clone().into_i64s(), false),
+        None => (vec![0, 2, 3], true),
     };
 
     let rank_i64 = rank as i64;
@@ -135,9 +138,14 @@ fn extract_axes(node: &RawNode, rank: usize) -> Result<Vec<usize>, ProcessError>
     for axis in raw_axes {
         let resolved = if axis < 0 { axis + rank_i64 } else { axis };
         if resolved < 0 || resolved >= rank_i64 {
+            let hint = if from_default {
+                " (default axes [0, 2, 3] assume a rank-4 NCHW input; specify `axes` explicitly for other ranks)"
+            } else {
+                ""
+            };
             return Err(ProcessError::InvalidAttribute {
                 name: "axes".to_string(),
-                reason: format!("axis {axis} is out of range for tensor of rank {rank}"),
+                reason: format!("axis {axis} is out of range for tensor of rank {rank}{hint}"),
             });
         }
         axes.push(resolved as usize);
