@@ -344,6 +344,8 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/min/min_broadcast.onnx")
         .input("tests/mish/mish.onnx")
         .input("tests/mean/mean.onnx")
+        .input("tests/mean_variance_normalization/mean_variance_normalization_default_axes.onnx")
+        .input("tests/mean_variance_normalization/mean_variance_normalization_custom_axes.onnx")
         .input("tests/mul/mul.onnx")
         .input("tests/mul/mul_shape.onnx")
         .input("tests/mul/mul_shape_tensor.onnx")

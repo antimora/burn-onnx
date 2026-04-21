@@ -344,6 +344,10 @@ impl ProcessorRegistry {
             NodeType::GroupNormalization,
             Box::new(crate::node::group_norm::GroupNormProcessor),
         );
+        registry.register(
+            NodeType::MeanVarianceNormalization,
+            Box::new(crate::node::mean_variance_normalization::MeanVarianceNormalizationProcessor),
+        );
 
         // Shape operations
         registry.register(

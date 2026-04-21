@@ -3803,9 +3803,7 @@ status = "pass"
 status = "pass"
 
 [test_mvn]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): MeanVarianceNormalization (node 'meanvariancenormalization1')"
-tracking = "#314"
+status = "pass"
 
 [test_mvn_expanded]
 status = "pass"

@@ -135,6 +135,7 @@ MIN_OPSET = {
     "InstanceNormalization": 1,
     "LayerNormalization": 17,
     "GroupNormalization": 18,
+    "MeanVarianceNormalization": 9,
     # Utility
     "Dropout": 1,
     "Identity": 1,

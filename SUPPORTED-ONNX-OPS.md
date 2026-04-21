@@ -118,7 +118,7 @@ functionality.
 | [MaxRoiPool][99]                 | ❌             | ❌           |
 | [MaxUnpool][100]                 | ❌             | ❌           |
 | [Mean][101]                      | ✅             | ✅           |
-| [MeanVarianceNormalization][102] | ❌             | ❌           |
+| [MeanVarianceNormalization][102] | ✅             | ✅           |
 | [MelWeightMatrix][103]           | ❌             | ❌           |
 | [Min][104]                       | ✅             | ✅           |
 | [Mish][105]                      | ✅             | ✅           |

@@ -124,6 +124,7 @@ pub mod max_pool1d;
 pub mod max_pool2d;
 pub mod max_pool3d;
 pub mod mean;
+pub mod mean_variance_normalization;
 pub mod min;
 pub mod mish;
 pub mod modulo;

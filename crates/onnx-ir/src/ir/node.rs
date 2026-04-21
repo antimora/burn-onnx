@@ -303,6 +303,7 @@ define_node_enum! {
     InstanceNormalization => instance_norm::InstanceNormalizationNode,
     LayerNormalization => layer_norm::LayerNormalizationNode,
     GroupNormalization => group_norm::GroupNormalizationNode,
+    MeanVarianceNormalization => mean_variance_normalization::MeanVarianceNormalizationNode,
 
     // DROPOUT & REGULARIZATION
     Dropout => dropout::DropoutNode,
@@ -375,7 +376,6 @@ define_node_enum! {
     MaxPool => unsupported::MaxPoolNode,
     MaxRoiPool => unsupported::MaxRoiPoolNode,
     MaxUnpool => unsupported::MaxUnpoolNode,
-    MeanVarianceNormalization => unsupported::MeanVarianceNormalizationNode,
     MelWeightMatrix => unsupported::MelWeightMatrixNode,
     Multinomial => unsupported::MultinomialNode,
     NegativeLogLikelihoodLoss => unsupported::NegativeLogLikelihoodLossNode,

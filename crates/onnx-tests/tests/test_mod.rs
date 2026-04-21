@@ -103,6 +103,7 @@ pub mod matmulinteger;
 pub mod max;
 pub mod maxpool;
 pub mod mean;
+pub mod mean_variance_normalization;
 pub mod min;
 pub mod mish;
 pub mod r#mod;

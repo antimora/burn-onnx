@@ -705,6 +705,26 @@ fn mean(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn mean_variance_normalization(graph: &OnnxGraph) {
+    let node = find_node(graph, "meanvariancenormalization");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    MeanVarianceNormalization "meanvariancenormalization1"
+      Inputs:
+        meanvariancenormalization_input: F32[1, 3, 4, 4]
+      Outputs:
+        meanvariancenormalization1_out1: F32[1, 3, 4, 4]
+      Config:
+        MeanVarianceNormalizationConfig {
+            axes: [
+                0,
+                2,
+                3,
+            ],
+        }
+    "#);
+}
+
+#[rstest]
 fn min(graph: &OnnxGraph) {
     let node = find_node(graph, "min");
     insta::assert_snapshot!(format!("{node}"), @r#"
