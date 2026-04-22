@@ -113,6 +113,7 @@ pub mod leaky_relu;
 pub mod linear;
 pub mod log_softmax;
 pub mod loop_node;
+pub mod lp_normalization;
 pub mod lp_pool1d;
 pub mod lp_pool2d;
 pub mod lrn;

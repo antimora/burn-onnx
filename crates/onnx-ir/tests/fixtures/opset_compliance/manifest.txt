@@ -1,4 +1,4 @@
-1:Abs,Add,And,ArgMax,ArgMin,AveragePool,BatchNormalization,Cast,Ceil,Clip,Concat,Constant,Conv,ConvTranspose,DepthToSpace,Div,Dropout,Elu,Equal,Exp,Flatten,Floor,GRU,Gather,Gemm,GlobalAveragePool,Greater,HardSigmoid,Hardmax,Identity,If,InstanceNormalization,LSTM,LeakyRelu,Less,Log,LogSoftmax,MatMul,Max,MaxPool,Mean,Min,Mul,Neg,Not,Or,PRelu,Pad,Pow,RandomNormal,RandomNormalLike,RandomUniform,RandomUniformLike,Reciprocal,ReduceL1,ReduceL2,ReduceLogSum,ReduceLogSumExp,ReduceMax,ReduceMean,ReduceMin,ReduceProd,ReduceSum,ReduceSumSquare,Relu,Reshape,Selu,Shape,Sigmoid,Size,Slice,Softmax,Softplus,Softsign,SpaceToDepth,Split,Sqrt,Squeeze,Sub,Sum,Tanh,Tile,TopK,Transpose,Unsqueeze,Xor|
+1:Abs,Add,And,ArgMax,ArgMin,AveragePool,BatchNormalization,Cast,Ceil,Clip,Concat,Constant,Conv,ConvTranspose,DepthToSpace,Div,Dropout,Elu,Equal,Exp,Flatten,Floor,GRU,Gather,Gemm,GlobalAveragePool,Greater,HardSigmoid,Hardmax,Identity,If,InstanceNormalization,LSTM,LeakyRelu,Less,Log,LogSoftmax,LpNormalization,MatMul,Max,MaxPool,Mean,Min,Mul,Neg,Not,Or,PRelu,Pad,Pow,RandomNormal,RandomNormalLike,RandomUniform,RandomUniformLike,Reciprocal,ReduceL1,ReduceL2,ReduceLogSum,ReduceLogSumExp,ReduceMax,ReduceMean,ReduceMin,ReduceProd,ReduceSum,ReduceSumSquare,Relu,Reshape,Selu,Shape,Sigmoid,Size,Slice,Softmax,Softplus,Softsign,SpaceToDepth,Split,Sqrt,Squeeze,Sub,Sum,Tanh,Tile,TopK,Transpose,Unsqueeze,Xor|
 2:Pad,Split|
 3:GRU|
 4:Concat|
@@ -19,6 +19,6 @@
 19:AveragePool,Cast,Constant,DeformConv,Equal,Identity,If,Pad,Reshape,Resize,Shape,Size|
 20:ConstantOfShape,DFT,Gelu,GridSample,IsInf,IsNaN,ReduceMax,ReduceMin|
 21:Cast,Constant,ConstantOfShape,Flatten,GroupNormalization,Identity,If,Pad,Reshape,Shape,Size,Squeeze,Transpose,Unsqueeze|
-22:Acos,Acosh,Asin,Asinh,Atan,Atanh,AveragePool,Bernoulli,Conv,ConvTranspose,Cos,Cosh,DeformConv,Dropout,Elu,EyeLike,GRU,GlobalAveragePool,GridSample,HardSigmoid,HardSwish,InstanceNormalization,LSTM,MaxPool,Mish,RandomNormal,RandomNormalLike,RandomUniform,RandomUniformLike,Round,Selu,Sin,Sinh,Softplus,Softsign,Tan,ThresholdedRelu|
+22:Acos,Acosh,Asin,Asinh,Atan,Atanh,AveragePool,Bernoulli,Conv,ConvTranspose,Cos,Cosh,DeformConv,Dropout,Elu,EyeLike,GRU,GlobalAveragePool,GridSample,HardSigmoid,HardSwish,InstanceNormalization,LSTM,LpNormalization,MaxPool,Mish,RandomNormal,RandomNormalLike,RandomUniform,RandomUniformLike,Round,Selu,Sin,Sinh,Softplus,Softsign,Tan,ThresholdedRelu|
 23:Cast,Constant,ConstantOfShape,Flatten,Identity,If,Pad,Reshape,Shape,Size,Squeeze,Transpose,Unsqueeze|
 24:Cast,Constant,ConstantOfShape,Flatten,Identity,If,Pad,Reshape,Shape,Size,Squeeze,Swish,TopK,Transpose,Unsqueeze|

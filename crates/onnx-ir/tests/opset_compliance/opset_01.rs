@@ -853,6 +853,23 @@ fn log_softmax(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn lp_normalization(graph: &OnnxGraph) {
+    let node = find_node(graph, "lpnormalization");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    LpNormalization "lpnormalization1"
+      Inputs:
+        lpnormalization_input: F32[2, 3, 4]
+      Outputs:
+        lpnormalization1_out1: F32[2, 3, 4]
+      Config:
+        LpNormalizationConfig {
+            axis: 2,
+            p: 2,
+        }
+    "#);
+}
+
+#[rstest]
 fn mat_mul(graph: &OnnxGraph) {
     let node = find_node(graph, "matmul");
     insta::assert_snapshot!(format!("{node}"), @r#"

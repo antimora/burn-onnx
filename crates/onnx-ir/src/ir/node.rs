@@ -304,6 +304,7 @@ define_node_enum! {
     LayerNormalization => layer_norm::LayerNormalizationNode,
     GroupNormalization => group_norm::GroupNormalizationNode,
     MeanVarianceNormalization => mean_variance_normalization::MeanVarianceNormalizationNode,
+    LpNormalization => lp_normalization::LpNormalizationNode,
 
     // DROPOUT & REGULARIZATION
     Dropout => dropout::DropoutNode,
@@ -369,7 +370,6 @@ define_node_enum! {
     Im => unsupported::ImNode,
     ImageDecoder => unsupported::ImageDecoderNode,
     Imputer => imputer::ImputerNode,
-    LpNormalization => unsupported::LpNormalizationNode,
     LpPool => unsupported::LpPoolNode,
     Lrn => lrn::LrnNode,
     Lstm => lstm::LstmNode,

@@ -179,6 +179,7 @@ impl_node_codegen_dispatch! {
     GroupNormalization,
     InstanceNormalization,
     MeanVarianceNormalization,
+    LpNormalization,
 
     // Other ops
     Cast,

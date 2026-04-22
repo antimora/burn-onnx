@@ -2975,29 +2975,19 @@ status = "pass"
 status = "pass"
 
 [test_l1normalization_axis_0]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): LpNormalization (node 'lpnormalization1')"
-tracking = "#314"
+status = "pass"
 
 [test_l1normalization_axis_1]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): LpNormalization (node 'lpnormalization1')"
-tracking = "#314"
+status = "pass"
 
 [test_l1normalization_axis_last]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): LpNormalization (node 'lpnormalization1')"
-tracking = "#314"
+status = "pass"
 
 [test_l2normalization_axis_0]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): LpNormalization (node 'lpnormalization1')"
-tracking = "#314"
+status = "pass"
 
 [test_l2normalization_axis_1]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): LpNormalization (node 'lpnormalization1')"
-tracking = "#314"
+status = "pass"
 
 [test_layer_normalization_2d_axis0]
 status = "skip-codegen"
@@ -3459,9 +3449,7 @@ reason = "Custom(\"Failed to build Loop body: TypeInference(UnsupportedOps([\\\"
 tracking = "#314"
 
 [test_lpnormalization_default]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): LpNormalization (node 'lpnormalization1')"
-tracking = "#314"
+status = "pass"
 
 [test_lppool_1d_default]
 status = "pass"

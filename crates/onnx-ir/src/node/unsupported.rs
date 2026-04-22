@@ -57,7 +57,6 @@ define_placeholder_node! {
     HardmaxNode,
     ImNode,
     ImageDecoderNode,
-    LpNormalizationNode,
     LpPoolNode,
     MaxPoolNode,
     MaxRoiPoolNode,

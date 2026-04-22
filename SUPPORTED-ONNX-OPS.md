@@ -105,7 +105,7 @@ functionality.
 | [Log][87]                        | ✅             | ✅           |
 | [LogSoftmax][88]                 | ✅             | ✅           |
 | [Loop][89]                       | ✅             | ✅           |
-| [LpNormalization][90]            | ❌             | ❌           |
+| [LpNormalization][90]            | ✅             | ✅           |
 | [LpPool1d][91]                   | ✅             | ✅           |
 | [LpPool2d][91]                   | ✅             | ✅           |
 | [LRN][92]                        | ✅             | ✅           |

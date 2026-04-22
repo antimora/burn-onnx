@@ -348,6 +348,10 @@ impl ProcessorRegistry {
             NodeType::MeanVarianceNormalization,
             Box::new(crate::node::mean_variance_normalization::MeanVarianceNormalizationProcessor),
         );
+        registry.register(
+            NodeType::LpNormalization,
+            Box::new(crate::node::lp_normalization::LpNormalizationProcessor),
+        );
 
         // Shape operations
         registry.register(

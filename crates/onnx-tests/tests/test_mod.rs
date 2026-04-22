@@ -95,6 +95,7 @@ pub mod linear;
 pub mod log;
 pub mod log_softmax;
 pub mod r#loop;
+pub mod lp_normalization;
 pub mod lp_pool;
 pub mod lrn;
 pub mod lstm;

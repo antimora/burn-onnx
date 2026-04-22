@@ -171,6 +171,7 @@ SUPPORTED_OPS = {
     "InstanceNormalization": "instance_norm",
     "LayerNormalization": "layer_norm",
     "GroupNormalization": "group_norm",
+    "LpNormalization": "lp_normalization",
     "MeanVarianceNormalization": "mean_variance_normalization",
     # Utility
     "Dropout": "dropout",
@@ -679,6 +680,20 @@ def make_mean_variance_normalization(op_name: str, opset: int):
     return [node], [inp], [out], []
 
 
+def make_lp_normalization(op_name: str, opset: int):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [2, 3, 4])
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
+    node = helper.make_node(
+        op_name,
+        [_p(op_name, "input")],
+        [_p(op_name, "output")],
+        name=_p(op_name, "node"),
+        p=2,
+        axis=-1,
+    )
+    return [node], [inp], [out], []
+
+
 def make_dropout(op_name: str, opset: int):
     inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [2, 3, 4])
     out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [2, 3, 4])
@@ -1066,6 +1081,7 @@ GENERATORS = {
     "instance_norm": make_instance_norm,
     "layer_norm": make_layer_norm,
     "group_norm": make_group_norm,
+    "lp_normalization": make_lp_normalization,
     "mean_variance_normalization": make_mean_variance_normalization,
     "dropout": make_dropout,
     "identity": make_identity,
