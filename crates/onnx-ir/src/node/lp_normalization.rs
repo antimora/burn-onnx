@@ -65,7 +65,7 @@ impl NodeProcessor for LpNormalizationProcessor {
         let arg = node
             .inputs
             .first()
-            .ok_or_else(|| ProcessError::MissingInput("Missing input".to_string()))?;
+            .ok_or_else(|| ProcessError::MissingInput("input".to_string()))?;
         let ArgType::Tensor(ref tensor_ty) = arg.ty else {
             return Err(ProcessError::TypeMismatch {
                 expected: "Input should be a tensor".to_string(),
