@@ -38,7 +38,6 @@ mod tests {
 
     #[test]
     fn lp_normalization_default() {
-        // Default attrs: p=2, axis=-1. Normalizes along the last axis (size 4).
         let device = Default::default();
         let model: lp_normalization_default::Model<TestBackend> =
             lp_normalization_default::Model::default();
@@ -65,7 +64,6 @@ mod tests {
 
     #[test]
     fn lp_normalization_l1_axis1() {
-        // p=1 exercises the L1 (abs + sum) code path.
         let device = Default::default();
         let model: lp_normalization_l1_axis1::Model<TestBackend> =
             lp_normalization_l1_axis1::Model::default();
@@ -92,7 +90,6 @@ mod tests {
 
     #[test]
     fn lp_normalization_l2_axis0() {
-        // L2 along a non-trailing axis (axis=0, size 2).
         let device = Default::default();
         let model: lp_normalization_l2_axis0::Model<TestBackend> =
             lp_normalization_l2_axis0::Model::default();

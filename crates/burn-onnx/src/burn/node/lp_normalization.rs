@@ -15,16 +15,12 @@ impl NodeCodegen for LpNormalizationNode {
         let output = arg_to_ident(self.outputs.first().unwrap());
         let axis = self.config.axis.to_tokens();
 
-        // Delegate to burn's specialized Lp norm helpers. Both keep the reduced
-        // dim as size 1 for broadcasting. p is restricted to 1 or 2 by the ONNX
-        // spec (validated in onnx-ir).
+        // Relies on l1_norm/l2_norm reducing `axis` to size 1 so the final
+        // division broadcasts against x.
         let norm_expr = match self.config.p {
             1 => quote! { burn::tensor::linalg::l1_norm(x.clone(), #axis) },
             2 => quote! { burn::tensor::linalg::l2_norm(x.clone(), #axis) },
-            p => panic!(
-                "LpNormalization only supports p=1 or p=2, got p={p}. \
-                 This should have been rejected in onnx-ir."
-            ),
+            p => unreachable!("p must be 1 or 2, got {p}"),
         };
 
         quote! {

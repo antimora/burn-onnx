@@ -1,8 +1,11 @@
 //! # LpNormalization
 //!
-//! Applies Lp-normalization along the provided axis, computing
-//! `Y = X / ||X||_p` where the p-norm is reduced along `axis` and broadcast
-//! back against the original shape.
+//! For each 1-D slice along `axis`, divides the slice by its Lp-norm:
+//! `Y = X / ||X||_p`. The norm is computed per-slice (reducing `axis` to
+//! size 1) so the division broadcasts against the original shape. A slice of
+//! all zeros yields NaN/Inf, matching ONNX Runtime (the ONNX reference
+//! evaluator adds a `where(norm == 0, 0, ...)` guard that the spec does not
+//! require).
 //!
 //! **ONNX Spec**: <https://onnx.ai/onnx/operators/onnx__LpNormalization.html>
 //!
@@ -85,7 +88,7 @@ impl NodeProcessor for LpNormalizationProcessor {
             });
         }
 
-        // Surface out-of-range and invalid-p errors during type inference.
+        // Validate here so malformed graphs fail before codegen.
         let rank = tensor_ty.rank;
         extract_axis(node, rank)?;
         extract_p(node)?;
@@ -202,6 +205,23 @@ mod tests {
         let node = build_node(4, Some(-2), None);
         let config = LpNormalizationProcessor.extract_config(&node, 1).unwrap();
         assert_eq!(config.axis, 2);
+    }
+
+    #[test]
+    fn negative_axis_boundary() {
+        // axis=-rank resolves to 0; axis=-rank-1 is out of range.
+        let node = build_node(3, Some(-3), None);
+        let config = LpNormalizationProcessor.extract_config(&node, 1).unwrap();
+        assert_eq!(config.axis, 0);
+
+        let node = build_node(3, Some(-4), None);
+        let err = LpNormalizationProcessor
+            .extract_config(&node, 1)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ProcessError::InvalidAttribute { ref name, .. } if name == "axis"
+        ));
     }
 
     #[test]

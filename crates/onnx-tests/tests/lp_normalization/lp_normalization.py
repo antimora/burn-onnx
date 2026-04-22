@@ -17,8 +17,10 @@
 #   * L2 with negative axis: axis=-2 on rank-3 should match axis=1
 #
 # Uses ONNX Runtime instead of `onnx.reference.ReferenceEvaluator` because
-# the reference evaluator has a bug for p=1: it divides by signed sum rather
-# than by the sum of absolute values (i.e., the proper L1 norm).
+# the reference evaluator (as of onnx==1.19.0) has a bug for p=1: it
+# computes `x^p` instead of `|x|^p`, so it divides by signed sum rather
+# than by the sum of absolute values. ORT and PyTorch's F.normalize both
+# use the correct |x|^p form.
 
 import numpy as np
 import onnx
