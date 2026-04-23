@@ -536,6 +536,12 @@ impl BurnGraph {
         match strategy {
             LoadStrategy::File => {
                 let file = file.to_str().unwrap();
+                statics = quote! {
+                    // `from_file` requires `std::path::Path`; opt into std so this
+                    // also works when included from `#![no_std]` crates.
+                    extern crate std;
+                    _blank_!();
+                };
                 default_impl = quote! {
                     impl<B: Backend> Default for Model<B> {
                         fn default() -> Self {
@@ -546,7 +552,7 @@ impl BurnGraph {
                 };
                 extra_loaders = quote! {
                     /// Load model weights from a burnpack file.
-                    pub fn from_file(file: &str, device: &B::Device) -> Self {
+                    pub fn from_file<P: AsRef<std::path::Path>>(file: P, device: &B::Device) -> Self {
                         let mut model = Self::new(device);
                         let mut store = BurnpackStore::from_file(file);
                         model.load_from(&mut store).expect("Failed to load burnpack file");
@@ -1339,11 +1345,18 @@ mod tests {
         let code = format_tokens(graph.codegen());
         let _ = std::fs::remove_file(bpk);
 
-        assert!(code.contains("pub fn from_file("));
+        assert!(
+            code.contains(
+                "pub fn from_file<P: AsRef<std::path::Path>>(file: P, device: &B::Device)"
+            )
+        );
         assert!(code.contains("pub fn from_bytes(bytes: Bytes"));
         assert!(code.contains("impl<B: Backend> Default for Model<B>"));
         assert!(code.contains("Self::from_file("));
         assert!(!code.contains("from_embedded"));
+        // `from_file` references `std::path::Path`, which is not resolvable from
+        // `#![no_std]` consumers unless std is explicitly linked. Pin the opt-in.
+        assert!(code.contains("extern crate std;"));
     }
 
     #[test]
@@ -1359,6 +1372,7 @@ mod tests {
         assert!(code.contains("Self::from_embedded("));
         assert!(code.contains("include_bytes!"));
         assert!(!code.contains("from_file"));
+        assert!(!code.contains("extern crate std"));
     }
 
     #[test]
@@ -1372,6 +1386,7 @@ mod tests {
         assert!(!code.contains("from_file"));
         assert!(!code.contains("from_embedded"));
         assert!(!code.contains("impl<B: Backend> Default for Model<B>"));
+        assert!(!code.contains("extern crate std"));
     }
 
     #[test]
@@ -1385,5 +1400,6 @@ mod tests {
         assert!(!code.contains("from_bytes"));
         assert!(!code.contains("from_embedded"));
         assert!(!code.contains("impl<B: Backend> Default for Model<B>"));
+        assert!(!code.contains("extern crate std"));
     }
 }
