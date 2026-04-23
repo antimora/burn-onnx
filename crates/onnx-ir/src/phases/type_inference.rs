@@ -364,8 +364,8 @@ mod tests {
     fn test_unsupported_ops_detected_before_inference() {
         let mut nodes = vec![
             RawNode {
-                node_type: NodeType::Stft,
-                name: "stft1".to_string(),
+                node_type: NodeType::AffineGrid,
+                name: "affine1".to_string(),
                 inputs: vec![],
                 outputs: vec![],
                 attrs: Default::default(),
@@ -385,7 +385,7 @@ mod tests {
         match &err {
             ProcessError::UnsupportedOps(ops) => {
                 assert_eq!(ops.len(), 2);
-                assert!(ops[0].contains("Stft"));
+                assert!(ops[0].contains("AffineGrid"));
                 assert!(ops[1].contains("MelWeightMatrix"));
             }
             other => panic!("Expected UnsupportedOps, got: {other:?}"),
@@ -394,7 +394,7 @@ mod tests {
         // Verify Display output is clean (no "Custom(...)" wrapper)
         let msg = format!("{err}");
         assert!(msg.starts_with("Unsupported ONNX operation(s):"));
-        assert!(msg.contains("Stft"));
+        assert!(msg.contains("AffineGrid"));
         assert!(msg.contains("MelWeightMatrix"));
     }
 }

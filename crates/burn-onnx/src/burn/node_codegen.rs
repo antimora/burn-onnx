@@ -241,6 +241,7 @@ impl_node_codegen_dispatch! {
     Dft,
     HammingWindow,
     HannWindow,
+    Stft,
 
     // Test ops
     IsInf,

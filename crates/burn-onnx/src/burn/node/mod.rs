@@ -158,6 +158,7 @@ pub(crate) mod space_to_depth;
 pub(crate) mod split;
 pub(crate) mod sqrt;
 pub(crate) mod squeeze;
+pub(crate) mod stft;
 pub(crate) mod sub;
 pub(crate) mod sum;
 pub(crate) mod swish;

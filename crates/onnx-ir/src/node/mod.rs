@@ -159,6 +159,7 @@ pub mod softmax;
 pub mod space_to_depth;
 pub mod split;
 pub mod squeeze;
+pub mod stft;
 pub mod sum;
 pub mod tile;
 pub mod topk;

@@ -85,7 +85,6 @@ define_placeholder_node! {
     ShrinkNode,
     SoftmaxCrossEntropyLossNode,
     SplitToSequenceNode,
-    StftNode,
     StringConcatNode,
     StringNormalizerNode,
     StringSplitNode,

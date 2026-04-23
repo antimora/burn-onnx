@@ -6303,13 +6303,13 @@ tracking = "#314"
 
 [test_stft]
 status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): Stft (node 'stft1')"
-tracking = "#314"
+reason = "STFT requires frame_step and frame_length to be compile-time constants; the official test provides them as runtime graph inputs"
+tracking = "#161"
 
 [test_stft_with_window]
 status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): Stft (node 'stft1')"
-tracking = "#314"
+reason = "STFT requires frame_step and frame_length to be compile-time constants; the official test provides them as runtime graph inputs"
+tracking = "#161"
 
 [test_string_concat]
 status = "skip-codegen"

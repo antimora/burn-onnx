@@ -403,7 +403,7 @@ define_node_enum! {
     Shrink => shrink::ShrinkNode,
     SoftmaxCrossEntropyLoss => unsupported::SoftmaxCrossEntropyLossNode,
     SplitToSequence => unsupported::SplitToSequenceNode,
-    Stft => unsupported::StftNode,
+    Stft => stft::StftNode,
     StringConcat => unsupported::StringConcatNode,
     StringNormalizer => unsupported::StringNormalizerNode,
     StringSplit => unsupported::StringSplitNode,

@@ -106,3 +106,25 @@ fn layer_normalization(graph: &OnnxGraph) {
         }
     "#);
 }
+
+#[rstest]
+fn stft(graph: &OnnxGraph) {
+    let node = find_node(graph, "stft");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Stft "stft1"
+      Inputs:
+        stft_signal: F32[1, 32, 1]
+        _: ScalarNative(I64) [static(5)]
+        <optional>
+        _: ScalarNative(I64) [static(6)]
+      Outputs:
+        stft1_out1: F32[1, 3, 9, 2]
+      Config:
+        StftConfig {
+            onesided: true,
+            frame_step: 8,
+            frame_length: 16,
+            has_window: false,
+        }
+    "#);
+}

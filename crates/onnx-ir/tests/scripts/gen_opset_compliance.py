@@ -209,6 +209,7 @@ SUPPORTED_OPS = {
     "DFT": "dft",
     "HammingWindow": "hamming_window",
     "HannWindow": "hann_window",
+    "STFT": "stft",
 }
 
 
@@ -963,6 +964,31 @@ def make_hann_window(op_name: str, opset: int):
     return [node], [], [out], [size_init]
 
 
+def make_stft(op_name: str, opset: int):
+    # Real input [1, 32, 1], frame_step=8, frame_length=16 (power of two), onesided=1.
+    # Output [1, 3, 9, 2].
+    inp = helper.make_tensor_value_info(
+        _p(op_name, "signal"), TensorProto.FLOAT, [1, 32, 1]
+    )
+    out = helper.make_tensor_value_info(
+        _p(op_name, "output"), TensorProto.FLOAT, [1, 3, 9, 2]
+    )
+    frame_step = numpy_helper.from_array(
+        np.array(8, dtype=np.int64), name=_p(op_name, "frame_step")
+    )
+    frame_length = numpy_helper.from_array(
+        np.array(16, dtype=np.int64), name=_p(op_name, "frame_length")
+    )
+    node = helper.make_node(
+        op_name,
+        [_p(op_name, "signal"), _p(op_name, "frame_step"), "", _p(op_name, "frame_length")],
+        [_p(op_name, "output")],
+        name=_p(op_name, "node"),
+        onesided=1,
+    )
+    return [node], [inp], [out], [frame_step, frame_length]
+
+
 def make_softmax(op_name: str, opset: int):
     inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [2, 3, 4])
     out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [2, 3, 4])
@@ -1123,6 +1149,7 @@ GENERATORS = {
     "dft": make_dft,
     "hamming_window": make_hamming_window,
     "hann_window": make_hann_window,
+    "stft": make_stft,
     "softmax": make_softmax,
     "log_softmax": make_log_softmax,
     "hardmax": make_hardmax,

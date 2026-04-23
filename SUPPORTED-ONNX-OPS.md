@@ -196,7 +196,7 @@ functionality.
 | [SplitToSequence][174]           | ❌             | ❌           |
 | [Sqrt][175]                      | ✅             | ✅           |
 | [Squeeze][176]                   | ✅             | ✅           |
-| [STFT][177]                      | ❌             | ❌           |
+| [STFT][177]                      | ✅             | ✅           |
 | [StringConcat][201]              | ❌             | ❌           |
 | [StringNormalizer][178]          | ❌             | ❌           |
 | [StringSplit][202]               | ❌             | ❌           |
