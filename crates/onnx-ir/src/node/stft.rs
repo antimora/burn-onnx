@@ -285,7 +285,7 @@ impl NodeProcessor for StftProcessor {
         let frame_length = Self::extract_frame_length(node)?.ok_or_else(|| {
             ProcessError::Custom(format!(
                 "{OP_NAME}: frame_length must be provided as a constant input \
-                 or inferrable from a window with a static shape"
+                 or inferable from a window with a static shape"
             ))
         })?;
 
