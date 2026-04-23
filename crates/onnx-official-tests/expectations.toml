@@ -1065,9 +1065,7 @@ status = "pass"
 status = "pass"
 
 [test_blackmanwindow]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): BlackmanWindow (node 'blackmanwindow1')"
-tracking = "#314"
+status = "pass"
 
 [test_blackmanwindow_expanded]
 status = "skip-compile"
@@ -1075,9 +1073,7 @@ reason = "burn-onnx emits uncompilable generated code (references alloc::* from 
 tracking = "tracel-ai/burn-onnx"
 
 [test_blackmanwindow_symmetric]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): BlackmanWindow (node 'blackmanwindow1')"
-tracking = "#314"
+status = "pass"
 
 [test_blackmanwindow_symmetric_expanded]
 status = "skip-compile"

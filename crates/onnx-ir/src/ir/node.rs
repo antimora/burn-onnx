@@ -348,7 +348,7 @@ define_node_enum! {
     // UNSUPPORTED / PLACEHOLDER OPERATIONS (not yet implemented in burn-onnx)
     AffineGrid => unsupported::AffineGridNode,
     AveragePool => unsupported::AveragePoolNode,
-    BlackmanWindow => unsupported::BlackmanWindowNode,
+    BlackmanWindow => blackman_window::BlackmanWindowNode,
     CenterCropPad => unsupported::CenterCropPadNode,
     Col2Im => col2im::Col2ImNode,
     Compress => unsupported::CompressNode,

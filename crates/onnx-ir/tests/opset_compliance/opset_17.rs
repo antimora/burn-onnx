@@ -12,6 +12,25 @@ fn graph() -> OnnxGraph {
 }
 
 #[rstest]
+fn blackman_window(graph: &OnnxGraph) {
+    let node = find_node(graph, "blackmanwindow");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    BlackmanWindow "blackmanwindow1"
+      Inputs:
+      Outputs:
+        blackmanwindow1_out1: F32[10]
+      Config:
+        BlackmanWindowConfig {
+            periodic: true,
+            output_dtype: F32,
+            size: Static(
+                10,
+            ),
+        }
+    "#);
+}
+
+#[rstest]
 fn dft(graph: &OnnxGraph) {
     let node = find_node(graph, "dft");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -76,8 +95,8 @@ fn layer_normalization(graph: &OnnxGraph) {
     LayerNormalization "layernormalization1"
       Inputs:
         layernormalization_input: F32[2, 3, 4]
-        _: F32[4] [static(2)]
         _: F32[4] [static(3)]
+        _: F32[4] [static(4)]
       Outputs:
         layernormalization1_out1: F32[2, 3, 4]
       Config:

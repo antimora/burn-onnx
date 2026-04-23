@@ -237,6 +237,7 @@ impl_node_codegen_dispatch! {
     Det,
 
     // Signal processing ops
+    BlackmanWindow,
     Dft,
     HammingWindow,
     HannWindow,

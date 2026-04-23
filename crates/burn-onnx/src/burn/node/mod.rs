@@ -32,6 +32,7 @@ pub(crate) mod bitwiseand;
 pub(crate) mod bitwisenot;
 pub(crate) mod bitwiseor;
 pub(crate) mod bitwisexor;
+pub(crate) mod blackman_window;
 pub(crate) mod bool_and;
 pub(crate) mod bool_or;
 pub(crate) mod bool_xor;

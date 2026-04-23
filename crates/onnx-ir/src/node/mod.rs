@@ -64,6 +64,7 @@ pub mod bitshift;
 pub mod bitwiseand;
 pub mod bitwiseor;
 pub mod bitwisexor;
+pub mod blackman_window;
 pub mod cast;
 pub mod cast_like;
 pub mod clip;

@@ -31,7 +31,7 @@ functionality.
 | [BitwiseNot][18]                 | ✅             | ✅           |
 | [BitwiseOr][19]                  | ✅             | ✅           |
 | [BitwiseXor][20]                 | ✅             | ✅           |
-| [BlackmanWindow][21]             | ❌             | ❌           |
+| [BlackmanWindow][21]             | ✅             | ✅           |
 | [Cast][22]                       | ✅             | ✅           |
 | [CastLike][23]                   | ✅             | ✅           |
 | [Ceil][24]                       | ✅             | ✅           |

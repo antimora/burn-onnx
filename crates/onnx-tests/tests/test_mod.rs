@@ -31,6 +31,7 @@ pub mod bitwise_and;
 pub mod bitwise_not;
 pub mod bitwise_or;
 pub mod bitwise_xor;
+pub mod blackman_window;
 pub mod cast;
 pub mod cast_like;
 pub mod ceil;

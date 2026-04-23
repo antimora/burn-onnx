@@ -612,6 +612,10 @@ impl ProcessorRegistry {
 
         // Signal processing operations
         registry.register(
+            NodeType::BlackmanWindow,
+            Box::new(crate::node::blackman_window::BlackmanWindowProcessor),
+        );
+        registry.register(
             NodeType::HammingWindow,
             Box::new(crate::node::hamming_window::HammingWindowProcessor),
         );

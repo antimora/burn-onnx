@@ -205,6 +205,7 @@ SUPPORTED_OPS = {
     # DeformConv
     "DeformConv": "deform_conv",
     # Signal processing
+    "BlackmanWindow": "blackman_window",
     "DFT": "dft",
     "HammingWindow": "hamming_window",
     "HannWindow": "hann_window",
@@ -932,6 +933,16 @@ def make_dft(op_name: str, opset: int):
     return [node], [inp], [out], []
 
 
+def make_blackman_window(op_name: str, opset: int):
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [10])
+    size_init = numpy_helper.from_array(np.array(10, dtype=np.int64), name=_p(op_name, "size"))
+    node = helper.make_node(
+        op_name, [_p(op_name, "size")], [_p(op_name, "output")],
+        name=_p(op_name, "node"), periodic=1, output_datatype=TensorProto.FLOAT,
+    )
+    return [node], [], [out], [size_init]
+
+
 def make_hamming_window(op_name: str, opset: int):
     out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [10])
     size_init = numpy_helper.from_array(np.array(10, dtype=np.int64), name=_p(op_name, "size"))
@@ -1108,6 +1119,7 @@ GENERATORS = {
     "gru": make_gru,
     "if_op": make_if_op,
     "deform_conv": make_deform_conv,
+    "blackman_window": make_blackman_window,
     "dft": make_dft,
     "hamming_window": make_hamming_window,
     "hann_window": make_hann_window,

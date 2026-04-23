@@ -169,6 +169,7 @@ MIN_OPSET = {
     # DeformConv
     "DeformConv": 19,
     # Signal processing
+    "BlackmanWindow": 17,
     "DFT": 17,
     "HammingWindow": 17,
     "HannWindow": 17,
