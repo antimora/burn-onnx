@@ -123,12 +123,12 @@ impl NodeProcessor for BlackmanWindowProcessor {
                     expected: "scalar integer for size".to_string(),
                     actual: format!("{e}"),
                 })?;
-                if val < 0 {
-                    return Err(ProcessError::Custom(format!(
-                        "{OP_NAME}: size must be non-negative, got {val}"
-                    )));
-                }
-                Some(vec![Some(val as usize)])
+                let size = usize::try_from(val).map_err(|_| {
+                    ProcessError::Custom(format!(
+                        "{OP_NAME}: size must be non-negative and fit in usize, got {val}"
+                    ))
+                })?;
+                Some(vec![Some(size)])
             }
             None => None,
         };
@@ -157,12 +157,12 @@ impl NodeProcessor for BlackmanWindowProcessor {
                     expected: "scalar integer for size".to_string(),
                     actual: format!("{e}"),
                 })?;
-                if val < 0 {
-                    return Err(ProcessError::Custom(format!(
-                        "{OP_NAME}: size must be non-negative, got {val}"
-                    )));
-                }
-                WindowSize::Static(val as usize)
+                let size = usize::try_from(val).map_err(|_| {
+                    ProcessError::Custom(format!(
+                        "{OP_NAME}: size must be non-negative and fit in usize, got {val}"
+                    ))
+                })?;
+                WindowSize::Static(size)
             }
             None => WindowSize::Runtime(RuntimeInputRef::new(node.inputs[0].name.clone(), 0)),
         };

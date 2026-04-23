@@ -3,7 +3,6 @@
 # /// script
 # dependencies = [
 #   "onnx>=1.17.0",
-#   "numpy",
 # ]
 # ///
 
@@ -11,7 +10,6 @@
 #
 # Generates a Blackman window of size 10 (periodic, float32 output).
 
-import numpy as np
 import onnx
 from onnx import TensorProto, helper
 

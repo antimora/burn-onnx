@@ -25,8 +25,10 @@ impl NodeCodegen for onnx_ir::node::blackman_window::BlackmanWindowNode {
                 let name = arg_to_ident(arg);
                 quote! { {
                     let __size = #name;
-                    assert!(__size >= 0, "BlackmanWindow: size must be non-negative, got {}", __size);
-                    __size as usize
+                    usize::try_from(__size).unwrap_or_else(|_| panic!(
+                        "BlackmanWindow: size must be non-negative and fit in usize, got {}",
+                        __size
+                    ))
                 } }
             }
         };
@@ -117,11 +119,13 @@ mod tests {
             >(
                     {
                         let __size = size;
-                        assert!(
-                            __size >= 0, "BlackmanWindow: size must be non-negative, got {}",
-                            __size
-                        );
-                        __size as usize
+                        usize::try_from(__size)
+                            .unwrap_or_else(|_| {
+                                panic!(
+                                    "BlackmanWindow: size must be non-negative and fit in usize, got {}",
+                                    __size
+                                )
+                            })
                     },
                     true,
                     &self.device,
