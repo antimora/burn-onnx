@@ -1354,6 +1354,9 @@ mod tests {
         assert!(code.contains("impl<B: Backend> Default for Model<B>"));
         assert!(code.contains("Self::from_file("));
         assert!(!code.contains("from_embedded"));
+        // `from_file` references `std::path::Path`, which is not resolvable from
+        // `#![no_std]` consumers unless std is explicitly linked. Pin the opt-in.
+        assert!(code.contains("extern crate std;"));
     }
 
     #[test]
@@ -1369,6 +1372,7 @@ mod tests {
         assert!(code.contains("Self::from_embedded("));
         assert!(code.contains("include_bytes!"));
         assert!(!code.contains("from_file"));
+        assert!(!code.contains("extern crate std"));
     }
 
     #[test]
@@ -1382,6 +1386,7 @@ mod tests {
         assert!(!code.contains("from_file"));
         assert!(!code.contains("from_embedded"));
         assert!(!code.contains("impl<B: Backend> Default for Model<B>"));
+        assert!(!code.contains("extern crate std"));
     }
 
     #[test]
@@ -1395,5 +1400,6 @@ mod tests {
         assert!(!code.contains("from_bytes"));
         assert!(!code.contains("from_embedded"));
         assert!(!code.contains("impl<B: Backend> Default for Model<B>"));
+        assert!(!code.contains("extern crate std"));
     }
 }
