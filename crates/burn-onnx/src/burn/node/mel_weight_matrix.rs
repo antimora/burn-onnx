@@ -58,9 +58,9 @@ impl NodeCodegen for onnx_ir::node::mel_weight_matrix::MelWeightMatrixNode {
                     sample_rate_i,
                 );
                 assert!(
-                    lower_edge_hertz_f > -700.0_f32 && upper_edge_hertz_f > -700.0_f32,
-                    "MelWeightMatrix: edge_hertz values must be > -700 so that \
-                     log10(1 + hz/700) is defined, got lower={} upper={}",
+                    lower_edge_hertz_f >= 0.0_f32 && upper_edge_hertz_f >= 0.0_f32,
+                    "MelWeightMatrix: edge_hertz values must be non-negative, \
+                     got lower={} upper={}",
                     lower_edge_hertz_f,
                     upper_edge_hertz_f,
                 );
@@ -105,20 +105,30 @@ impl NodeCodegen for onnx_ir::node::mel_weight_matrix::MelWeightMatrixNode {
                             data[center as usize * num_mel_bins + m] = 1.0_f32;
                         }
                     } else if low_to_center > 0 {
+                        // Clamp in i64 space before casting to usize: a negative bin_edge
+                        // would wrap to a huge value on a bare `as usize` cast, then
+                        // .min(...) would leave hi pointing at the top of the matrix and
+                        // fill every row with garbage weights.
                         let lo = lower.max(0) as usize;
-                        let hi = (center as usize).min(num_spectrogram_bins.saturating_sub(1));
-                        for j in lo..=hi {
-                            data[j * num_mel_bins + m] =
-                                (j as f32 - lower as f32) / (low_to_center as f32);
+                        let hi = center
+                            .clamp(0, num_spectrogram_bins.saturating_sub(1) as i64)
+                            as usize;
+                        if hi >= lo && center >= 0 {
+                            for j in lo..=hi {
+                                data[j * num_mel_bins + m] =
+                                    (j as f32 - lower as f32) / (low_to_center as f32);
+                            }
                         }
                     }
                     let center_to_high = upper - center;
                     if center_to_high > 0 {
                         let lo = center.max(0) as usize;
-                        let hi = (upper as usize).min(num_spectrogram_bins);
-                        for j in lo..hi {
-                            data[j * num_mel_bins + m] =
-                                (upper as f32 - j as f32) / (center_to_high as f32);
+                        let hi = upper.clamp(0, num_spectrogram_bins as i64) as usize;
+                        if hi > lo && upper > 0 {
+                            for j in lo..hi {
+                                data[j * num_mel_bins + m] =
+                                    (upper as f32 - j as f32) / (center_to_high as f32);
+                            }
                         }
                     }
                 }
@@ -185,9 +195,9 @@ mod tests {
                     sample_rate_i,
                 );
                 assert!(
-                    lower_edge_hertz_f > - 700.0_f32 && upper_edge_hertz_f > - 700.0_f32,
-                    "MelWeightMatrix: edge_hertz values must be > -700 so that \
-                             log10(1 + hz/700) is defined, got lower={} upper={}",
+                    lower_edge_hertz_f >= 0.0_f32 && upper_edge_hertz_f >= 0.0_f32,
+                    "MelWeightMatrix: edge_hertz values must be non-negative, \
+                             got lower={} upper={}",
                     lower_edge_hertz_f, upper_edge_hertz_f,
                 );
                 assert!(
@@ -223,19 +233,24 @@ mod tests {
                         }
                     } else if low_to_center > 0 {
                         let lo = lower.max(0) as usize;
-                        let hi = (center as usize).min(num_spectrogram_bins.saturating_sub(1));
-                        for j in lo..=hi {
-                            data[j * num_mel_bins
-                                + m] = (j as f32 - lower as f32) / (low_to_center as f32);
+                        let hi = center.clamp(0, num_spectrogram_bins.saturating_sub(1) as i64)
+                            as usize;
+                        if hi >= lo && center >= 0 {
+                            for j in lo..=hi {
+                                data[j * num_mel_bins
+                                    + m] = (j as f32 - lower as f32) / (low_to_center as f32);
+                            }
                         }
                     }
                     let center_to_high = upper - center;
                     if center_to_high > 0 {
                         let lo = center.max(0) as usize;
-                        let hi = (upper as usize).min(num_spectrogram_bins);
-                        for j in lo..hi {
-                            data[j * num_mel_bins
-                                + m] = (upper as f32 - j as f32) / (center_to_high as f32);
+                        let hi = upper.clamp(0, num_spectrogram_bins as i64) as usize;
+                        if hi > lo && upper > 0 {
+                            for j in lo..hi {
+                                data[j * num_mel_bins
+                                    + m] = (upper as f32 - j as f32) / (center_to_high as f32);
+                            }
                         }
                     }
                 }

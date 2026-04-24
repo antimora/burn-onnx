@@ -112,12 +112,13 @@ impl MelWeightMatrixProcessor {
     }
 
     fn validate_float_scalar(arg: &Argument, name: &str) -> Result<(), ProcessError> {
-        Self::validate_scalar(
-            arg,
-            name,
-            &[DType::F16, DType::BF16, DType::F32, DType::F64],
-            "float",
-        )
+        // The ONNX spec (T2) allows F16/BF16/F32/F64 for the edge_hertz inputs, but our
+        // codegen computes the mel/Hz chain in f32. Silently narrowing F64 edges to f32
+        // would be a precision-loss bug that is hard to spot, and F16/BF16 do not have
+        // stable native Rust scalar types for the ScalarNative preference path. We accept
+        // F32 only for now; the other types can be added if a real model needs them
+        // (would require a separate f64 computation path).
+        Self::validate_scalar(arg, name, &[DType::F32], "float32")
     }
 }
 
@@ -338,6 +339,24 @@ mod tests {
             .input_tensor_i64("dft_length", 0, None)
             .input_tensor_i64("sample_rate", 0, None)
             .input_tensor_i64("lower_edge_hertz", 0, None)
+            .input_tensor_f32("upper_edge_hertz", 0, None)
+            .output_tensor_f32("output", 0, None)
+            .build();
+        let prefs = OutputPreferences::new();
+        let err = MelWeightMatrixProcessor
+            .infer_types(&mut node, 17, &prefs)
+            .unwrap_err();
+        assert!(matches!(err, ProcessError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn test_mwm_rejects_f64_edge_hertz() {
+        // F64 edge inputs would silently narrow to f32 in codegen. Reject at IR time.
+        let mut node = TestNodeBuilder::new(NodeType::MelWeightMatrix, "test_mwm")
+            .input_tensor_i64("num_mel_bins", 0, None)
+            .input_tensor_i64("dft_length", 0, None)
+            .input_tensor_i64("sample_rate", 0, None)
+            .input_tensor_f64("lower_edge_hertz", 0, None)
             .input_tensor_f32("upper_edge_hertz", 0, None)
             .output_tensor_f32("output", 0, None)
             .build();
