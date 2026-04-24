@@ -113,6 +113,7 @@ pub(crate) mod max_pool2d;
 pub(crate) mod max_pool3d;
 pub(crate) mod mean;
 pub(crate) mod mean_variance_normalization;
+pub(crate) mod mel_weight_matrix;
 pub(crate) mod min;
 pub(crate) mod mish;
 pub(crate) mod modulo;

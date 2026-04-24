@@ -241,6 +241,7 @@ impl_node_codegen_dispatch! {
     Dft,
     HammingWindow,
     HannWindow,
+    MelWeightMatrix,
     Stft,
 
     // Test ops

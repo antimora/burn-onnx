@@ -173,6 +173,7 @@ MIN_OPSET = {
     "DFT": 17,
     "HammingWindow": 17,
     "HannWindow": 17,
+    "MelWeightMatrix": 17,
     "STFT": 17,
 }
 MANIFEST_PATH = (

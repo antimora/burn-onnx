@@ -624,6 +624,10 @@ impl ProcessorRegistry {
             NodeType::HannWindow,
             Box::new(crate::node::hann_window::HannWindowProcessor),
         );
+        registry.register(
+            NodeType::MelWeightMatrix,
+            Box::new(crate::node::mel_weight_matrix::MelWeightMatrixProcessor),
+        );
 
         // Misc operations
         registry.register(

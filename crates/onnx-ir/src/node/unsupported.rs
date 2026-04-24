@@ -60,7 +60,6 @@ define_placeholder_node! {
     MaxPoolNode,
     MaxRoiPoolNode,
     MaxUnpoolNode,
-    MelWeightMatrixNode,
     MultinomialNode,
     NegativeLogLikelihoodLossNode,
     NonMaxSuppressionNode,

@@ -209,6 +209,7 @@ SUPPORTED_OPS = {
     "DFT": "dft",
     "HammingWindow": "hamming_window",
     "HannWindow": "hann_window",
+    "MelWeightMatrix": "mel_weight_matrix",
     "STFT": "stft",
 }
 
@@ -964,6 +965,41 @@ def make_hann_window(op_name: str, opset: int):
     return [node], [], [out], [size_init]
 
 
+def make_mel_weight_matrix(op_name: str, opset: int):
+    # All 5 inputs as initializers (common audio-model pattern).
+    out = helper.make_tensor_value_info(
+        _p(op_name, "output"), TensorProto.FLOAT, [9, 8]
+    )
+    num_mel_bins = numpy_helper.from_array(
+        np.array(8, dtype=np.int64), name=_p(op_name, "num_mel_bins")
+    )
+    dft_length = numpy_helper.from_array(
+        np.array(16, dtype=np.int64), name=_p(op_name, "dft_length")
+    )
+    sample_rate = numpy_helper.from_array(
+        np.array(8192, dtype=np.int64), name=_p(op_name, "sample_rate")
+    )
+    lower_hz = numpy_helper.from_array(
+        np.array(0.0, dtype=np.float32), name=_p(op_name, "lower_edge_hertz")
+    )
+    upper_hz = numpy_helper.from_array(
+        np.array(4096.0, dtype=np.float32), name=_p(op_name, "upper_edge_hertz")
+    )
+    node = helper.make_node(
+        op_name,
+        [
+            _p(op_name, "num_mel_bins"),
+            _p(op_name, "dft_length"),
+            _p(op_name, "sample_rate"),
+            _p(op_name, "lower_edge_hertz"),
+            _p(op_name, "upper_edge_hertz"),
+        ],
+        [_p(op_name, "output")],
+        name=_p(op_name, "node"),
+    )
+    return [node], [], [out], [num_mel_bins, dft_length, sample_rate, lower_hz, upper_hz]
+
+
 def make_stft(op_name: str, opset: int):
     # Real input [1, 32, 1], frame_step=8, frame_length=16 (power of two), onesided=1.
     # Output [1, 3, 9, 2].
@@ -1149,6 +1185,7 @@ GENERATORS = {
     "dft": make_dft,
     "hamming_window": make_hamming_window,
     "hann_window": make_hann_window,
+    "mel_weight_matrix": make_mel_weight_matrix,
     "stft": make_stft,
     "softmax": make_softmax,
     "log_softmax": make_log_softmax,

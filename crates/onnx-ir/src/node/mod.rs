@@ -127,6 +127,7 @@ pub mod max_pool2d;
 pub mod max_pool3d;
 pub mod mean;
 pub mod mean_variance_normalization;
+pub mod mel_weight_matrix;
 pub mod min;
 pub mod mish;
 pub mod modulo;

@@ -108,15 +108,35 @@ fn layer_normalization(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn mel_weight_matrix(graph: &OnnxGraph) {
+    let node = find_node(graph, "melweightmatrix");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    MelWeightMatrix "melweightmatrix1"
+      Inputs:
+        constant6_out1: ScalarNative(I64) [constant]
+        constant7_out1: ScalarNative(I64) [constant]
+        constant8_out1: ScalarNative(I64) [constant]
+        constant9_out1: ScalarNative(F32) [constant]
+        constant10_out1: ScalarNative(F32) [constant]
+      Outputs:
+        melweightmatrix1_out1: F32[9, 8]
+      Config:
+        MelWeightMatrixConfig {
+            output_dtype: F32,
+        }
+    "#);
+}
+
+#[rstest]
 fn stft(graph: &OnnxGraph) {
     let node = find_node(graph, "stft");
     insta::assert_snapshot!(format!("{node}"), @r#"
     Stft "stft1"
       Inputs:
         stft_signal: F32[1, 32, 1]
-        _: ScalarNative(I64) [static(5)]
+        _: ScalarNative(I64) [static(10)]
         <optional>
-        _: ScalarNative(I64) [static(6)]
+        _: ScalarNative(I64) [static(11)]
       Outputs:
         stft1_out1: F32[1, 3, 9, 2]
       Config:

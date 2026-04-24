@@ -376,7 +376,7 @@ define_node_enum! {
     MaxPool => unsupported::MaxPoolNode,
     MaxRoiPool => unsupported::MaxRoiPoolNode,
     MaxUnpool => unsupported::MaxUnpoolNode,
-    MelWeightMatrix => unsupported::MelWeightMatrixNode,
+    MelWeightMatrix => mel_weight_matrix::MelWeightMatrixNode,
     Multinomial => unsupported::MultinomialNode,
     NegativeLogLikelihoodLoss => unsupported::NegativeLogLikelihoodLossNode,
     NonMaxSuppression => unsupported::NonMaxSuppressionNode,

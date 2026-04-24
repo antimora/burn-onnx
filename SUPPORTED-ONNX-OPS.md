@@ -119,7 +119,7 @@ functionality.
 | [MaxUnpool][100]                 | ❌             | ❌           |
 | [Mean][101]                      | ✅             | ✅           |
 | [MeanVarianceNormalization][102] | ✅             | ✅           |
-| [MelWeightMatrix][103]           | ❌             | ❌           |
+| [MelWeightMatrix][103]           | ✅             | ✅           |
 | [Min][104]                       | ✅             | ✅           |
 | [Mish][105]                      | ✅             | ✅           |
 | [Mod][106]                       | ✅             | ✅           |

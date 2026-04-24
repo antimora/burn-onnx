@@ -3652,9 +3652,7 @@ status = "pass"
 status = "pass"
 
 [test_melweightmatrix]
-status = "skip-codegen"
-reason = "Unsupported ONNX operation(s): MelWeightMatrix (node 'melweightmatrix1')"
-tracking = "#314"
+status = "pass"
 
 [test_min_example]
 status = "skip-codegen"

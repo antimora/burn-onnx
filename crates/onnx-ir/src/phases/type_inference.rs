@@ -371,8 +371,8 @@ mod tests {
                 attrs: Default::default(),
             },
             RawNode {
-                node_type: NodeType::MelWeightMatrix,
-                name: "mel1".to_string(),
+                node_type: NodeType::CenterCropPad,
+                name: "ccp1".to_string(),
                 inputs: vec![],
                 outputs: vec![],
                 attrs: Default::default(),
@@ -386,7 +386,7 @@ mod tests {
             ProcessError::UnsupportedOps(ops) => {
                 assert_eq!(ops.len(), 2);
                 assert!(ops[0].contains("AffineGrid"));
-                assert!(ops[1].contains("MelWeightMatrix"));
+                assert!(ops[1].contains("CenterCropPad"));
             }
             other => panic!("Expected UnsupportedOps, got: {other:?}"),
         }
@@ -395,6 +395,6 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.starts_with("Unsupported ONNX operation(s):"));
         assert!(msg.contains("AffineGrid"));
-        assert!(msg.contains("MelWeightMatrix"));
+        assert!(msg.contains("CenterCropPad"));
     }
 }
