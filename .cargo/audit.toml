@@ -13,6 +13,7 @@ ignore = [
     "RUSTSEC-2026-0097", # `rustls-webpki` advisory (transitive via ureq/tch).
     "RUSTSEC-2026-0098", # `rustls-webpki` advisory (transitive via ureq/tch).
     "RUSTSEC-2026-0099", # `rustls-webpki` advisory (transitive via ureq/tch).
+    "RUSTSEC-2026-0110", # `bare-metal` is deprecated (transitive via cortex-m 0.7 in raspberry-pi-pico example). cortex-m has not yet bumped to bare-metal 1.0.
 ] # advisory IDs to ignore e.g. ["RUSTSEC-2019-0001", ...]
 informational_warnings = [
     "unmaintained",
