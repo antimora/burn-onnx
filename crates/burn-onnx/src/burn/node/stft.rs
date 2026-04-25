@@ -144,7 +144,19 @@ fn matrix_dft_core(
         // through f32 cleanly for our scale.
         let windowed_f64 = windowed.cast(burn::tensor::DType::F64);
 
-        // Precompute DFT twiddle factors W[k, n] = exp(-j 2pi k n / N) in f64.
+        // Compute DFT twiddle factors W[k, n] = exp(-j 2pi k n / N) in f64.
+        // Conceptually constant, but kept at forward-call time on purpose:
+        //   1. Generated code stays small regardless of n_fft (baking the
+        //      twiddles as literals would add 2 * n_freqs * n_fft f64
+        //      constants per STFT op, ballooning the .rs file and the
+        //      snapshot tests).
+        //   2. The matrix-DFT path only fires for non-pow2 n_fft, which is
+        //      always small (large n_fft uses Burn's pow2 stft). For
+        //      kokoro's n_fft=20 the cost is sub-microsecond per call.
+        //   3. Once Bluestein's (tracel-ai/burn#4865) lands upstream, this
+        //      whole path goes away.
+        // If a future model makes this a real hot spot, the right fix is
+        // upstream pow2-or-Bluestein support, not a per-codegen cache.
         let n_fft = #frame_length;
         let n_freqs = #n_freqs;
         let mut w_real: alloc::vec::Vec<f64> =
