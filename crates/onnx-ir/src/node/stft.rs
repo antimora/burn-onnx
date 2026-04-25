@@ -10,23 +10,32 @@
 //! ## Supported Configurations
 //!
 //! Only real-input STFT maps to Burn's `stft` API:
-//! - Real input (trailing dim = 1), `onesided = 0 | 1`.
-//! - `frame_step` and `frame_length` must be compile-time constants.
-//! - `frame_length` must be a power of two (Burn's STFT requirement).
-//! - Optional window tensor, rank 1.
+//! - Real input: rank-3 `[batch, signal_length, 1]` (ONNX spec form) or rank-2
+//!   `[batch, signal_length]` (produced by PyTorch's ONNX exporter and accepted
+//!   by ONNX Runtime), `onesided = 0 | 1`.
+//! - `frame_step` and `frame_length` must be compile-time constants (burn-onnx
+//!   codegen needs them as `usize` values).
+//! - Optional window tensor, rank 1, length equal to `frame_length`.
+//!
+//! Power-of-two `frame_length` takes Burn's fast `burn::tensor::signal::stft`
+//! path (O(N log N)). Non-power-of-two `frame_length` uses a matrix-based DFT
+//! emitted directly in burn-onnx codegen (O(N²) per frame, but N is typically
+//! small - e.g. 20 in Kokoro). Burn's upstream `stft` cannot be used for
+//! non-power-of-two `n_fft` until Bluestein's algorithm lands
+//! ([tracel-ai/burn#4865](https://github.com/tracel-ai/burn/issues/4865)).
 //!
 //! Not supported (rejected with a clear error):
-//! - Complex-to-complex STFT (signal trailing dim = 2): Burn's STFT has no complex input path.
-//! - Runtime `frame_step` / `frame_length`: the Burn options struct takes `usize`, so they must be
-//!   known at codegen time. Most real ONNX models bake these as constants.
+//! - Complex-to-complex STFT (signal rank 3, trailing dim = 2): Burn's STFT
+//!   has no complex input path.
+//! - Runtime `frame_step` / `frame_length`.
 //!
 //! ## `frame_length` default
 //!
-//! The ONNX spec's default for `frame_length` when absent is `signal_length`. This would require a
-//! runtime-sized `n_fft` and conflicts with Burn's power-of-two requirement, so we instead fall
-//! back to the `window` tensor's static shape when `frame_length` is absent. Real ONNX models
-//! that omit `frame_length` virtually always provide a window, so this deviation is safe in
-//! practice.
+//! The ONNX spec's default for `frame_length` when absent is `signal_length`.
+//! That would require a runtime-sized DFT, so we instead fall back to the
+//! `window` tensor's static shape when `frame_length` is absent. Real ONNX
+//! models that omit `frame_length` virtually always provide a window, so this
+//! deviation is safe in practice.
 
 use onnx_ir_derive::NodeBuilder;
 
@@ -221,42 +230,48 @@ impl NodeProcessor for StftProcessor {
             }
         };
 
-        if signal_tensor.rank != 3 {
-            return Err(ProcessError::Custom(format!(
-                "{OP_NAME}: signal input must have rank 3 [batch, signal_length, 1|2], got rank {}",
-                signal_tensor.rank
-            )));
-        }
+        // Accept rank 3 (ONNX spec: [batch, signal_length, 1|2]) and rank 2
+        // ([batch, signal_length]). PyTorch's ONNX exporter emits the rank-2
+        // form; ORT accepts it as real-valued.
+        match signal_tensor.rank {
+            2 => { /* implicit real input, no trailing dim to inspect */ }
+            3 => {
+                let is_real_input = match &signal_tensor.static_shape {
+                    Some(shape) => match shape.last() {
+                        Some(Some(1)) => true,
+                        Some(Some(2)) => false,
+                        Some(Some(d)) => {
+                            return Err(ProcessError::Custom(format!(
+                                "{OP_NAME}: signal last dimension must be 1 (real) or 2 (complex), got {d}"
+                            )));
+                        }
+                        _ => {
+                            return Err(ProcessError::Custom(format!(
+                                "{OP_NAME}: signal last dimension must be statically known as 1 or 2"
+                            )));
+                        }
+                    },
+                    None => {
+                        return Err(ProcessError::Custom(format!(
+                            "{OP_NAME}: signal shape must be statically known \
+                             (last dim determines real/complex)"
+                        )));
+                    }
+                };
 
-        // Determine real vs complex from the trailing dimension.
-        let is_real_input = match &signal_tensor.static_shape {
-            Some(shape) => match shape.last() {
-                Some(Some(1)) => true,
-                Some(Some(2)) => false,
-                Some(Some(d)) => {
+                if !is_real_input {
                     return Err(ProcessError::Custom(format!(
-                        "{OP_NAME}: signal last dimension must be 1 (real) or 2 (complex), got {d}"
+                        "{OP_NAME}: complex-to-complex STFT is not supported. \
+                         Burn's stft requires real-valued input."
                     )));
                 }
-                _ => {
-                    return Err(ProcessError::Custom(format!(
-                        "{OP_NAME}: signal last dimension must be statically known as 1 or 2"
-                    )));
-                }
-            },
-            None => {
+            }
+            r => {
                 return Err(ProcessError::Custom(format!(
-                    "{OP_NAME}: signal shape must be statically known \
-                     (last dim determines real/complex)"
+                    "{OP_NAME}: signal input must have rank 2 [batch, signal_length] \
+                     or rank 3 [batch, signal_length, 1|2], got rank {r}"
                 )));
             }
-        };
-
-        if !is_real_input {
-            return Err(ProcessError::Custom(format!(
-                "{OP_NAME}: complex-to-complex STFT is not supported. \
-                 Burn's stft requires real-valued input."
-            )));
         }
 
         // Optional window (input[2]) must be rank 1 if present.
@@ -289,10 +304,12 @@ impl NodeProcessor for StftProcessor {
             ))
         })?;
 
-        if !frame_length.is_power_of_two() {
+        // Non-power-of-two frame_length is handled in burn-onnx codegen via a
+        // matrix DFT (upstream Burn's stft only supports pow2 n_fft pending
+        // tracel-ai/burn#4865). Only reject `0`, which is nonsensical.
+        if frame_length == 0 {
             return Err(ProcessError::Custom(format!(
-                "{OP_NAME}: frame_length must be a power of two (Burn's stft requirement), \
-                 got {frame_length}"
+                "{OP_NAME}: frame_length must be >= 1, got {frame_length}"
             )));
         }
 
@@ -482,6 +499,62 @@ mod tests {
     }
 
     #[test]
+    fn test_stft_real_rank2_input() {
+        // PyTorch's ONNX exporter emits real STFT signal as rank 2
+        // [batch, signal_length] with no trailing 1. ORT accepts it and
+        // so should we.
+        let mut node = builder_with_signal(vec![1, 64])
+            .input_tensor_i64_data("frame_step", vec![4], vec![])
+            .add_input(
+                "",
+                ArgType::Tensor(TensorType {
+                    dtype: DType::F32,
+                    rank: 1,
+                    static_shape: None,
+                }),
+            )
+            .input_tensor_i64_data("frame_length", vec![16], vec![])
+            .output_tensor_f32("output", 0, None)
+            .build_with_graph_data(17);
+
+        let processor = StftProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 17, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.rank, 4);
+                let shape = t.static_shape.as_ref().unwrap();
+                // Same as the rank-3 real case: batch=1, n_frames=13, n_freqs=9
+                assert_eq!(shape, &vec![Some(1), Some(13), Some(9), Some(2)]);
+            }
+            _ => panic!("Expected Tensor output"),
+        }
+    }
+
+    #[test]
+    fn test_stft_rank1_rejected() {
+        let mut node = builder_with_signal(vec![64])
+            .input_tensor_i64_data("frame_step", vec![4], vec![])
+            .add_input(
+                "",
+                ArgType::Tensor(TensorType {
+                    dtype: DType::F32,
+                    rank: 1,
+                    static_shape: None,
+                }),
+            )
+            .input_tensor_i64_data("frame_length", vec![16], vec![])
+            .output_tensor_f32("output", 0, None)
+            .build_with_graph_data(17);
+
+        let processor = StftProcessor;
+        let prefs = OutputPreferences::new();
+        let err = processor.infer_types(&mut node, 17, &prefs).unwrap_err();
+        assert!(err.to_string().contains("rank 1"));
+    }
+
+    #[test]
     fn test_stft_complex_rejected() {
         let mut node = builder_with_signal(vec![1, 64, 2])
             .input_tensor_i64_data("frame_step", vec![4], vec![])
@@ -505,9 +578,13 @@ mod tests {
     }
 
     #[test]
-    fn test_stft_non_power_of_two_rejected() {
-        let mut node = builder_with_signal(vec![1, 64, 1])
-            .input_tensor_i64_data("frame_step", vec![4], vec![])
+    fn test_stft_non_power_of_two_accepted() {
+        // Non-pow2 frame_length (20, matching Kokoro) used to be rejected
+        // because upstream Burn's stft is pow2-only. burn-onnx now handles
+        // non-pow2 via a matmul DFT path, so onnx-ir accepts it and leaves
+        // the branching to codegen.
+        let mut node = builder_with_signal(vec![1, 128, 1])
+            .input_tensor_i64_data("frame_step", vec![5], vec![])
             .add_input(
                 "",
                 ArgType::Tensor(TensorType {
@@ -516,15 +593,26 @@ mod tests {
                     static_shape: None,
                 }),
             )
-            .input_tensor_i64_data("frame_length", vec![12], vec![]) // not pow2
+            .input_tensor_i64_data("frame_length", vec![20], vec![])
             .output_tensor_f32("output", 0, None)
             .build_with_graph_data(17);
 
         let processor = StftProcessor;
         let prefs = OutputPreferences::new();
-        let result = processor.infer_types(&mut node, 17, &prefs);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("power of two"));
+        processor.infer_types(&mut node, 17, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                let shape = t.static_shape.as_ref().unwrap();
+                // n_frames = 1 + (128 - 20) / 5 = 22, n_freqs onesided = 11
+                assert_eq!(shape, &vec![Some(1), Some(22), Some(11), Some(2)]);
+            }
+            _ => panic!("Expected Tensor output"),
+        }
+
+        let config = processor.extract_config(&node, 17).unwrap();
+        assert_eq!(config.frame_length, 20);
+        assert_eq!(config.frame_step, 5);
     }
 
     #[test]

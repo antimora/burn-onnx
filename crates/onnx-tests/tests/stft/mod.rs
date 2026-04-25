@@ -1,5 +1,5 @@
 use crate::include_models;
-include_models!(stft_basic, stft_full, stft_with_window);
+include_models!(stft_basic, stft_full, stft_non_pow2, stft_with_window);
 
 #[cfg(test)]
 mod tests {
@@ -147,6 +147,71 @@ mod tests {
                     [-0.440_153_57, -2.137_548_4],
                     [0.039_111_648, 3.028_304_8],
                     [0.345_900_15, 0.0],
+                ],
+            ]],
+            &device,
+        );
+
+        output.to_data().assert_approx_eq::<f32>(
+            &expected.to_data(),
+            burn::tensor::Tolerance::rel_abs(1e-3, 1e-4),
+        );
+    }
+
+    #[test]
+    fn stft_non_pow2() {
+        // Exercises the matrix-DFT codegen path for non-power-of-two n_fft.
+        // Burn's built-in `stft` is pow2-only (tracel-ai/burn#4865), so
+        // burn-onnx emits a matmul-based DFT when n_fft is not pow2. This
+        // test pins that path to ORT's reference output for n_fft = 20,
+        // hop = 5 (matching Kokoro's decoder head).
+        let device = Default::default();
+        let model: stft_non_pow2::Model<TestBackend> = stft_non_pow2::Model::new(&device);
+        let input = make_signal(&device);
+
+        let output = model.forward(input);
+
+        // Expected values from ONNX reference evaluator (see stft_non_pow2.py).
+        let expected = burn::tensor::Tensor::<TestBackend, 4>::from_floats(
+            [[
+                [
+                    [-3.425_971_3_f32, 0.0],
+                    [0.798_950_85, -8.559_332_8],
+                    [0.399_734_32, 0.571_924_2],
+                    [-1.932_450_4, -1.123_353_0],
+                    [-1.813_605_7, -4.852_368_4],
+                    [-0.108_324_14, 1.279_017_7],
+                    [1.808_823_1, 2.616_522_3],
+                    [5.654_907_7, -4.317_073_8],
+                    [1.618_771_3, 1.915_450_5],
+                    [0.387_575_33, 0.199_135_93],
+                    [-0.268_510_16, 0.0],
+                ],
+                [
+                    [-6.382_716_2, 0.0],
+                    [5.511_432_6, -0.613_229_51],
+                    [-2.280_485_2, -4.160_979_3],
+                    [0.227_776_27, -2.218_809_6],
+                    [1.886_582_3, -6.455_835_8],
+                    [1.581_248_3, 1.130_541_4],
+                    [-0.793_491_36, -0.921_126_66],
+                    [-3.704_778_7, -4.302_037_2],
+                    [1.819_292_5, 4.036_278_7],
+                    [-1.974_925_8, 2.607_173_4],
+                    [-2.845_324_8, 0.0],
+                ],
+                [
+                    [-10.125_018, 0.0],
+                    [-1.360_244_4, 2.608_095],
+                    [3.549_804_7, 1.568_534_0],
+                    [-0.087_292_63, 0.111_215_77],
+                    [1.553_198_8, -4.499_517_4],
+                    [-3.729_583_5, 1.483_790_8],
+                    [-0.348_257_2, -2.161_522_9],
+                    [-1.934_923_5, 1.083_709_8],
+                    [4.886_475_5, 4.902_872_6],
+                    [-2.533_288_3, 0.469_090_6],
+                    [0.864_884_97, 0.0],
                 ],
             ]],
             &device,

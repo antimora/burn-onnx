@@ -907,6 +907,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "burn-onnx-model-checks-kokoro"
+version = "0.1.0"
+dependencies = [
+ "burn",
+ "burn-onnx",
+ "burn-store",
+ "model-checks-common",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "burn-onnx-model-checks-mediapipe-face-detector"
 version = "0.1.0"
 dependencies = [

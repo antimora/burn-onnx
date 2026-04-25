@@ -114,6 +114,7 @@ Other backends (wgpu, metal) already select the best GPU by default; ndarray is 
 | `depth-pro/`              | Apple Depth Pro                     | Apple / HuggingFace |
 | `inception-v1/`           | Inception v1 (GoogLeNet)            | ONNX Model Zoo      |
 | `inception-v2/`           | Inception v2                        | ONNX Model Zoo      |
+| `kokoro/`                 | Kokoro v1.0 (TTS)                   | thewh1teagle        |
 | `mediapipe-face-detector/` | MediaPipe Face Detector (BlazeFace) | Google MediaPipe    |
 | `mobilenet-v2/`           | MobileNet v2                        | ONNX Model Zoo      |
 | `modernbert-base/`        | ModernBERT-base                     | HuggingFace         |

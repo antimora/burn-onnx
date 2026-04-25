@@ -391,8 +391,13 @@ impl NodeCodegen for onnx_ir::lstm::LstmNode {
         // ONNX initial states: [num_directions, batch_size, hidden_size]
         // Burn expects: [batch_size, hidden_size] for unidirectional
         let initial_state_expr = if has_initial_h && has_initial_c {
-            let h_input = scope.arg(&self.inputs[5]);
+            // Call order matches emission order so scope's clone tracking
+            // works when h_0 and c_0 alias the same ONNX tensor (e.g. both
+            // fed from a single zero-constant): the LAST scope.arg call
+            // returns the bare move, which in the emitted expression must
+            // correspond to the RIGHTMOST use (evaluated last by Rust).
             let c_input = scope.arg(&self.inputs[6]);
+            let h_input = scope.arg(&self.inputs[5]);
             match self.config.direction {
                 LstmDirection::Forward | LstmDirection::Reverse => {
                     // Squeeze out the direction dimension (index 0) for unidirectional LSTM

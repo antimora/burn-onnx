@@ -174,6 +174,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/hamming_window/hamming_window_runtime.onnx")
         .input("tests/stft/stft_basic.onnx")
         .input("tests/stft/stft_full.onnx")
+        .input("tests/stft/stft_non_pow2.onnx")
         .input("tests/stft/stft_with_window.onnx")
         .input("tests/hann_window/hann_window.onnx")
         .input("tests/mel_weight_matrix/mel_weight_matrix_constants.onnx")
