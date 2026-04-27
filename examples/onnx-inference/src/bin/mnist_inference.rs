@@ -28,7 +28,7 @@ fn main() {
     type Backend = Flex;
 
     // Get a default device for the backend
-    let device = <Backend as burn::tensor::backend::Backend>::Device::default();
+    let device = <Backend as burn::tensor::backend::BackendTypes>::Device::default();
 
     // Create a new model and load the state
     let model: Model<Backend> = Model::default();

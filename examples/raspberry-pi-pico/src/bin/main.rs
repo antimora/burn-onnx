@@ -17,7 +17,7 @@ use {defmt_rtt as _, panic_probe as _};
 // Set the backend to Flex (pure-Rust CPU backend)
 type Backend = Flex;
 // Get the backend device we use (cpu)
-type BackendDevice = <Backend as burn::tensor::backend::Backend>::Device;
+type BackendDevice = <Backend as burn::tensor::backend::BackendTypes>::Device;
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
