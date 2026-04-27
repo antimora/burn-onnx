@@ -17,7 +17,7 @@ mod tests {
     // We use from_data with dtype to preserve I32 dtype (from_data without dtype converts to the backend's default IntElem).
     fn tensor_2d_i32<const R: usize, const C: usize>(
         data: [[i32; C]; R],
-        device: &<TestBackend as burn::tensor::backend::Backend>::Device,
+        device: &<TestBackend as burn::tensor::backend::BackendTypes>::Device,
     ) -> Tensor<TestBackend, 2, Int> {
         let tensor_data = TensorData::from(data);
         Tensor::from_data(tensor_data, (device, DType::I32))
@@ -25,7 +25,7 @@ mod tests {
 
     fn tensor_3d_i32<const B: usize, const R: usize, const C: usize>(
         data: [[[i32; C]; R]; B],
-        device: &<TestBackend as burn::tensor::backend::Backend>::Device,
+        device: &<TestBackend as burn::tensor::backend::BackendTypes>::Device,
     ) -> Tensor<TestBackend, 3, Int> {
         let tensor_data = TensorData::from(data);
         Tensor::from_data(tensor_data, (device, DType::I32))
@@ -33,7 +33,7 @@ mod tests {
 
     fn tensor_1d_i32<const N: usize>(
         data: [i32; N],
-        device: &<TestBackend as burn::tensor::backend::Backend>::Device,
+        device: &<TestBackend as burn::tensor::backend::BackendTypes>::Device,
     ) -> Tensor<TestBackend, 1, Int> {
         let tensor_data = TensorData::from(data);
         Tensor::from_data(tensor_data, (device, DType::I32))

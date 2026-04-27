@@ -17,7 +17,7 @@ mod tests {
     // Input generated via np.random.seed(42), shape [2, 3, 4]. Shared across all
     // tests so different axis/p configurations operate on the same data.
     fn test_input(
-        device: &<TestBackend as burn::tensor::backend::Backend>::Device,
+        device: &<TestBackend as burn::tensor::backend::BackendTypes>::Device,
     ) -> Tensor<TestBackend, 3> {
         Tensor::<TestBackend, 3>::from_floats(
             [

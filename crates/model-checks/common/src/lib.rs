@@ -101,7 +101,7 @@ macro_rules! best_device {
 
         #[cfg(not(feature = "tch"))]
         {
-            <MyBackend as burn::prelude::Backend>::Device::default()
+            burn::prelude::Device::<MyBackend>::default()
         }
     }};
 }

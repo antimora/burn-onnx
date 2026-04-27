@@ -17,7 +17,7 @@ mod tests {
     // Input generated via np.random.seed(42), shape [2, 3, 4, 5]. Shared by all
     // tests so we can compare axis configurations on the same data.
     fn test_input(
-        device: &<TestBackend as burn::tensor::backend::Backend>::Device,
+        device: &<TestBackend as burn::tensor::backend::BackendTypes>::Device,
     ) -> Tensor<TestBackend, 4> {
         Tensor::<TestBackend, 4>::from_floats(
             [

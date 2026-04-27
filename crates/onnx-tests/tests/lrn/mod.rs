@@ -11,7 +11,7 @@ mod tests {
 
     // Input shared by both tests — generated with np.random.seed(42), shape [1, 5, 3, 3]
     fn test_input(
-        device: &<TestBackend as burn::tensor::backend::Backend>::Device,
+        device: &<TestBackend as burn::tensor::backend::BackendTypes>::Device,
     ) -> Tensor<TestBackend, 4> {
         Tensor::<TestBackend, 4>::from_floats(
             [[

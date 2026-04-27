@@ -44,7 +44,7 @@ mod tests {
     ];
 
     fn make_signal(
-        device: &<TestBackend as burn::tensor::backend::Backend>::Device,
+        device: &<TestBackend as burn::tensor::backend::BackendTypes>::Device,
     ) -> burn::tensor::Tensor<TestBackend, 3> {
         let data = SIGNAL_32.map(|v| [v]);
         burn::tensor::Tensor::<TestBackend, 3>::from_floats([data], device)

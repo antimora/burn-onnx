@@ -59,7 +59,7 @@ mod tests {
     }
 
     fn make_test_inputs(
-        device: &<TestBackend as burn::tensor::backend::Backend>::Device,
+        device: &<TestBackend as burn::tensor::backend::BackendTypes>::Device,
     ) -> (
         Tensor<TestBackend, 2>,
         Tensor<TestBackend, 2, Int>,

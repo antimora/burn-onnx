@@ -38,7 +38,7 @@ struct ReferenceOutputs {
 /// Run a single test case and return (passed, actual_output, expected_output)
 fn run_test_case(
     model: &Model<MyBackend>,
-    device: &<MyBackend as Backend>::Device,
+    device: &Device<MyBackend>,
     test_case: &TestCase,
     sample_rate: i64,
 ) -> (bool, f32, f32) {
