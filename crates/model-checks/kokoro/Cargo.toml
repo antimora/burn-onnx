@@ -19,13 +19,13 @@ bisect = []
 [dependencies]
 burn = { workspace = true }
 burn-store = { workspace = true, features = ["std", "burnpack"] }
-model-checks-common = { path = "../common" }
+model-checks-common = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 [build-dependencies]
-burn-onnx = { path = "../../burn-onnx" }
-model-checks-common = { path = "../common" }
+burn-onnx = { workspace = true, features = ["default"] }
+model-checks-common = { workspace = true }
 
 [[bin]]
 name = "burn-onnx-model-checks-kokoro"

@@ -43,6 +43,18 @@ broken_intra_doc_links = "deny"
 invalid_html_tags = "deny"
 
 [workspace.dependencies]
+### Internal crates ###
+# Declared here so each consumer Cargo.toml can use `workspace = true` instead of
+# repeating the path and version. Workspace deps pin `default-features = false`
+# (Cargo forbids consumers from overriding default-features when inheriting via
+# `workspace = true`); consumers that previously had defaults ON now opt in via
+# `features = ["default"]`.
+burn-import = { path = "crates/burn-import", version = "=0.21.0-pre.3", default-features = false }
+burn-onnx = { path = "crates/burn-onnx", version = "=0.21.0-pre.3", default-features = false }
+onnx-ir = { path = "crates/onnx-ir", version = "=0.21.0-pre.3", default-features = false }
+onnx-ir-derive = { path = "crates/onnx-ir-derive", version = "=0.21.0-pre.3" }
+model-checks-common = { path = "crates/model-checks/common" }
+
 bytemuck = "1.25.0"
 derive-new = { version = "0.7.0", default-features = false }
 float-cmp = "0.10.0"

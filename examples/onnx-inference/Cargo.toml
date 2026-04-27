@@ -15,4 +15,4 @@ burn-store = { workspace = true, features = ["std", "burnpack"] }
 serde = { workspace = true }
 
 [build-dependencies]
-burn-onnx = { path = "../../crates/burn-onnx" }
+burn-onnx = { workspace = true, features = ["default"] }

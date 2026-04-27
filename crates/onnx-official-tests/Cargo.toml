@@ -15,7 +15,7 @@ test-metal = ["burn/metal"]
 test-candle = ["burn/candle"]
 
 [dependencies]
-onnx-ir = { path = "../onnx-ir" }
+onnx-ir = { workspace = true, features = ["default"] }
 protobuf = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 thiserror = { workspace = true }
@@ -27,8 +27,8 @@ burn-store = { workspace = true, features = ["std", "burnpack"] }
 float-cmp = { workspace = true }
 
 [build-dependencies]
-burn-onnx = { path = "../burn-onnx" }
-onnx-ir = { path = "../onnx-ir" }
+burn-onnx = { workspace = true, features = ["default"] }
+onnx-ir = { workspace = true, features = ["default"] }
 protobuf = { workspace = true }
 serde = { workspace = true, features = ["std", "derive"] }
 toml = { workspace = true }

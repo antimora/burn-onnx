@@ -14,8 +14,8 @@ metal = ["burn/metal", "burn/autotune", "burn/fusion"]
 [dependencies]
 burn = { workspace = true }
 burn-store = { workspace = true, features = ["std", "burnpack", "pytorch"] }
-model-checks-common = { path = "../common" }
+model-checks-common = { workspace = true }
 
 [build-dependencies]
-burn-onnx = { path = "../../burn-onnx" }
-model-checks-common = { path = "../common" }
+burn-onnx = { workspace = true, features = ["default"] }
+model-checks-common = { workspace = true }
