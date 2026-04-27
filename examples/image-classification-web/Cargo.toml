@@ -34,4 +34,4 @@ web-time = "1.1.0"
 
 [build-dependencies]
 # Used to generate code from ONNX model
-burn-onnx = { path = "../../crates/burn-onnx", default-features = false }
+burn-onnx = { workspace = true }

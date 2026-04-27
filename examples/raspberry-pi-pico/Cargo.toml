@@ -34,7 +34,7 @@ burn-flex = { workspace = true, features = ["critical-section"] }
 burn-store = { workspace = true, features = ["burnpack"] }
 
 [build-dependencies]
-burn-onnx = { path = "../../crates/burn-onnx" }
+burn-onnx = { workspace = true, features = ["default"] }
 
 [profile.release]
 debug = 2

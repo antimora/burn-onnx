@@ -21,4 +21,4 @@ insta = { workspace = true }
 half = { workspace = true }
 
 [build-dependencies]
-burn-onnx = { path = "../burn-onnx" }
+burn-onnx = { workspace = true, features = ["default"] }
