@@ -226,15 +226,25 @@ impl NodeProcessor for SliceProcessor {
                             },
                         }
                     };
+                    let mut any_unknown_len = false;
                     for (which, input) in [("starts", &config.starts), ("ends", &config.ends)] {
-                        if let Some(n) = len_of(input)
-                            && n != 1
-                        {
-                            return Err(ProcessError::Custom(format!(
-                                "Slice on Shape input requires single-axis slicing; node {} has {} of length {}",
-                                node.name, which, n
-                            )));
+                        match len_of(input) {
+                            Some(n) if n != 1 => {
+                                return Err(ProcessError::Custom(format!(
+                                    "Slice on Shape input requires single-axis slicing; node {} has {} of length {}",
+                                    node.name, which, n
+                                )));
+                            }
+                            None => any_unknown_len = true,
+                            _ => {}
                         }
+                    }
+                    if any_unknown_len {
+                        log::debug!(
+                            "Slice node {}: runtime bound length not statically known; \
+                             codegen will assert exactly one element at inference time",
+                            node.name
+                        );
                     }
                     match &config.steps {
                         Some(SliceInput::Static(steps)) if steps.iter().any(|&s| s != 1) => {

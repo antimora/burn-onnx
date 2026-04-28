@@ -30,8 +30,8 @@ impl NodeCodegen for onnx_ir::slice::SliceNode {
                         generate_shape_slice_to_tensor(self, input_arg, *shape_rank, &output, scope)
                     }
                     other => panic!(
-                        "Unexpected output type for SliceNode with Shape input: {:?}",
-                        other
+                        "Slice node {}: unexpected output type for Shape input: {:?}",
+                        self.name, other
                     ),
                 }
             }
@@ -604,16 +604,29 @@ fn generate_shape_slice(
             }
         }
         _ => {
-            // Runtime slicing with scalars
+            // Runtime slicing with scalars (unreachable from real flows since
+            // the IR routes runtime bounds to a Tensor output, but kept for
+            // direct-build callers; clamps match generate_shape_slice_to_tensor).
             let (start_expr, end_expr) = get_slice_range_expressions(node, scope);
             let shape_len_lit = Literal::i64_suffixed(shape_rank as i64);
+            let shape_len_usize = Literal::usize_unsuffixed(shape_rank);
 
             quote! {
                 let #output: [i64; #output_rank_lit] = {
                     let start_val = #start_expr as i64;
                     let end_val = #end_expr as i64;
-                    let start_idx = if start_val < 0 { (#shape_len_lit + start_val) as usize } else { start_val as usize };
-                    let end_idx = if end_val < 0 { (#shape_len_lit + end_val) as usize } else { end_val as usize };
+                    let start_idx = if start_val < 0 {
+                        (#shape_len_lit + start_val).max(0) as usize
+                    } else {
+                        (start_val as usize).min(#shape_len_usize)
+                    };
+                    let end_idx = if end_val == i64::MAX {
+                        #shape_len_usize
+                    } else if end_val < 0 {
+                        (#shape_len_lit + end_val).max(0) as usize
+                    } else {
+                        (end_val as usize).min(#shape_len_usize)
+                    };
                     #shape_name[start_idx..end_idx].try_into().unwrap()
                 };
             }
@@ -642,7 +655,9 @@ fn generate_shape_slice_to_tensor(
             } else {
                 (start_val as usize).min(#shape_len_usize)
             };
-            let end_idx = if end_val < 0 {
+            let end_idx = if end_val == i64::MAX {
+                #shape_len_usize
+            } else if end_val < 0 {
                 (#shape_len_lit + end_val).max(0) as usize
             } else {
                 (end_val as usize).min(#shape_len_usize)
@@ -1252,7 +1267,9 @@ mod tests {
                 } else {
                     (start_val as usize).min(5)
                 };
-                let end_idx = if end_val < 0 {
+                let end_idx = if end_val == i64::MAX {
+                    5
+                } else if end_val < 0 {
                     (5i64 + end_val).max(0) as usize
                 } else {
                     (end_val as usize).min(5)

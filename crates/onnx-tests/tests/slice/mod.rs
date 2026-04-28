@@ -9,6 +9,8 @@ include_models!(
     slice_shape_runtime,
     slice_shape_runtime_bounds,
     slice_shape_runtime_bounds_i32,
+    slice_shape_runtime_bounds_negative,
+    slice_shape_runtime_bounds_reshape,
     slice_shape_multi,
     slice_shape_negative,
     slice_shape_negative_range,
@@ -195,6 +197,45 @@ mod tests {
 
         let expected = TensorData::from([7i64, 64]);
         output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn slice_shape_runtime_bounds_negative() {
+        // Exercises the start_val < 0 / end_val < 0 clamping branches in the
+        // runtime Shape-slice codegen end-to-end.
+        let model: slice_shape_runtime_bounds_negative::Model<TestBackend> =
+            slice_shape_runtime_bounds_negative::Model::default();
+        let device = Default::default();
+
+        let key = Tensor::<TestBackend, 3>::ones([4, 7, 64], &device);
+        let start = Tensor::<TestBackend, 1, burn::tensor::Int>::from_data([-2i64], &device);
+        let end = Tensor::<TestBackend, 1, burn::tensor::Int>::from_data([-1i64], &device);
+
+        let output = model.forward(key, start, end);
+        let expected = TensorData::from([7i64]);
+        output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn slice_shape_runtime_bounds_reshape() {
+        // Verifies the rank-1 i64 tensor produced by a runtime-bound Shape
+        // slice is consumable by a downstream Reshape (the IR comment claims
+        // Reshape/Concat/Gather accept a tensor as a shape input).
+        let model: slice_shape_runtime_bounds_reshape::Model<TestBackend> =
+            slice_shape_runtime_bounds_reshape::Model::default();
+        let device = Default::default();
+
+        let key = Tensor::<TestBackend, 3>::ones([4, 7, 64], &device);
+        let flat = Tensor::<TestBackend, 1>::from_floats(
+            [0., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13.,
+             14., 15., 16., 17., 18., 19., 20., 21., 22., 23., 24., 25., 26., 27.],
+            &device,
+        );
+        let start = Tensor::<TestBackend, 1, burn::tensor::Int>::from_data([0i64], &device);
+        let end = Tensor::<TestBackend, 1, burn::tensor::Int>::from_data([2i64], &device);
+
+        let output = model.forward(key, flat, start, end);
+        assert_eq!(output.dims(), [4, 7]);
     }
 
     #[test]
