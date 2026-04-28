@@ -21,7 +21,19 @@ impl NodeCodegen for onnx_ir::slice::SliceNode {
                 generate_tensor_slice(self, input_arg, tensor.rank, scope, &output)
             }
             ArgType::Shape(shape_rank) => {
-                generate_shape_slice(self, input_arg, *shape_rank, &output, scope)
+                let output_arg = self.outputs.first().unwrap();
+                match &output_arg.ty {
+                    ArgType::Shape(_) => {
+                        generate_shape_slice(self, input_arg, *shape_rank, &output, scope)
+                    }
+                    ArgType::Tensor(t) if t.rank == 1 => {
+                        generate_shape_slice_to_tensor(self, input_arg, *shape_rank, &output, scope)
+                    }
+                    other => panic!(
+                        "Unexpected output type for SliceNode with Shape input: {:?}",
+                        other
+                    ),
+                }
             }
             ArgType::ScalarNative(_) | ArgType::ScalarTensor(_) => {
                 panic!("Unsupported input type for SliceNode")
@@ -609,6 +621,43 @@ fn generate_shape_slice(
     }
 }
 
+fn generate_shape_slice_to_tensor(
+    node: &onnx_ir::slice::SliceNode,
+    input_arg: &Argument,
+    shape_rank: usize,
+    output: &proc_macro2::Ident,
+    scope: &mut super::super::scope::ScopeAtPosition<'_>,
+) -> TokenStream {
+    let shape_name = arg_to_ident(input_arg);
+    let (start_expr, end_expr) = get_slice_range_expressions(node, scope);
+    let shape_len_lit = Literal::i64_suffixed(shape_rank as i64);
+    let shape_len_usize = Literal::usize_unsuffixed(shape_rank);
+
+    quote! {
+        let #output: Tensor<B, 1, Int> = {
+            let start_val = #start_expr as i64;
+            let end_val = #end_expr as i64;
+            let start_idx = if start_val < 0 {
+                (#shape_len_lit + start_val).max(0) as usize
+            } else {
+                (start_val as usize).min(#shape_len_usize)
+            };
+            let end_idx = if end_val < 0 {
+                (#shape_len_lit + end_val).max(0) as usize
+            } else {
+                (end_val as usize).min(#shape_len_usize)
+            };
+            let end_idx = end_idx.max(start_idx);
+            let len = end_idx - start_idx;
+            let slice_data: alloc::vec::Vec<i64> = #shape_name[start_idx..end_idx].to_vec();
+            Tensor::<B, 1, Int>::from_data(
+                burn::tensor::TensorData::new(slice_data, [len]),
+                (&self.device, burn::tensor::DType::I64),
+            )
+        };
+    }
+}
+
 fn get_slice_range_expressions(
     node: &onnx_ir::slice::SliceNode,
     scope: &mut super::super::scope::ScopeAtPosition<'_>,
@@ -651,11 +700,11 @@ fn get_scalar_expr(
             quote! { #name[0] }
         }
         ArgType::Tensor(_) => {
-            // For 1D tensor, we'll handle it specially in the calling code
-            // This shouldn't be called for 1D tensors as they use different logic
-            panic!(
-                "1D tensor slice parameters should be handled separately, not through get_scalar_expr"
-            )
+            // 1-D tensor of length 1 (a 1-element bound). Pull the single
+            // value off the device with to_data(); inefficient but only
+            // exercised when bounds are not lifted to constants.
+            let tensor = scope.arg(arg);
+            quote! { #tensor.to_data().iter::<i64>().next().unwrap() }
         }
     }
 }
@@ -1157,7 +1206,11 @@ mod tests {
     }
 
     #[test]
-    fn test_slice_shape_runtime() {
+    fn test_slice_shape_runtime_to_tensor() {
+        // When bounds are runtime, the IR cannot derive the output rank, so
+        // it produces a rank-1 Int tensor instead of a fixed-size Shape array.
+        // This is the path used by PyTorch MHA exports (e.g. key.shape[:n]
+        // where n is itself a runtime value).
         let config = SliceConfig {
             starts: SliceInput::Runtime(RuntimeInputRef {
                 name: "start".to_string(),
@@ -1174,26 +1227,36 @@ mod tests {
             .input_shape("shape_data", 5)
             .input_scalar("start", DType::I64)
             .input_scalar("end", DType::I64)
-            .output_shape("sliced_shape", 3)
+            .output_tensor("sliced_shape", 1, DType::I64)
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
-        pub fn forward(&self, shape_data: [i64; 5], start: i64, end: i64) -> [i64; 3] {
-            let sliced_shape: [i64; 3] = {
+        pub fn forward(&self, shape_data: [i64; 5], start: i64, end: i64) -> Tensor<B, 1, Int> {
+            let sliced_shape: Tensor<B, 1, Int> = {
                 let start_val = start as i64;
                 let end_val = end as i64;
                 let start_idx = if start_val < 0 {
-                    (5i64 + start_val) as usize
+                    (5i64 + start_val).max(0) as usize
                 } else {
-                    start_val as usize
+                    (start_val as usize).min(5)
                 };
                 let end_idx = if end_val < 0 {
-                    (5i64 + end_val) as usize
+                    (5i64 + end_val).max(0) as usize
                 } else {
-                    end_val as usize
+                    (end_val as usize).min(5)
                 };
-                shape_data[start_idx..end_idx].try_into().unwrap()
+                let end_idx = end_idx.max(start_idx);
+                let len = end_idx - start_idx;
+                let slice_data: alloc::vec::Vec<i64> = shape_data[start_idx..end_idx].to_vec();
+                Tensor::<
+                    B,
+                    1,
+                    Int,
+                >::from_data(
+                    burn::tensor::TensorData::new(slice_data, [len]),
+                    (&self.device, burn::tensor::DType::I64),
+                )
             };
             sliced_shape
         }

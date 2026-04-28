@@ -179,37 +179,46 @@ impl NodeProcessor for SliceProcessor {
                 node.outputs[0].ty = input_ty;
             }
             ArgType::Shape(shape_rank) => {
-                // Slicing a Shape extracts a sub-part, resulting in a Shape.
-                // Only static slicing is supported for Shape inputs
-                let (starts, ends, steps) = match (&config.starts, &config.ends, &config.steps) {
+                // Static path: output_len is computable, keep ArgType::Shape.
+                // Runtime path: output_len depends on runtime values, so degrade
+                // to a rank-1 i64 tensor of unknown length. Downstream consumers
+                // (Concat, Reshape, Gather) already accept Tensor shape inputs.
+                let static_bounds = match (&config.starts, &config.ends, &config.steps) {
                     (SliceInput::Static(s), SliceInput::Static(e), steps_opt) => {
-                        let step_values = match steps_opt {
+                        let steps = match steps_opt {
                             Some(SliceInput::Static(st)) => st.clone(),
-                            _ => vec![1], // Default step is 1
+                            Some(SliceInput::Runtime(_)) => vec![],
+                            None => vec![1],
                         };
-                        (s, e, step_values)
+                        if steps.is_empty() {
+                            None
+                        } else {
+                            Some((s, e, steps))
+                        }
                     }
-                    _ => {
+                    _ => None,
+                };
+
+                if let Some((starts, ends, steps)) = static_bounds {
+                    if starts.len() != 1 || ends.len() != 1 {
                         return Err(ProcessError::Custom(format!(
-                            "Runtime slice on Shape input is not supported for node {}",
+                            "Slice on Shape input requires exactly one dimension slice config for node {}",
                             node.name
                         )));
                     }
-                };
 
-                // Require exactly one dimension for Shape slicing
-                if starts.len() != 1 || ends.len() != 1 {
-                    return Err(ProcessError::Custom(format!(
-                        "Slice on Shape input requires exactly one dimension slice config for node {}",
-                        node.name
-                    )));
+                    let step = if steps.is_empty() { 1 } else { steps[0] };
+                    let output_len = calculate_shape_slice_output_len(
+                        starts[0], ends[0], step, shape_rank, &node.name,
+                    );
+                    node.outputs[0].ty = ArgType::Shape(output_len);
+                } else {
+                    node.outputs[0].ty = ArgType::Tensor(crate::ir::TensorType {
+                        dtype: crate::ir::DType::I64,
+                        rank: 1,
+                        static_shape: None,
+                    });
                 }
-
-                let step = if steps.is_empty() { 1 } else { steps[0] };
-                let output_len = calculate_shape_slice_output_len(
-                    starts[0], ends[0], step, shape_rank, &node.name,
-                );
-                node.outputs[0].ty = ArgType::Shape(output_len);
             }
             ArgType::ScalarTensor(dtype) => {
                 // Treat as rank-1 tensor; slicing may change element count
@@ -655,6 +664,33 @@ mod tests {
         // After calling, output should be ArgType::Shape with the calculated length
         // start = 1, end = 3 => output_len = 3 - 1 = 2
         assert!(matches!(&node.outputs[0].ty, ArgType::Shape(2)));
+    }
+
+    #[test]
+    fn test_slice_shape_input_runtime_bounds_degrades_to_tensor() {
+        // Slicing a Shape with runtime starts/ends. Output length cannot be
+        // computed at IR time, so the type degrades to a rank-1 i64 tensor.
+        // This pattern shows up in PyTorch MHA exports (e.g. key.shape[:n] where n
+        // ends up as a graph input rather than a constant).
+        let mut node = TestNodeBuilder::new(NodeType::Slice, "test_slice_shape_runtime")
+            .input_shape("data", 5)
+            .input_tensor_i64("starts", 1, None)
+            .input_tensor_i64("ends", 1, None)
+            .output_default("output")
+            .build_with_graph_data(16);
+
+        let processor = SliceProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 16, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.dtype, DType::I64);
+                assert_eq!(t.rank, 1);
+                assert!(t.static_shape.is_none());
+            }
+            other => panic!("Expected Tensor output, got {:?}", other),
+        }
     }
 
     #[test]

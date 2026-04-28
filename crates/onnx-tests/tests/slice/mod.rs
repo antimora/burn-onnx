@@ -7,6 +7,7 @@ include_models!(
     slice_mixed,
     slice_shape_gather,
     slice_shape_runtime,
+    slice_shape_runtime_bounds,
     slice_shape_multi,
     slice_shape_negative,
     slice_shape_negative_range,
@@ -154,6 +155,26 @@ mod tests {
         // So it slices first two dimensions: [0:3, 0:4, :]
         // Result shape should be [3, 4, 6]
         assert_eq!(output.dims(), [3, 4, 6]);
+    }
+
+    #[test]
+    fn slice_shape_runtime_bounds() {
+        // Issue #380: slicing a Shape with runtime bounds. The IR cannot
+        // know the output rank statically, so it produces a rank-1 Int
+        // tensor. The codegen materializes the slice from the host-side
+        // shape array.
+        let model: slice_shape_runtime_bounds::Model<TestBackend> =
+            slice_shape_runtime_bounds::Model::default();
+        let device = Default::default();
+
+        let key = Tensor::<TestBackend, 3>::ones([4, 7, 64], &device);
+        let start = Tensor::<TestBackend, 1, burn::tensor::Int>::from_data([0i64], &device);
+        let end = Tensor::<TestBackend, 1, burn::tensor::Int>::from_data([2i64], &device);
+
+        let output = model.forward(key, start, end);
+
+        let expected = TensorData::from([4i64, 7]);
+        output.to_data().assert_eq(&expected, true);
     }
 
     #[test]
