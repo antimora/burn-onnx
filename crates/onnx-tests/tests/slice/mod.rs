@@ -227,8 +227,10 @@ mod tests {
 
         let key = Tensor::<TestBackend, 3>::ones([4, 7, 64], &device);
         let flat = Tensor::<TestBackend, 1>::from_floats(
-            [0., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13.,
-             14., 15., 16., 17., 18., 19., 20., 21., 22., 23., 24., 25., 26., 27.],
+            [
+                0., 1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 11., 12., 13., 14., 15., 16., 17.,
+                18., 19., 20., 21., 22., 23., 24., 25., 26., 27.,
+            ],
             &device,
         );
         let start = Tensor::<TestBackend, 1, burn::tensor::Int>::from_data([0i64], &device);
