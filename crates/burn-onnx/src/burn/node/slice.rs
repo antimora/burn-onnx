@@ -700,11 +700,25 @@ fn get_scalar_expr(
             quote! { #name[0] }
         }
         ArgType::Tensor(_) => {
-            // 1-D tensor of length 1 (a 1-element bound). Pull the single
-            // value off the device with to_data(); inefficient but only
-            // exercised when bounds are not lifted to constants.
+            // 1-D tensor of length 1 (a 1-element bound). ONNX permits
+            // int32 or int64 here, so cast to i64 before reading. Assert
+            // the single-element invariant the IR enforced statically so
+            // a malformed runtime tensor surfaces clearly instead of
+            // silently using element 0.
             let tensor = scope.arg(arg);
-            quote! { #tensor.to_data().iter::<i64>().next().unwrap() }
+            quote! {
+                {
+                    let bound_data = #tensor.clone()
+                        .cast(burn::tensor::DType::I64)
+                        .to_data();
+                    assert_eq!(
+                        bound_data.num_elements(), 1,
+                        "Slice runtime bound must contain exactly one element, got {}",
+                        bound_data.num_elements()
+                    );
+                    bound_data.iter::<i64>().next().unwrap()
+                }
+            }
         }
     }
 }
