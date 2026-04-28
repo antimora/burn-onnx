@@ -464,6 +464,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/slice/slice_shape_gather.onnx")
         .input("tests/slice/slice_shape_runtime.onnx")
         .input("tests/slice/slice_shape_runtime_bounds.onnx")
+        .input("tests/slice/slice_shape_runtime_bounds_i32.onnx")
         .input("tests/slice/slice_shape_multi.onnx")
         .input("tests/slice/slice_shape_negative.onnx")
         .input("tests/slice/slice_shape_negative_range.onnx")

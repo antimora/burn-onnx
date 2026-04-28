@@ -8,6 +8,7 @@ include_models!(
     slice_shape_gather,
     slice_shape_runtime,
     slice_shape_runtime_bounds,
+    slice_shape_runtime_bounds_i32,
     slice_shape_multi,
     slice_shape_negative,
     slice_shape_negative_range,
@@ -174,6 +175,25 @@ mod tests {
         let output = model.forward(key, start, end);
 
         let expected = TensorData::from([4i64, 7]);
+        output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn slice_shape_runtime_bounds_i32() {
+        // Same graph as slice_shape_runtime_bounds but with int32 bounds.
+        // Exercises the codegen's defensive cast(DType::I64) on the bound
+        // tensor: ONNX permits int32 or int64 here.
+        let model: slice_shape_runtime_bounds_i32::Model<TestBackend> =
+            slice_shape_runtime_bounds_i32::Model::default();
+        let device = Default::default();
+
+        let key = Tensor::<TestBackend, 3>::ones([4, 7, 64], &device);
+        let start = Tensor::<TestBackend, 1, burn::tensor::Int>::from_data([1i32], &device);
+        let end = Tensor::<TestBackend, 1, burn::tensor::Int>::from_data([3i32], &device);
+
+        let output = model.forward(key, start, end);
+
+        let expected = TensorData::from([7i64, 64]);
         output.to_data().assert_eq(&expected, true);
     }
 

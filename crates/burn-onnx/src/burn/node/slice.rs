@@ -700,11 +700,9 @@ fn get_scalar_expr(
             quote! { #name[0] }
         }
         ArgType::Tensor(_) => {
-            // 1-D tensor of length 1 (a 1-element bound). ONNX permits
-            // int32 or int64 here, so cast to i64 before reading. Assert
-            // the single-element invariant the IR enforced statically so
-            // a malformed runtime tensor surfaces clearly instead of
-            // silently using element 0.
+            // ONNX permits int32 or int64 for Slice bound tensors, so cast
+            // before reading. The runtime length check guards the case where
+            // the IR couldn't statically prove the bound is 1 element.
             let tensor = scope.arg(arg);
             quote! {
                 {
@@ -716,7 +714,8 @@ fn get_scalar_expr(
                         "Slice runtime bound must contain exactly one element, got {}",
                         bound_data.num_elements()
                     );
-                    bound_data.iter::<i64>().next().unwrap()
+                    bound_data.iter::<i64>().next()
+                        .expect("Slice runtime bound iter empty after num_elements==1 check")
                 }
             }
         }
@@ -1223,8 +1222,6 @@ mod tests {
     fn test_slice_shape_runtime_to_tensor() {
         // When bounds are runtime, the IR cannot derive the output rank, so
         // it produces a rank-1 Int tensor instead of a fixed-size Shape array.
-        // This is the path used by PyTorch MHA exports (e.g. key.shape[:n]
-        // where n is itself a runtime value).
         let config = SliceConfig {
             starts: SliceInput::Runtime(RuntimeInputRef {
                 name: "start".to_string(),

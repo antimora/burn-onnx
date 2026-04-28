@@ -179,10 +179,8 @@ impl NodeProcessor for SliceProcessor {
                 node.outputs[0].ty = input_ty;
             }
             ArgType::Shape(shape_rank) => {
-                // Static path: output_len is computable, keep ArgType::Shape.
-                // Runtime path: output_len depends on runtime values, so degrade
-                // to a rank-1 i64 tensor of unknown length. Downstream consumers
-                // (Concat, Reshape, Gather) already accept Tensor shape inputs.
+                // Runtime path: output_len cannot be computed without the bound
+                // values, so degrade to a rank-1 i64 tensor.
                 let static_bounds = match (&config.starts, &config.ends, &config.steps) {
                     (SliceInput::Static(s), SliceInput::Static(e), steps_opt) => {
                         let steps = match steps_opt {
@@ -213,10 +211,8 @@ impl NodeProcessor for SliceProcessor {
                     );
                     node.outputs[0].ty = ArgType::Shape(output_len);
                 } else {
-                    // Runtime path: enforce single-axis, step=1 invariants
-                    // up front so the codegen can rely on them. The runtime
-                    // codegen reads bound[0] and uses an implicit step of 1,
-                    // so anything else would silently produce a wrong slice.
+                    // Enforce single-axis, step=1 invariants up front so the
+                    // codegen can rely on them.
                     let len_of = |input: &SliceInput| -> Option<usize> {
                         match input {
                             SliceInput::Static(v) => Some(v.len()),
@@ -712,8 +708,6 @@ mod tests {
     fn test_slice_shape_input_runtime_bounds_degrades_to_tensor() {
         // Slicing a Shape with runtime starts/ends. Output length cannot be
         // computed at IR time, so the type degrades to a rank-1 i64 tensor.
-        // This pattern shows up in PyTorch MHA exports (e.g. key.shape[:n] where n
-        // ends up as a graph input rather than a constant).
         let mut node = TestNodeBuilder::new(NodeType::Slice, "test_slice_shape_runtime")
             .input_shape("data", 5)
             .input_tensor_i64("starts", 1, None)
