@@ -666,6 +666,25 @@ mod tests {
     }
 
     #[test]
+    fn test_reshape_config_with_shape_type_static_value() {
+        // Constant lifting can clear an ArgType::Shape input's name while
+        // populating its value, so extract_config must prefer Static when a
+        // value is available rather than emitting a Runtime ref to ""
+        let node = TestNodeBuilder::new(NodeType::Reshape, "test_reshape_shape_static")
+            .input_tensor_f32("data", 4, None)
+            .input_shape_with_data("shape", vec![2, 3, -1])
+            .output_tensor_f32("reshaped", 3, None)
+            .process(ReshapeProcessor, 16);
+
+        let processor = ReshapeProcessor;
+        let config = processor.extract_config(&node, 16).unwrap();
+        match &config.shape {
+            ReshapeInput::Static(shape) => assert_eq!(shape, &vec![2, 3, -1]),
+            other => panic!("Expected static shape, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_reshape_dynamic_shape_with_output_rank() {
         // Test dynamic reshape where shape input has no static_shape,
         // but output rank is known from ONNX model metadata.

@@ -27,7 +27,13 @@ impl NodeCodegen for onnx_ir::node::not::NotNode {
                     result
                 };
             },
-            _ => quote! {
+            // Native host scalar — emit the Rust `!` operator. `.bool_not()` would
+            // not compile against a `bool` binding.
+            ArgType::ScalarNative(_) => quote! {
+                let #output = !#input;
+            },
+            // On-device tensors (Tensor and ScalarTensor) carry `.bool_not()`.
+            ArgType::Tensor(_) | ArgType::ScalarTensor(_) => quote! {
                 let #output = #input.bool_not();
             },
         }
@@ -58,9 +64,6 @@ mod tests {
 
     #[test]
     fn test_not_shape_input() {
-        // Shape arguments encode booleans as 0/1 in an `[i64; N]` array (mirrors
-        // the Equal-on-Shape codegen). Not flips the array element-wise without
-        // calling `.bool_not()` (which is undefined on plain arrays).
         let node = NotNodeBuilder::new("not1")
             .input_shape("flags", 3)
             .output_shape("inverted", 3)

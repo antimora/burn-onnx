@@ -81,8 +81,6 @@ mod tests {
 
     #[test]
     fn test_trilu_bool_input_lower() {
-        // burn-flex's Bool tensor doesn't satisfy the trait bounds for tril,
-        // so codegen routes Bool inputs through Int and casts back.
         let config = TriluConfig::new(false, 0);
         let node = TriluNodeBuilder::new("tril1")
             .input_tensor("mask", 2, DType::Bool(BoolStore::Native))
