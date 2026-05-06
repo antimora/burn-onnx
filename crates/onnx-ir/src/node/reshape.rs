@@ -515,8 +515,15 @@ impl NodeProcessor for ReshapeProcessor {
                 }
             }
             ArgType::Shape(_) => {
-                // Runtime input - store reference instead of cloning the argument
-                ReshapeInput::Runtime(RuntimeInputRef::new(node.inputs[1].name.clone(), 1))
+                // Shape input may carry a static value (e.g. after constant lifting,
+                // which can clear the input name). Prefer the static value when present
+                // so codegen does not need to refer to an empty ident.
+                match node.inputs[1].value() {
+                    Some(tensor_data) => ReshapeInput::Static(tensor_data.to_vec::<i64>().unwrap()),
+                    None => {
+                        ReshapeInput::Runtime(RuntimeInputRef::new(node.inputs[1].name.clone(), 1))
+                    }
+                }
             }
             ArgType::ScalarTensor(_) => {
                 // ScalarTensor is rank 1 with a single element
