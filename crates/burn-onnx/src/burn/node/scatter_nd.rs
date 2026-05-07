@@ -21,22 +21,24 @@ impl NodeCodegen for onnx_ir::scatter_nd::ScatterNDNode {
         let indices = scope.arg(indices_arg);
         let updates = scope.arg(updates_arg);
 
-        let data_kind = match &data_arg.ty {
-            ArgType::Tensor(t) => TensorKind::from(t.dtype),
-            _ => panic!("Expected tensor input for data"),
+        let (data_tensor, indices_tensor) = match (&data_arg.ty, &indices_arg.ty) {
+            (ArgType::Tensor(d), ArgType::Tensor(i)) => (d, i),
+            _ => {
+                let msg = "ScatterND: data and indices inputs must be tensors";
+                return quote! { let #output = { compile_error!(#msg); unreachable!() }; };
+            }
         };
-        let indices_rank = match &indices_arg.ty {
-            ArgType::Tensor(t) => t.rank,
-            _ => panic!("Expected tensor input for indices"),
-        };
+        let data_kind = TensorKind::from(data_tensor.dtype);
+        let indices_rank = indices_tensor.rank;
 
         if matches!(data_kind, TensorKind::Bool)
             && !matches!(self.config.reduction, ScatterNDReduction::None)
         {
-            panic!(
-                "ScatterND with {:?} reduction not supported for bool tensors",
+            let msg = format!(
+                "ScatterND with {:?} reduction is not supported for bool tensors",
                 self.config.reduction
             );
+            return quote! { let #output = { compile_error!(#msg); unreachable!() }; };
         }
 
         let update_op = match self.config.reduction {
@@ -447,8 +449,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "reduction not supported for bool tensors")]
-    fn test_scatter_nd_bool_add_panics() {
+    fn test_scatter_nd_bool_add_emits_compile_error() {
         let config = ScatterNDConfig::new(ScatterNDReduction::Add);
         let node = ScatterNDNodeBuilder::new("scatter1")
             .input_tensor("data", 1, DType::Bool(BoolStore::Native))
@@ -457,6 +458,20 @@ mod tests {
             .output_tensor("output", 1, DType::Bool(BoolStore::Native))
             .config(config)
             .build();
-        codegen_forward_default(&node);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(
+            &self,
+            data: Tensor<B, 1, Bool>,
+            indices: Tensor<B, 2, Int>,
+            updates: Tensor<B, 1, Bool>,
+        ) -> Tensor<B, 1, Bool> {
+            let output = {
+                compile_error!("ScatterND with Add reduction is not supported for bool tensors");
+                unreachable!()
+            };
+            output
+        }
+        "#);
     }
 }

@@ -14,9 +14,24 @@ use crate::burn::ToTokens;
 /// The K dims being indexed are `data_dims[batch_dims..batch_dims + K]`
 /// (`batch_dims = 0` for ScatterND).
 ///
-/// The emitted block introduces these locals into the surrounding scope:
-/// `__nd_data_dims`, `__nd_indices`, `__nd_idx_dims`, `__nd_k`,
-/// `__nd_indices_norm`.
+/// # Reserved locals
+///
+/// The emitted block introduces locals prefixed with `__nd_`. Callers
+/// downstream may reference `__nd_data_dims`, `__nd_idx_dims`, `__nd_k`, and
+/// `__nd_indices_norm`; the rest (`__nd_indices`, `__nd_dim_sizes`,
+/// `__nd_bcast_shape`, `__nd_dims_tensor`, `__nd_mask`, `__nd_corrected`,
+/// `__nd_i`) are internal scaffolding. The whole `__nd_*` namespace is
+/// reserved by this helper, so callers should not introduce other `__nd_*`
+/// bindings in the same block.
+///
+/// # Required bindings at the call site
+///
+/// The emitted code uses identifiers that must resolve in the enclosing
+/// scope — namely `Tensor`, `B`, and `Int` (the standard burn imports
+/// emitted at the top of every generated module by the codegen framework)
+/// and `self.device` (the per-`Module` device field present on every
+/// generated forward function). All current call sites are inside
+/// `NodeCodegen::forward`, where these are guaranteed in scope.
 pub(crate) fn negative_index_normalize(
     data: &TokenStream,
     indices: &TokenStream,

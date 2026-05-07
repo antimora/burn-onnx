@@ -19,14 +19,15 @@ impl NodeCodegen for onnx_ir::gathernd::GatherNDNode {
         let data = scope.arg(data_arg);
         let indices = scope.arg(indices_arg);
 
-        let data_kind = match &data_arg.ty {
-            ArgType::Tensor(t) => TensorKind::from(t.dtype),
-            _ => panic!("Expected tensor input for data"),
+        let (data_tensor, indices_tensor) = match (&data_arg.ty, &indices_arg.ty) {
+            (ArgType::Tensor(d), ArgType::Tensor(i)) => (d, i),
+            _ => {
+                let msg = "GatherND: data and indices inputs must be tensors";
+                return quote! { let #output = { compile_error!(#msg); unreachable!() }; };
+            }
         };
-        let indices_rank = match &indices_arg.ty {
-            ArgType::Tensor(t) => t.rank,
-            _ => panic!("Expected tensor input for indices"),
-        };
+        let data_kind = TensorKind::from(data_tensor.dtype);
+        let indices_rank = indices_tensor.rank;
 
         let batch_dims = self.config.batch_dims;
         let indices_rank_lit = indices_rank.to_tokens();
