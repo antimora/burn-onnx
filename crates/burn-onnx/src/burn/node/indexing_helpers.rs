@@ -26,12 +26,15 @@ use crate::burn::ToTokens;
 ///
 /// # Required bindings at the call site
 ///
-/// The emitted code uses identifiers that must resolve in the enclosing
-/// scope — namely `Tensor`, `B`, and `Int` (the standard burn imports
-/// emitted at the top of every generated module by the codegen framework)
-/// and `self.device` (the per-`Module` device field present on every
-/// generated forward function). All current call sites are inside
-/// `NodeCodegen::forward`, where these are guaranteed in scope.
+/// `Tensor`, `B`, `Int`, and `self.device` must resolve in the enclosing
+/// scope.
+///
+/// # Out-of-bounds indices
+///
+/// Only negative indices are normalized. Indices `>= dim_size` are passed
+/// through unchanged; behavior on positive out-of-bounds is backend-defined
+/// (some panic, others produce undefined data) per the native
+/// `gather_nd`/`scatter_nd` contract.
 pub(crate) fn negative_index_normalize(
     data: &TokenStream,
     indices: &TokenStream,

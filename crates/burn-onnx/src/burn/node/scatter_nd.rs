@@ -24,7 +24,10 @@ impl NodeCodegen for onnx_ir::scatter_nd::ScatterNDNode {
         let (data_tensor, indices_tensor) = match (&data_arg.ty, &indices_arg.ty) {
             (ArgType::Tensor(d), ArgType::Tensor(i)) => (d, i),
             _ => {
-                let msg = "ScatterND: data and indices inputs must be tensors";
+                let msg = format!(
+                    "ScatterND node '{}': data and indices inputs must be tensors",
+                    self.name
+                );
                 return quote! { let #output = { compile_error!(#msg); unreachable!() }; };
             }
         };
@@ -35,8 +38,8 @@ impl NodeCodegen for onnx_ir::scatter_nd::ScatterNDNode {
             && !matches!(self.config.reduction, ScatterNDReduction::None)
         {
             let msg = format!(
-                "ScatterND with {:?} reduction is not supported for bool tensors",
-                self.config.reduction
+                "ScatterND node '{}': {:?} reduction is not supported for bool tensors",
+                self.name, self.config.reduction
             );
             return quote! { let #output = { compile_error!(#msg); unreachable!() }; };
         }
@@ -467,7 +470,9 @@ mod tests {
             updates: Tensor<B, 1, Bool>,
         ) -> Tensor<B, 1, Bool> {
             let output = {
-                compile_error!("ScatterND with Add reduction is not supported for bool tensors");
+                compile_error!(
+                    "ScatterND node 'scatter1': Add reduction is not supported for bool tensors"
+                );
                 unreachable!()
             };
             output
