@@ -112,8 +112,7 @@ mod tests {
     #[test]
     fn scatter_nd_negative_indices() {
         // -1 means last; -3 means third-from-last. Exercises on-device normalization.
-        let model: scatter_nd_neg_idx::Model<TestBackend> =
-            scatter_nd_neg_idx::Model::default();
+        let model: scatter_nd_neg_idx::Model<TestBackend> = scatter_nd_neg_idx::Model::default();
         let device = Default::default();
 
         let data = Tensor::<TestBackend, 1>::from_floats([1., 2., 3., 4., 5., 6., 7., 8.], &device);
