@@ -2461,19 +2461,13 @@ reason = "comparison against reference tensor fails (classified by M2 first-run 
 tracking = "#311"
 
 [test_gathernd_example_float32]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_gathernd_example_int32]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_gathernd_example_int32_batch_dim1]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_gelu_default_1]
 status = "pass"
@@ -5474,29 +5468,19 @@ reason = "unknown"
 tracking = "#314"
 
 [test_scatternd]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_scatternd_add]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_scatternd_max]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_scatternd_min]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_scatternd_multiply]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_sce_NCd1_mean_weight_negative_ii]
 status = "skip-codegen"
