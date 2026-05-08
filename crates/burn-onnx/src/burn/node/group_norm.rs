@@ -89,27 +89,15 @@ impl NodeCodegen for GroupNormalizationNode {
 
         // Reshape to [N, num_groups, hidden] before reducing so a single
         // `sum_dim(2)` averages across the per-group spatial+channel slice
-        // (mirrors Burn's internal `group_norm`).
-        let scale_arg = self
-            .inputs
-            .get(1)
-            .expect("GroupNorm: scale (input[1]) is required by ONNX spec");
-        let bias_arg = self
-            .inputs
-            .get(2)
-            .expect("GroupNorm: bias (input[2]) is required by ONNX spec");
-        let scale = scope.arg(scale_arg);
-        let bias = scope.arg(bias_arg);
+        // (mirrors Burn's internal `group_norm`). The channel dim for the
+        // affine reshape is read from `__dims` at runtime so we don't need
+        // scale's static shape to be known at codegen time.
+        let scale = scope.arg(&self.inputs[1]);
+        let bias = scope.arg(&self.inputs[2]);
         let rank = x_arg.ty.rank();
         let epsilon = self.config.epsilon;
         let num_groups = self.config.num_groups.to_tokens();
-
-        let scale_shape = scale_arg
-            .ty
-            .static_shape_known()
-            .expect("GroupNorm: scale tensor shape must be known at codegen time");
-        let num_features = scale_shape[0].to_tokens();
-        let affine_shape = channel_broadcast_shape(rank, num_features);
+        let affine_shape = channel_broadcast_shape(rank, quote! { __dims[1] });
 
         // Body uses `__x`, `__scale`, `__bias` so the wrapper can decide whether
         // to bind them directly or via an F32 cast for the full_precision case.
@@ -255,8 +243,8 @@ mod tests {
                 let __normalized = __centered.div(__var.add_scalar(0.00001f64).sqrt());
                 __normalized
                     .reshape(__dims)
-                    .mul(__scale.reshape([1usize, 4, 1usize, 1usize]))
-                    .add(__bias.reshape([1usize, 4, 1usize, 1usize]))
+                    .mul(__scale.reshape([1usize, __dims[1], 1usize, 1usize]))
+                    .add(__bias.reshape([1usize, __dims[1], 1usize, 1usize]))
             };
             output
         }
@@ -293,8 +281,8 @@ mod tests {
                     let __normalized = __centered.div(__var.add_scalar(0.00001f64).sqrt());
                     __normalized
                         .reshape(__dims)
-                        .mul(__scale.reshape([1usize, 4, 1usize, 1usize]))
-                        .add(__bias.reshape([1usize, 4, 1usize, 1usize]))
+                        .mul(__scale.reshape([1usize, __dims[1], 1usize, 1usize]))
+                        .add(__bias.reshape([1usize, __dims[1], 1usize, 1usize]))
                 };
                 __result.cast(__orig_dtype)
             };

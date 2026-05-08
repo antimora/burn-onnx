@@ -78,26 +78,14 @@ impl NodeCodegen for InstanceNormalizationNode {
         }
 
         // Spatial dims are collapsed into a single hidden axis before reducing
-        // (mirrors Burn's internal `group_norm` shape strategy).
-        let scale_arg = self
-            .inputs
-            .get(1)
-            .expect("InstanceNorm: scale (input[1]) is required by ONNX spec");
-        let bias_arg = self
-            .inputs
-            .get(2)
-            .expect("InstanceNorm: bias (input[2]) is required by ONNX spec");
-        let scale = scope.arg(scale_arg);
-        let bias = scope.arg(bias_arg);
+        // (mirrors Burn's internal `group_norm` shape strategy). The channel
+        // dim for the affine reshape is read from `__dims` at runtime so we
+        // don't need scale's static shape to be known at codegen time.
+        let scale = scope.arg(&self.inputs[1]);
+        let bias = scope.arg(&self.inputs[2]);
         let rank = x_arg.ty.rank();
         let epsilon = self.config.epsilon;
-
-        let scale_shape = scale_arg
-            .ty
-            .static_shape_known()
-            .expect("InstanceNorm: scale tensor shape must be known at codegen time");
-        let num_features = scale_shape[0].to_tokens();
-        let affine_shape = channel_broadcast_shape(rank, num_features);
+        let affine_shape = channel_broadcast_shape(rank, quote! { __channels });
 
         quote! {
             let #output = {
@@ -208,8 +196,8 @@ mod tests {
                 let __normalized = __centered.div(__var.add_scalar(0.00001f64).sqrt());
                 __normalized
                     .reshape(__dims)
-                    .mul(scale.reshape([1usize, 2, 1usize, 1usize]))
-                    .add(bias.reshape([1usize, 2, 1usize, 1usize]))
+                    .mul(scale.reshape([1usize, __channels, 1usize, 1usize]))
+                    .add(bias.reshape([1usize, __channels, 1usize, 1usize]))
             };
             output
         }

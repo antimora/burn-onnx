@@ -80,10 +80,7 @@ impl NodeCodegen for PReluNode {
         // Right-align slope to x's rank so element-wise broadcasting follows the
         // ONNX numpy-style rules (slope shapes like `[C]` or `[C, 1, 1]` need
         // leading 1s prepended to match `x`'s rank before the multiply).
-        let slope_arg = self
-            .inputs
-            .get(1)
-            .expect("PRelu: slope (input[1]) is required by ONNX spec");
+        let slope_arg = &self.inputs[1];
         let slope = scope.arg(slope_arg);
         let x_rank = x_arg.ty.rank();
         let slope_rank = slope_arg.ty.rank();

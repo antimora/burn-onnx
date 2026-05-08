@@ -10,24 +10,27 @@ fn weight_is_static(node: &DeformConvNode) -> bool {
     node.inputs.get(1).is_some_and(|w| w.is_static())
 }
 
-/// Convert ONNX `PaddingConfig2d` into a symmetric `[usize; 2]` for Burn's
-/// `deform_conv2d`. Panics at codegen time on asymmetric padding (which
-/// neither the function form nor the module form supports today); if this
-/// ever fires for a real model, the fix is to emit an explicit Pad op
-/// before the conv.
+/// Convert `PaddingConfig2d` into a symmetric `[usize; 2]` for Burn's
+/// `deform_conv2d`, or a `compile_error!` token if the padding is
+/// asymmetric (which neither the function form nor the module form
+/// supports today). Surfacing the failure as a generated `compile_error!`
+/// keeps codegen panic-free; a future fix could emit an explicit Pad op
+/// upstream instead.
 fn padding_to_symmetric_tokens(padding: &PaddingConfig2d, node_name: &str) -> TokenStream {
     match padding {
         PaddingConfig2d::Valid => quote! { [0usize, 0usize] },
-        PaddingConfig2d::Explicit(top, left, bottom, right) => {
-            assert!(
-                top == bottom && left == right,
-                "DeformConv '{}': dynamic-weight codegen requires symmetric padding, \
-                 got asymmetric Explicit({top}, {left}, {bottom}, {right})",
-                node_name
-            );
+        PaddingConfig2d::Explicit(top, left, bottom, right) if top == bottom && left == right => {
             let t = top.to_tokens();
             let l = left.to_tokens();
             quote! { [#t, #l] }
+        }
+        PaddingConfig2d::Explicit(top, left, bottom, right) => {
+            let msg = format!(
+                "DeformConv '{node_name}': asymmetric padding ({top}, {left}, {bottom}, {right}) \
+                 is not supported by Burn's deform_conv2d (symmetric only). \
+                 Convert via an explicit Pad op upstream."
+            );
+            quote! { compile_error!(#msg) }
         }
     }
 }
@@ -472,17 +475,22 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "symmetric padding")]
-    fn test_deform_conv_forward_dynamic_asymmetric_padding_panics() {
+    fn test_deform_conv_forward_dynamic_asymmetric_padding_emits_compile_error() {
         // Asymmetric padding (top != bottom) is not expressible via Burn's
-        // symmetric `[usize; 2]` padding; codegen must surface this loudly
-        // instead of silently emitting wrong padding values.
+        // symmetric `[usize; 2]` padding; codegen surfaces this as a
+        // `compile_error!` token rather than panicking.
         let node = create_dynamic_deform_conv_node(
             "deform_conv1",
             PaddingConfig2d::Explicit(1, 1, 0, 1),
             false,
             false,
         );
-        let _ = codegen_forward_default(&node);
+        let code = codegen_forward_default(&node);
+        assert!(
+            code.contains("compile_error!")
+                && code.contains("asymmetric padding (1, 1, 0, 1)")
+                && code.contains("deform_conv1"),
+            "expected compile_error! token naming the node and asymmetric values, got: {code}"
+        );
     }
 }
