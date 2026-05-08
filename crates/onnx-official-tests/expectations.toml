@@ -886,14 +886,10 @@ reason = "Custom(\"Conv2d: weight tensor must be present\")"
 tracking = "#314"
 
 [test_basic_deform_conv_with_padding]
-status = "skip-codegen"
-reason = "Failed to write burnpack file: IoError(\"Failed to get tensor data: DataError(\\\"Failed to extract tensor data for 'w'\\..."
-tracking = "#314"
+status = "pass"
 
 [test_basic_deform_conv_without_padding]
-status = "skip-codegen"
-reason = "Failed to write burnpack file: IoError(\"Failed to get tensor data: DataError(\\\"Failed to extract tensor data for 'w'\\..."
-tracking = "#314"
+status = "pass"
 
 [test_batchnorm_epsilon]
 status = "pass"
@@ -2103,14 +2099,10 @@ status = "pass"
 status = "pass"
 
 [test_deform_conv_with_mask_bias]
-status = "skip-codegen"
-reason = "Failed to write burnpack file: IoError(\"Failed to get tensor data: DataError(\\\"Failed to extract tensor data for 'w'\\..."
-tracking = "#314"
+status = "pass"
 
 [test_deform_conv_with_multiple_offset_groups]
-status = "skip-codegen"
-reason = "Failed to write burnpack file: IoError(\"Failed to get tensor data: DataError(\\\"Failed to extract tensor data for 'w'\\..."
-tracking = "#314"
+status = "pass"
 
 [test_depthtospace_crd_mode_example]
 status = "pass"
@@ -2695,17 +2687,13 @@ tracking = "#311"
 status = "pass"
 
 [test_group_normalization_epsilon]
-status = "skip-codegen"
-reason = "Failed to write burnpack file: IoError(\"Failed to get tensor data: DataError(\\\"Failed to extract tensor data for 'sca..."
-tracking = "#314"
+status = "pass"
 
 [test_group_normalization_epsilon_expanded]
 status = "pass"
 
 [test_group_normalization_example]
-status = "skip-codegen"
-reason = "Failed to write burnpack file: IoError(\"Failed to get tensor data: DataError(\\\"Failed to extract tensor data for 'sca..."
-tracking = "#314"
+status = "pass"
 
 [test_group_normalization_example_expanded]
 status = "pass"
@@ -2879,14 +2867,10 @@ reason = "Unsupported ONNX operation(s): ImageDecoder (node 'imagedecoder1')"
 tracking = "#314"
 
 [test_instancenorm_epsilon]
-status = "skip-codegen"
-reason = "Failed to write burnpack file: IoError(\"Failed to get tensor data: DataError(\\\"Failed to extract tensor data for 's'\\..."
-tracking = "#314"
+status = "pass"
 
 [test_instancenorm_example]
-status = "skip-codegen"
-reason = "Failed to write burnpack file: IoError(\"Failed to get tensor data: DataError(\\\"Failed to extract tensor data for 's'\\..."
-tracking = "#314"
+status = "pass"
 
 [test_isinf]
 status = "pass"
@@ -4105,17 +4089,13 @@ tracking = "tracel-ai/burn-onnx"
 status = "pass"
 
 [test_prelu_broadcast]
-status = "skip-codegen"
-reason = "Failed to write burnpack file: IoError(\"Failed to get tensor data: DataError(\\\"Failed to extract tensor data for 'slo..."
-tracking = "#314"
+status = "pass"
 
 [test_prelu_broadcast_expanded]
 status = "pass"
 
 [test_prelu_example]
-status = "skip-codegen"
-reason = "Failed to write burnpack file: IoError(\"Failed to get tensor data: DataError(\\\"Failed to extract tensor data for 'slo..."
-tracking = "#314"
+status = "pass"
 
 [test_prelu_example_expanded]
 status = "pass"
