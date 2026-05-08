@@ -678,7 +678,9 @@ reason = "Unsupported Mod input types: lhs=Shape(1), rhs=Shape(1)"
 tracking = "#314"
 
 [test_attention_4d_gqa_with_past_and_present_fp16]
-status = "pass"
+status = "fail-compare"
+reason = "burn-flex attention_naive panics on GQA: key heads (3) != query heads (9) at burn-flex/src/ops/attention.rs:658. Surfaced after #393 wired f16 comparison through the harness; not a burn-onnx codegen bug."
+tracking = "https://github.com/tracel-ai/burn/issues/4930"
 
 [test_attention_4d_gqa_with_past_and_present_fp16_expanded]
 status = "skip-codegen"
