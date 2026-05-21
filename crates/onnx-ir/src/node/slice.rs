@@ -252,14 +252,13 @@ impl NodeProcessor for SliceProcessor {
                     let len_of = |input: &SliceInput| -> Option<usize> {
                         match input {
                             SliceInput::Static(v) => Some(v.len()),
-                            SliceInput::Runtime(r) => match &node.inputs[r.input_index].ty {
-                                ArgType::Tensor(t) => t
-                                    .static_shape
-                                    .as_ref()
-                                    .and_then(|s| s.first().copied().flatten()),
-                                ArgType::Shape(n) => Some(*n),
-                                ArgType::ScalarNative(_) | ArgType::ScalarTensor(_) => Some(1),
-                            },
+                            SliceInput::Runtime(r) => {
+                                let ty = &node.inputs[r.input_index].ty;
+                                match ty {
+                                    ArgType::ScalarNative(_) | ArgType::ScalarTensor(_) => Some(1),
+                                    _ => ty.first_dim_static_len(),
+                                }
+                            }
                         }
                     };
                     let mut any_unknown_len = false;
@@ -443,14 +442,7 @@ impl NodeProcessor for SliceProcessor {
         // downstream consumer to either supply axes or refuse the model.
         let num_slices: Option<usize> = match &starts {
             SliceInput::Static(v) => Some(v.len()),
-            SliceInput::Runtime(r) => match &node.inputs[r.input_index].ty {
-                ArgType::Tensor(t) => t
-                    .static_shape
-                    .as_ref()
-                    .and_then(|s| s.first().copied().flatten()),
-                ArgType::Shape(n) => Some(*n),
-                _ => None,
-            },
+            SliceInput::Runtime(r) => node.inputs[r.input_index].ty.first_dim_static_len(),
         };
 
         let (mut axes, steps) = if let Some(n) = num_slices.filter(|n| *n > 0) {

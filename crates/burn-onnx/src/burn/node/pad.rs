@@ -1,6 +1,6 @@
 use super::prelude::*;
+use crate::burn::codegen::f32_to_tokens;
 use onnx_ir::ir::ArgType;
-use std::str::FromStr;
 
 impl NodeCodegen for onnx_ir::pad::PadNode {
     fn inputs(&self) -> &[Argument] {
@@ -15,64 +15,157 @@ impl NodeCodegen for onnx_ir::pad::PadNode {
         let input = scope.arg(self.inputs.first().unwrap());
         let output = arg_to_ident(self.outputs.first().unwrap());
 
-        // Extract static pads from the enum wrapper
-        let pads_vec = match &self.config.pads {
-            onnx_ir::pad::PadInput::Static(pads) => pads,
-            onnx_ir::pad::PadInput::Runtime(_) => {
-                panic!("Runtime pads are not supported in burn-onnx")
+        let pads_expr: TokenStream = match &self.config.pads {
+            onnx_ir::pad::PadInput::Static(pads) => {
+                let pads = pads
+                    .iter()
+                    .map(|(before, after)| quote! { (#before, #after) });
+                quote! { [#(#pads),*] }
+            }
+            onnx_ir::pad::PadInput::Runtime {
+                input: runtime_ref,
+                axes,
+            } => {
+                let data_arg = self.inputs.first().unwrap();
+                let input_rank = match &data_arg.ty {
+                    ArgType::Tensor(t) => t.rank,
+                    other => panic!("Pad: data input must be a tensor, got {other:?}"),
+                };
+                runtime_pads_expr(
+                    scope,
+                    &self.inputs[runtime_ref.input_index],
+                    axes,
+                    input_rank,
+                )
             }
         };
-        let pads: Vec<TokenStream> = pads_vec
-            .iter()
-            .map(|(before, after)| quote! { (#before, #after) })
-            .collect();
 
-        // Generate PadMode based on the mode in config (using fully qualified path)
         let pad_mode = match &self.config.mode {
             onnx_ir::pad::PadMode::Constant => {
-                let constant_value = match &self.config.constant_value {
-                    onnx_ir::pad::ConstantValueInput::Static(value) => {
-                        let literal = TokenStream::from_str(&format!("{}_f32", value)).unwrap();
-                        quote! { #literal }
-                    }
-                    onnx_ir::pad::ConstantValueInput::Runtime(runtime_ref) => {
-                        let arg = &self.inputs[runtime_ref.input_index];
-                        let value = scope.arg(arg);
-                        match &arg.ty {
-                            ArgType::Tensor(t) if t.rank == 0 => {
-                                quote! { #value.into_scalar() }
-                            }
-                            ArgType::Tensor(t) => {
-                                panic!(
-                                    "Pad: constant_value must be a scalar tensor (rank 0), got rank {}",
-                                    t.rank
-                                )
-                            }
-                            ArgType::ScalarNative(_) => {
-                                quote! { #value }
-                            }
-                            ArgType::ScalarTensor(dtype) => {
-                                on_device_to_native(quote! { #value }, dtype)
-                            }
-                            ArgType::Shape(_) => {
-                                panic!("Pad: constant_value cannot be a shape")
-                            }
-                        }
-                    }
-                };
+                let constant_value =
+                    constant_value_expr(scope, &self.inputs, &self.config.constant_value);
                 quote! { burn::tensor::ops::PadMode::Constant(#constant_value) }
             }
-            onnx_ir::pad::PadMode::Reflect => {
-                quote! { burn::tensor::ops::PadMode::Reflect }
-            }
-            onnx_ir::pad::PadMode::Edge => {
-                quote! { burn::tensor::ops::PadMode::Edge }
-            }
+            onnx_ir::pad::PadMode::Reflect => quote! { burn::tensor::ops::PadMode::Reflect },
+            onnx_ir::pad::PadMode::Edge => quote! { burn::tensor::ops::PadMode::Edge },
         };
 
         quote! {
-            let #output = #input.pad([#(#pads),*], #pad_mode);
+            let #output = #input.pad(#pads_expr, #pad_mode);
         }
+    }
+}
+
+/// Emit a forward-time expression that produces a pad array for
+/// `Tensor::pad`. See [`onnx_ir::pad::PadInput`] for the index-space
+/// contract (ONNX `pads` layout vs. burn's `(before, after)` per dim).
+fn runtime_pads_expr(
+    scope: &mut ScopeAtPosition<'_>,
+    pads_arg: &Argument,
+    axes: &Option<Vec<usize>>,
+    input_rank: usize,
+) -> TokenStream {
+    let pads_value = scope.arg(pads_arg);
+    let expected_len = match axes {
+        Some(a) => 2 * a.len(),
+        None => 2 * input_rank,
+    };
+
+    let inline_pairs = |source: &TokenStream| match axes {
+        None => full_rank_pairs(source, input_rank),
+        Some(axes_vec) => axes_pairs(source, axes_vec, input_rank),
+    };
+
+    match &pads_arg.ty {
+        ArgType::Shape(_) => inline_pairs(&pads_value),
+        ArgType::Tensor(_) => {
+            let to_vec = crate::burn::codegen::tensor_to_i64_vec(&pads_value);
+            let pairs = inline_pairs(&quote! { __raw });
+            quote! {
+                {
+                    let __raw: alloc::vec::Vec<i64> = #to_vec;
+                    assert_eq!(
+                        __raw.len(), #expected_len,
+                        "Pad: runtime pads length mismatch (expected {}, got {})",
+                        #expected_len, __raw.len(),
+                    );
+                    #pairs
+                }
+            }
+        }
+        other => panic!("Pad: runtime pads input must be a tensor or shape, got {other:?}"),
+    }
+}
+
+/// Inline `[(usize, usize); rank]` array literal picking `(before, after)`
+/// pairs from `source` in ONNX layout (`source[i]`, `source[rank + i]`).
+fn full_rank_pairs(source: &TokenStream, rank: usize) -> TokenStream {
+    let pairs = (0..rank).map(|i| {
+        let after = rank + i;
+        let b = pad_i64_to_usize_expr(quote! { #source[#i] }, quote! { #i });
+        let a = pad_i64_to_usize_expr(quote! { #source[#after] }, quote! { #after });
+        quote! { (#b, #a) }
+    });
+    quote! { [#(#pairs),*] }
+}
+
+/// Inline `[(usize, usize); rank]` literal placing the `i`-th pair on
+/// dimension `axes[i]` and `(0, 0)` on every unlisted dimension. `source`
+/// supplies the runtime values in ONNX layout (`source[i]` is `before`
+/// for `axes[i]`; `source[axes.len() + i]` is `after`).
+fn axes_pairs(source: &TokenStream, axes: &[usize], rank: usize) -> TokenStream {
+    let n_axes = axes.len();
+    let pairs = (0..rank).map(|dim| match axes.iter().position(|&a| a == dim) {
+        Some(slot) => {
+            let after_slot = n_axes + slot;
+            let b = pad_i64_to_usize_expr(quote! { #source[#slot] }, quote! { #slot });
+            let a = pad_i64_to_usize_expr(quote! { #source[#after_slot] }, quote! { #after_slot });
+            quote! { (#b, #a) }
+        }
+        None => quote! { (0usize, 0usize) },
+    });
+    quote! { [#(#pairs),*] }
+}
+
+fn constant_value_expr(
+    scope: &mut ScopeAtPosition<'_>,
+    inputs: &[Argument],
+    cv: &onnx_ir::pad::ConstantValueInput,
+) -> TokenStream {
+    match cv {
+        onnx_ir::pad::ConstantValueInput::Static(value) => f32_to_tokens(*value),
+        onnx_ir::pad::ConstantValueInput::Runtime(runtime_ref) => {
+            let arg = &inputs[runtime_ref.input_index];
+            let value = scope.arg(arg);
+            match &arg.ty {
+                ArgType::Tensor(t) if t.rank == 0 => {
+                    quote! { #value.into_scalar() }
+                }
+                ArgType::Tensor(t) => {
+                    panic!(
+                        "Pad: constant_value must be a scalar tensor (rank 0), got rank {}",
+                        t.rank
+                    )
+                }
+                ArgType::ScalarNative(_) => quote! { #value },
+                ArgType::ScalarTensor(dtype) => on_device_to_native(quote! { #value }, dtype),
+                ArgType::Shape(_) => panic!("Pad: constant_value cannot be a shape"),
+            }
+        }
+    }
+}
+
+/// Checked i64-to-usize conversion emitted into generated code.
+///
+/// ONNX's static validator rejects negative pads at parse time, but a
+/// runtime tensor can still carry them; surface the error loudly rather
+/// than wrap to `usize::MAX - n` (which silently OOMs or panics deep in
+/// burn's pad kernel).
+fn pad_i64_to_usize_expr(value: TokenStream, idx: TokenStream) -> TokenStream {
+    quote! {
+        usize::try_from(#value).unwrap_or_else(|_| {
+            panic!("Pad: negative pad value {} at index {}", #value, #idx)
+        })
     }
 }
 
@@ -112,7 +205,7 @@ mod tests {
             let output = input
                 .pad(
                     [(1usize, 1usize), (1usize, 1usize)],
-                    burn::tensor::ops::PadMode::Constant(0_f32),
+                    burn::tensor::ops::PadMode::Constant(0f32),
                 );
             output
         }
@@ -128,7 +221,7 @@ mod tests {
             let output = input
                 .pad(
                     [(0usize, 1usize), (2usize, 0usize)],
-                    burn::tensor::ops::PadMode::Constant(5.5_f32),
+                    burn::tensor::ops::PadMode::Constant(5.5f32),
                 );
             output
         }
@@ -220,6 +313,396 @@ mod tests {
     }
 
     #[test]
+    fn test_pad_constant_neg_infinity() {
+        // Regression: `format!("{}_f32", -inf)` -> `-inf_f32`, not a
+        // valid Rust literal. Covered by `f32_to_tokens` dispatch.
+        let node = create_pad_node(
+            "pad_inf",
+            vec![(1, 1), (1, 1)],
+            f32::NEG_INFINITY,
+            PadMode::Constant,
+        );
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<2>) -> Tensor<2> {
+            let output = input
+                .pad(
+                    [(1usize, 1usize), (1usize, 1usize)],
+                    burn::tensor::ops::PadMode::Constant(f32::NEG_INFINITY),
+                );
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_pad_runtime_pads_full_rank_tensor() {
+        let config = PadConfig {
+            pads: PadInput::Runtime {
+                input: RuntimeInputRef::new("pads".to_string(), 1),
+                axes: None,
+            },
+            constant_value: ConstantValueInput::Static(0.0),
+            mode: PadMode::Constant,
+        };
+        let node = PadNodeBuilder::new("pad_rt")
+            .input_tensor("input", 2, DType::F32)
+            .input_tensor("pads", 1, DType::I64)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, input: Tensor<2>, pads: Tensor<1, Int>) -> Tensor<2> {
+            let output = input
+                .pad(
+                    {
+                        let __raw: alloc::vec::Vec<i64> = pads
+                            .to_data()
+                            .convert::<i64>()
+                            .into_vec::<i64>()
+                            .unwrap();
+                        assert_eq!(
+                            __raw.len(), 4usize,
+                            "Pad: runtime pads length mismatch (expected {}, got {})", 4usize,
+                            __raw.len(),
+                        );
+                        [
+                            (
+                                usize::try_from(__raw[0usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[0usize],
+                                            0usize
+                                        )
+                                    }),
+                                usize::try_from(__raw[2usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[2usize],
+                                            2usize
+                                        )
+                                    }),
+                            ),
+                            (
+                                usize::try_from(__raw[1usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[1usize],
+                                            1usize
+                                        )
+                                    }),
+                                usize::try_from(__raw[3usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[3usize],
+                                            3usize
+                                        )
+                                    }),
+                            ),
+                        ]
+                    },
+                    burn::tensor::ops::PadMode::Constant(0f32),
+                );
+            output
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_pad_runtime_pads_full_rank_shape() {
+        // Shape input → inline-array codegen (no Vec allocation).
+        let config = PadConfig {
+            pads: PadInput::Runtime {
+                input: RuntimeInputRef::new("pads".to_string(), 1),
+                axes: None,
+            },
+            constant_value: ConstantValueInput::Static(0.0),
+            mode: PadMode::Constant,
+        };
+        let node = PadNodeBuilder::new("pad_rt_shape")
+            .input_tensor("input", 2, DType::F32)
+            .input_shape("pads", 4)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, input: Tensor<2>, pads: [i64; 4]) -> Tensor<2> {
+            let output = input
+                .pad(
+                    [
+                        (
+                            usize::try_from(pads[0usize])
+                                .unwrap_or_else(|_| {
+                                    panic!(
+                                        "Pad: negative pad value {} at index {}", pads[0usize],
+                                        0usize
+                                    )
+                                }),
+                            usize::try_from(pads[2usize])
+                                .unwrap_or_else(|_| {
+                                    panic!(
+                                        "Pad: negative pad value {} at index {}", pads[2usize],
+                                        2usize
+                                    )
+                                }),
+                        ),
+                        (
+                            usize::try_from(pads[1usize])
+                                .unwrap_or_else(|_| {
+                                    panic!(
+                                        "Pad: negative pad value {} at index {}", pads[1usize],
+                                        1usize
+                                    )
+                                }),
+                            usize::try_from(pads[3usize])
+                                .unwrap_or_else(|_| {
+                                    panic!(
+                                        "Pad: negative pad value {} at index {}", pads[3usize],
+                                        3usize
+                                    )
+                                }),
+                        ),
+                    ],
+                    burn::tensor::ops::PadMode::Constant(0f32),
+                );
+            output
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_pad_runtime_pads_with_static_axes_tensor() {
+        let config = PadConfig {
+            pads: PadInput::Runtime {
+                input: RuntimeInputRef::new("pads".to_string(), 1),
+                axes: Some(vec![2, 0]),
+            },
+            constant_value: ConstantValueInput::Static(0.0),
+            mode: PadMode::Constant,
+        };
+        let node = PadNodeBuilder::new("pad_rt_axes")
+            .input_tensor("input", 4, DType::F32)
+            .input_tensor("pads", 1, DType::I64)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, input: Tensor<4>, pads: Tensor<1, Int>) -> Tensor<4> {
+            let output = input
+                .pad(
+                    {
+                        let __raw: alloc::vec::Vec<i64> = pads
+                            .to_data()
+                            .convert::<i64>()
+                            .into_vec::<i64>()
+                            .unwrap();
+                        assert_eq!(
+                            __raw.len(), 4usize,
+                            "Pad: runtime pads length mismatch (expected {}, got {})", 4usize,
+                            __raw.len(),
+                        );
+                        [
+                            (
+                                usize::try_from(__raw[1usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[1usize],
+                                            1usize
+                                        )
+                                    }),
+                                usize::try_from(__raw[3usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[3usize],
+                                            3usize
+                                        )
+                                    }),
+                            ),
+                            (0usize, 0usize),
+                            (
+                                usize::try_from(__raw[0usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[0usize],
+                                            0usize
+                                        )
+                                    }),
+                                usize::try_from(__raw[2usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[2usize],
+                                            2usize
+                                        )
+                                    }),
+                            ),
+                            (0usize, 0usize),
+                        ]
+                    },
+                    burn::tensor::ops::PadMode::Constant(0f32),
+                );
+            output
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_pad_runtime_pads_with_static_axes_shape() {
+        let config = PadConfig {
+            pads: PadInput::Runtime {
+                input: RuntimeInputRef::new("pads".to_string(), 1),
+                axes: Some(vec![2, 0]),
+            },
+            constant_value: ConstantValueInput::Static(0.0),
+            mode: PadMode::Constant,
+        };
+        let node = PadNodeBuilder::new("pad_rt_axes_shape")
+            .input_tensor("input", 4, DType::F32)
+            .input_shape("pads", 4)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, input: Tensor<4>, pads: [i64; 4]) -> Tensor<4> {
+            let output = input
+                .pad(
+                    [
+                        (
+                            usize::try_from(pads[1usize])
+                                .unwrap_or_else(|_| {
+                                    panic!(
+                                        "Pad: negative pad value {} at index {}", pads[1usize],
+                                        1usize
+                                    )
+                                }),
+                            usize::try_from(pads[3usize])
+                                .unwrap_or_else(|_| {
+                                    panic!(
+                                        "Pad: negative pad value {} at index {}", pads[3usize],
+                                        3usize
+                                    )
+                                }),
+                        ),
+                        (0usize, 0usize),
+                        (
+                            usize::try_from(pads[0usize])
+                                .unwrap_or_else(|_| {
+                                    panic!(
+                                        "Pad: negative pad value {} at index {}", pads[0usize],
+                                        0usize
+                                    )
+                                }),
+                            usize::try_from(pads[2usize])
+                                .unwrap_or_else(|_| {
+                                    panic!(
+                                        "Pad: negative pad value {} at index {}", pads[2usize],
+                                        2usize
+                                    )
+                                }),
+                        ),
+                        (0usize, 0usize),
+                    ],
+                    burn::tensor::ops::PadMode::Constant(0f32),
+                );
+            output
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_pad_runtime_pads_reflect() {
+        let config = PadConfig {
+            pads: PadInput::Runtime {
+                input: RuntimeInputRef::new("pads".to_string(), 1),
+                axes: None,
+            },
+            constant_value: ConstantValueInput::Static(0.0),
+            mode: PadMode::Reflect,
+        };
+        let node = PadNodeBuilder::new("pad_rt_reflect")
+            .input_tensor("input", 3, DType::F32)
+            .input_tensor("pads", 1, DType::I64)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, input: Tensor<3>, pads: Tensor<1, Int>) -> Tensor<3> {
+            let output = input
+                .pad(
+                    {
+                        let __raw: alloc::vec::Vec<i64> = pads
+                            .to_data()
+                            .convert::<i64>()
+                            .into_vec::<i64>()
+                            .unwrap();
+                        assert_eq!(
+                            __raw.len(), 6usize,
+                            "Pad: runtime pads length mismatch (expected {}, got {})", 6usize,
+                            __raw.len(),
+                        );
+                        [
+                            (
+                                usize::try_from(__raw[0usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[0usize],
+                                            0usize
+                                        )
+                                    }),
+                                usize::try_from(__raw[3usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[3usize],
+                                            3usize
+                                        )
+                                    }),
+                            ),
+                            (
+                                usize::try_from(__raw[1usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[1usize],
+                                            1usize
+                                        )
+                                    }),
+                                usize::try_from(__raw[4usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[4usize],
+                                            4usize
+                                        )
+                                    }),
+                            ),
+                            (
+                                usize::try_from(__raw[2usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[2usize],
+                                            2usize
+                                        )
+                                    }),
+                                usize::try_from(__raw[5usize])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw[5usize],
+                                            5usize
+                                        )
+                                    }),
+                            ),
+                        ]
+                    },
+                    burn::tensor::ops::PadMode::Reflect,
+                );
+            output
+        }
+        "#);
+    }
+
+    #[test]
     fn test_pad_4d_all_dimensions() {
         let config = PadConfig {
             pads: PadInput::Static(vec![(1, 2), (0, 0), (3, 4), (5, 6)]),
@@ -237,7 +720,7 @@ mod tests {
             let output = input
                 .pad(
                     [(1usize, 2usize), (0usize, 0usize), (3usize, 4usize), (5usize, 6usize)],
-                    burn::tensor::ops::PadMode::Constant(0_f32),
+                    burn::tensor::ops::PadMode::Constant(0f32),
                 );
             output
         }

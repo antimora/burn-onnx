@@ -255,6 +255,24 @@ impl ArgType {
         }
     }
 
+    /// Length of the first dimension when statically known.
+    ///
+    /// For `Shape(n)` this is always `Some(n)`. For `Tensor`, requires
+    /// `static_shape[0]` to be a concrete value. Used by ops (Slice,
+    /// Pad, ...) that consume a rank-1 input describing per-axis
+    /// configuration and need to validate / branch on its length at
+    /// extract-config time.
+    pub fn first_dim_static_len(&self) -> Option<usize> {
+        match self {
+            ArgType::Shape(n) => Some(*n),
+            ArgType::Tensor(t) => t
+                .static_shape
+                .as_ref()
+                .and_then(|s| s.first().copied().flatten()),
+            _ => None,
+        }
+    }
+
     /// Check if this is any scalar type (ScalarTensor or ScalarNative)
     pub fn is_scalar(&self) -> bool {
         matches!(self, Self::ScalarTensor(_) | Self::ScalarNative(_))

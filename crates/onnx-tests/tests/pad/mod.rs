@@ -4,6 +4,9 @@ include_models!(
     pad_reflect,
     pad_edge,
     pad_runtime_constant,
+    pad_runtime_pads,
+    pad_runtime_pads_axes,
+    pad_runtime_pads_shape,
     pad_optional_constant_value,
     pad_ndim
 );
@@ -69,6 +72,76 @@ mod tests {
             [5.0_f32, 5., 5., 5.],
         ]);
 
+        output.assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn pad_runtime_pads() {
+        let device = Default::default();
+        let model: pad_runtime_pads::Model = pad_runtime_pads::Model::new(&device);
+
+        let input = Tensor::<2>::from_floats([[1., 2.], [3., 4.]], &device);
+        let pads = Tensor::<1, burn::tensor::Int>::from_ints([1_i64, 2, 1, 2], &device);
+        let output = model.forward(input, pads).to_data();
+        let expected = TensorData::from([
+            [0.0_f32, 0., 0., 0., 0., 0.],
+            [0.0_f32, 0., 1., 2., 0., 0.],
+            [0.0_f32, 0., 3., 4., 0., 0.],
+            [0.0_f32, 0., 0., 0., 0., 0.],
+        ]);
+
+        output.assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn pad_runtime_pads_axes() {
+        let device = Default::default();
+        let model: pad_runtime_pads_axes::Model = pad_runtime_pads_axes::Model::new(&device);
+
+        let input = Tensor::<4>::from_data(
+            TensorData::from([[[[1.0_f32, 2.], [3., 4.]]], [[[5., 6.], [7., 8.]]]]),
+            &device,
+        );
+        // pads layout for axes=[2, 0]:
+        // [before_axis2, before_axis0, after_axis2, after_axis0]
+        let pads = Tensor::<1, burn::tensor::Int>::from_ints([1_i64, 1, 2, 0], &device);
+
+        let output = model.forward(input, pads);
+        let dims = output.dims();
+        assert_eq!(dims, [3, 1, 5, 2]);
+
+        let data = output.to_data();
+        let expected = TensorData::from([
+            [[[0.0_f32, 0.], [0., 0.], [0., 0.], [0., 0.], [0., 0.]]],
+            [[[0., 0.], [1., 2.], [3., 4.], [0., 0.], [0., 0.]]],
+            [[[0., 0.], [5., 6.], [7., 8.], [0., 0.], [0., 0.]]],
+        ]);
+        data.assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn pad_runtime_pads_shape() {
+        // pads is computed as Concat(Shape(a), Shape(b)) so the
+        // simplifier classifies it as Shape(4). Exercises the
+        // `[i64; N]`-indexing branch of the codegen.
+        let device = Default::default();
+        let model: pad_runtime_pads_shape::Model = pad_runtime_pads_shape::Model::new(&device);
+
+        let data = Tensor::<2>::from_floats([[1., 2.], [3., 4.]], &device);
+        // shape_a has dims (1, 2) → Shape = [1, 2]
+        // shape_b has dims (2, 1) → Shape = [2, 1]
+        // pads = [1, 2, 2, 1]
+        let shape_a = Tensor::<2>::zeros([1, 2], &device);
+        let shape_b = Tensor::<2>::zeros([2, 1], &device);
+
+        let output = model.forward(data, shape_a, shape_b).to_data();
+        let expected = TensorData::from([
+            [0.0_f32, 0., 0., 0., 0.],
+            [0., 0., 1., 2., 0.],
+            [0., 0., 3., 4., 0.],
+            [0., 0., 0., 0., 0.],
+            [0., 0., 0., 0., 0.],
+        ]);
         output.assert_eq(&expected, true);
     }
 

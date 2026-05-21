@@ -33,10 +33,19 @@ use crate::ir::{ArgType, AttributeValue, Node, RawNode, RuntimeInputRef, TensorD
 /// Represents either a static value or a runtime argument for pad values.
 #[derive(Debug, Clone)]
 pub enum PadInput {
-    /// Static pads known at compile time as `(before, after)` pairs per dimension.
+    /// Full-rank pads known at compile time as `(before, after)` pairs.
+    /// `Vec` length equals the input tensor rank; any `axes` subset has
+    /// already been scattered into a full-rank pad list at extraction.
     Static(Vec<(usize, usize)>),
-    /// Runtime pads determined during execution - references node.inputs\[input_index\].
-    Runtime(RuntimeInputRef),
+    /// Pads determined at forward time. `input` references
+    /// `node.inputs[input_index]`. When `axes` is `Some`, the runtime
+    /// values describe only those (normalized, in-range) dimensions and
+    /// codegen scatters them into a full-rank pad list whose length is
+    /// the rank of the Pad node's data input.
+    Runtime {
+        input: RuntimeInputRef,
+        axes: Option<Vec<usize>>,
+    },
 }
 
 /// Represents either a static value or a runtime argument for constant value.
@@ -319,15 +328,18 @@ impl NodeProcessor for PadProcessor {
             if let Some(input) = node.get_input(1) {
                 match input.value() {
                     None => {
-                        if axes.is_some() {
-                            return Err(ProcessError::Custom(
-                                "Pad: runtime pads with static axes is not supported".to_string(),
-                            ));
+                        // Validate length here when statically known
+                        // (Shape(N) or Tensor with static_shape) so the
+                        // error surfaces at codegen rather than as an
+                        // opaque runtime panic. See `PadInput::Runtime`
+                        // for the codegen contract.
+                        if let Some(static_len) = input.ty.first_dim_static_len() {
+                            validate_static_runtime_pads_len(static_len, pads_len_expected)?;
                         }
-                        return Ok(PadInput::Runtime(RuntimeInputRef::new(
-                            input.name.clone(),
-                            1,
-                        )));
+                        return Ok(PadInput::Runtime {
+                            input: RuntimeInputRef::new(input.name.clone(), 1),
+                            axes,
+                        });
                     }
                     Some(tensor_data) => {
                         let raw =
@@ -352,6 +364,22 @@ impl NodeProcessor for PadProcessor {
             Err(ProcessError::Custom(
                 "Pad: pads should be given as attribute or as input".to_string(),
             ))
+        }
+
+        fn validate_static_runtime_pads_len(
+            actual: usize,
+            expected_pairs: usize,
+        ) -> Result<(), ProcessError> {
+            let expected = expected_pairs * 2;
+            if actual != expected {
+                return Err(ProcessError::InvalidAttribute {
+                    name: "pads".to_string(),
+                    reason: format!(
+                        "runtime pads length {actual} does not match 2 * num_axes ({expected})"
+                    ),
+                });
+            }
+            Ok(())
         }
 
         /// Parse i64 values as usize, rejecting negatives.
@@ -622,7 +650,7 @@ mod tests {
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
         // Check that we have runtime inputs
-        assert!(matches!(&config.pads, PadInput::Runtime(arg) if arg.name == "pads"));
+        assert!(matches!(&config.pads, PadInput::Runtime { input, .. } if input.name == "pads"));
         assert!(
             matches!(&config.constant_value, ConstantValueInput::Runtime(arg) if arg.name == "constant_value")
         );
@@ -666,7 +694,7 @@ mod tests {
         let config = processor.extract_config(&node, 16).unwrap();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
-        assert!(matches!(&config.pads, PadInput::Runtime(arg) if arg.name == "pads"));
+        assert!(matches!(&config.pads, PadInput::Runtime { input, .. } if input.name == "pads"));
         assert!(
             matches!(&config.constant_value, ConstantValueInput::Static(v) if (*v - 2.5).abs() < 1e-6)
         );

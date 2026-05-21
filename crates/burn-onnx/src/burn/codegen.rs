@@ -107,6 +107,20 @@ pub fn f64_to_tokens(val: f64) -> TokenStream {
     }
 }
 
+/// Round-trip a runtime tensor expression through host memory into a
+/// `Vec<i64>`. Used by ops (Pad, Tile, Squeeze, Unsqueeze, Scatter*)
+/// that need to inspect the values of a 1-D runtime input at forward()
+/// time. The `convert::<i64>()` step accepts any int dtype.
+pub fn tensor_to_i64_vec(value: &TokenStream) -> TokenStream {
+    quote! {
+        #value
+            .to_data()
+            .convert::<i64>()
+            .into_vec::<i64>()
+            .unwrap()
+    }
+}
+
 /// Padding configuration for 1D operations.
 ///
 /// Converts PaddingConfig1d to Rust code tokens.

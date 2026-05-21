@@ -554,8 +554,8 @@ reason = "Attention: past_[key,value] and present_[key,value] must be used toget
 tracking = "#314"
 
 [test_attention_4d_diff_heads_mask4d_padded_kv_expanded]
-status = "skip-codegen"
-reason = "Custom(\"Pad: axes input is not supported\")"
+status = "skip-compile"
+reason = "mask_where expects Tensor<D, Bool> but generated code passes Tensor<D, Int>"
 tracking = "#314"
 
 [test_attention_4d_diff_heads_sizes]
@@ -1748,7 +1748,7 @@ tracking = "#314"
 
 [test_center_crop_pad_crop_axes_chw_expanded]
 status = "skip-codegen"
-reason = "Custom(\"Pad: axes input is not supported\")"
+reason = "max: unsupported input types"
 tracking = "#314"
 
 [test_center_crop_pad_crop_axes_hwc]
@@ -1758,7 +1758,7 @@ tracking = "#314"
 
 [test_center_crop_pad_crop_axes_hwc_expanded]
 status = "skip-codegen"
-reason = "Custom(\"Pad: axes input is not supported\")"
+reason = "max: unsupported input types"
 tracking = "#314"
 
 [test_center_crop_pad_crop_expanded]
@@ -1773,7 +1773,7 @@ tracking = "#314"
 
 [test_center_crop_pad_crop_negative_axes_hwc_expanded]
 status = "skip-codegen"
-reason = "Custom(\"Pad: axes input is not supported\")"
+reason = "max: unsupported input types"
 tracking = "#314"
 
 [test_center_crop_pad_pad]
@@ -1943,18 +1943,16 @@ status = "pass"
 status = "pass"
 
 [test_constant_pad]
-status = "skip-codegen"
-reason = "Runtime pads are not supported in burn-onnx"
-tracking = "#314"
+status = "pass"
 
 [test_constant_pad_axes]
 status = "skip-codegen"
-reason = "Custom(\"Pad: axes input is not supported\")"
+reason = "Custom(\"Pad: runtime axes input is not supported\")"
 tracking = "#314"
 
 [test_constant_pad_negative_axes]
 status = "skip-codegen"
-reason = "Custom(\"Pad: axes input is not supported\")"
+reason = "Custom(\"Pad: runtime axes input is not supported\")"
 tracking = "#314"
 
 [test_constantofshape_float_ones]
@@ -2286,9 +2284,7 @@ reason = "burn-onnx emits uncompilable generated code (references alloc::* from 
 tracking = "tracel-ai/burn-onnx"
 
 [test_edge_pad]
-status = "skip-codegen"
-reason = "Runtime pads are not supported in burn-onnx"
-tracking = "#314"
+status = "pass"
 
 [test_einsum_batch_diagonal]
 status = "skip-codegen"
@@ -4868,9 +4864,7 @@ reason = "reduce_sum op family comparison failure"
 tracking = "#311"
 
 [test_reflect_pad]
-status = "skip-codegen"
-reason = "Runtime pads are not supported in burn-onnx"
-tracking = "#314"
+status = "pass"
 
 [test_regex_full_match_basic]
 status = "skip-codegen"
