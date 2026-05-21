@@ -6,7 +6,7 @@
 //!
 //! ## Opset Versions
 //! - **Opset 11**: Changed pads from attribute to input for dynamic padding support. Added mode attribute (constant/reflect/edge).
-//! - **Opset 13**: Added optional axes input to specify which axes to pad. Static axes is expanded to a full-rank pads vector at config extraction; runtime axes is carried through to codegen as [`AxesInput::Runtime`].
+//! - **Opset 13**: Added optional axes input to specify which axes to pad.
 //! - **Opset 18**: Added optional constant_value input as alternative to attribute.
 //! - **Opset 19**: Added antialiasing support for edge mode (not supported in this implementation).
 //!
@@ -289,14 +289,10 @@ impl NodeProcessor for PadProcessor {
                 }
             };
 
-            // Opset 18+ introduces an optional `axes` input at index 3.
-            // When present, `pads` describes only those axes (length
-            // 2*len(axes)) rather than every dimension. Static axes
-            // gets normalized eagerly; runtime axes is passed through
-            // to codegen as a reference and normalized at forward()
-            // time. `pads_len_expected` is the number of `(before,
-            // after)` pairs we expect: known for static-axes (axes.len)
-            // and for no-axes (input_dim), unknown when axes is runtime.
+            // Opset 18+ adds an optional `axes` input at index 3. When
+            // present, `pads` describes only those axes (length
+            // 2*len(axes)). Static axes is normalized eagerly; runtime
+            // axes is deferred to forward() time.
             let axes = match node.get_input(3) {
                 None => None,
                 Some(input) => match input.value() {
@@ -316,33 +312,37 @@ impl NodeProcessor for PadProcessor {
                     }
                 },
             };
-            let pads_len_expected = match &axes {
-                Some(AxesInput::Static(a)) => Some(a.len()),
-                Some(AxesInput::Runtime(_)) => None,
-                None => Some(input_dim),
-            };
+
+            // Resolve the static-side `(expected_pad_pairs, axes_subset)`
+            // pair for the static-pads branches, or surface the
+            // unsupported static-pads + runtime-axes combination.
+            fn static_axes_view(
+                axes: &Option<AxesInput>,
+                input_dim: usize,
+                source: &str,
+            ) -> Result<(usize, Option<Vec<usize>>), ProcessError> {
+                match axes {
+                    Some(AxesInput::Static(a)) => Ok((a.len(), Some(a.clone()))),
+                    Some(AxesInput::Runtime(_)) => Err(ProcessError::InvalidAttribute {
+                        name: "pads".to_string(),
+                        reason: format!(
+                            "runtime axes combined with {source} pads is not supported"
+                        ),
+                    }),
+                    None => Ok((input_dim, None)),
+                }
+            }
 
             // Check for pads attribute first (takes precedence)
             // "paddings" in opset 1, "pads" in opset 2+
             for (key, value) in node.attrs.iter() {
                 if key.as_str() == "pads" || key.as_str() == "paddings" {
                     let flat = parse_i64s_as_usize(&value.clone().into_i64s(), "pads")?;
-                    let static_axes = match &axes {
-                        Some(AxesInput::Static(a)) => Some(a.as_slice()),
-                        Some(AxesInput::Runtime(_)) => {
-                            return Err(ProcessError::Custom(
-                                "Pad: runtime axes combined with attribute pads is not \
-                                 supported"
-                                    .to_string(),
-                            ));
-                        }
-                        None => None,
-                    };
-                    let expected = pads_len_expected.expect("axes covered above");
+                    let (expected, static_axes) = static_axes_view(&axes, input_dim, "attribute")?;
                     validate_pads_len_with_axes(&flat, expected, "pads")?;
                     let pairs = onnx_pads_to_pairs(&flat);
                     let full = match static_axes {
-                        Some(a) => expand_axes_pads_to_full(&pairs, a, input_dim),
+                        Some(a) => expand_axes_pads_to_full(&pairs, &a, input_dim),
                         None => pairs,
                     };
                     return Ok(PadInput::Static(full));
@@ -357,10 +357,15 @@ impl NodeProcessor for PadProcessor {
                         // (Shape(N) or Tensor with static_shape) so the
                         // error surfaces at codegen rather than as an
                         // opaque runtime panic. Skipped when axes is
-                        // runtime — length depends on a tensor we
-                        // haven't seen yet.
+                        // runtime: length depends on a tensor we haven't
+                        // seen yet.
+                        let expected = match &axes {
+                            Some(AxesInput::Static(a)) => Some(a.len()),
+                            Some(AxesInput::Runtime(_)) => None,
+                            None => Some(input_dim),
+                        };
                         if let (Some(static_len), Some(expected)) =
-                            (input.ty.first_dim_static_len(), pads_len_expected)
+                            (input.ty.first_dim_static_len(), expected)
                         {
                             validate_static_runtime_pads_len(static_len, expected)?;
                         }
@@ -378,22 +383,11 @@ impl NodeProcessor for PadProcessor {
                                     actual: e.to_string(),
                                 })?;
                         let flat = parse_i64s_as_usize(&raw, "pads")?;
-                        let static_axes = match &axes {
-                            Some(AxesInput::Static(a)) => Some(a.as_slice()),
-                            Some(AxesInput::Runtime(_)) => {
-                                return Err(ProcessError::Custom(
-                                    "Pad: runtime axes combined with static pads is not \
-                                     supported"
-                                        .to_string(),
-                                ));
-                            }
-                            None => None,
-                        };
-                        let expected = pads_len_expected.expect("axes covered above");
+                        let (expected, static_axes) = static_axes_view(&axes, input_dim, "static")?;
                         validate_pads_len_with_axes(&flat, expected, "pads")?;
                         let pairs = onnx_pads_to_pairs(&flat);
                         let full = match static_axes {
-                            Some(a) => expand_axes_pads_to_full(&pairs, a, input_dim),
+                            Some(a) => expand_axes_pads_to_full(&pairs, &a, input_dim),
                             None => pairs,
                         };
                         return Ok(PadInput::Static(full));
@@ -810,10 +804,9 @@ mod tests {
 
     #[test]
     fn test_pad_config_static_pads_with_runtime_axes_rejected() {
-        // Static pads + runtime axes is not supported: the pad pairs
-        // can't be folded onto specific dimensions until forward() time,
-        // but we lose the static-pads representation if we keep them
-        // selective. The combination is rare; reject it explicitly.
+        // Static pads + runtime axes is not supported: keeping pads
+        // selective through codegen would lose the static-pads
+        // representation. Reject explicitly.
         let mut node = create_test_node(None, Some(vec![0, 0, 1, 1]), None, Some(0.0), None, 2)
             .build_with_graph_data(16);
         node.inputs.push(Argument {
@@ -828,18 +821,19 @@ mod tests {
         });
         let processor = PadProcessor;
         let result = processor.extract_config(&node, 16);
-        assert!(matches!(result, Err(ProcessError::Custom(_))));
+        assert!(matches!(
+            result,
+            Err(ProcessError::InvalidAttribute { name, .. }) if name == "pads"
+        ));
     }
 
     #[test]
     fn test_pad_config_runtime_pads_with_runtime_axes() {
-        // Both pads and axes are runtime inputs (opset 18+ pattern used
-        // by test_constant_pad_axes / test_constant_pad_negative_axes).
         let builder = TestNodeBuilder::new(NodeType::Pad, "test_pad")
             .input_tensor_f32("data", 4, None)
-            .input_tensor_i64("pads", 1, None) // runtime
-            .input_scalar_tensor_f32("value", None) // runtime
-            .input_tensor_i64("axes", 1, None) // runtime
+            .input_tensor_i64("pads", 1, None)
+            .input_scalar_tensor_f32("value", None)
+            .input_tensor_i64("axes", 1, None)
             .output_tensor_f32("output", 4, None);
         let node = builder.build_with_graph_data(18);
         let processor = PadProcessor;

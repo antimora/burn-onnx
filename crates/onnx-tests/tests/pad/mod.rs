@@ -150,6 +150,65 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "out of range for rank 4")]
+    fn pad_runtime_axes_out_of_range() {
+        let device = Default::default();
+        let model: pad_runtime_axes::Model = pad_runtime_axes::Model::new(&device);
+        let input = Tensor::<4>::from_data(
+            TensorData::from([[[[1.0_f32, 2.], [3., 4.]]], [[[5., 6.], [7., 8.]]]]),
+            &device,
+        );
+        let pads = Tensor::<1, burn::tensor::Int>::from_ints([1_i64, 1, 2, 0], &device);
+        let bad_axes = Tensor::<1, burn::tensor::Int>::from_ints([7_i64, 0], &device);
+        let _ = model.forward(input, pads, bad_axes);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of range for rank 4")]
+    fn pad_runtime_axes_negative_overflow() {
+        let device = Default::default();
+        let model: pad_runtime_axes::Model = pad_runtime_axes::Model::new(&device);
+        let input = Tensor::<4>::from_data(
+            TensorData::from([[[[1.0_f32, 2.], [3., 4.]]], [[[5., 6.], [7., 8.]]]]),
+            &device,
+        );
+        let pads = Tensor::<1, burn::tensor::Int>::from_ints([1_i64, 1, 2, 0], &device);
+        // -5 + 4 (rank) = -1, still out of range.
+        let bad_axes = Tensor::<1, burn::tensor::Int>::from_ints([-5_i64, 0], &device);
+        let _ = model.forward(input, pads, bad_axes);
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate axis")]
+    fn pad_runtime_axes_duplicate() {
+        let device = Default::default();
+        let model: pad_runtime_axes::Model = pad_runtime_axes::Model::new(&device);
+        let input = Tensor::<4>::from_data(
+            TensorData::from([[[[1.0_f32, 2.], [3., 4.]]], [[[5., 6.], [7., 8.]]]]),
+            &device,
+        );
+        let pads = Tensor::<1, burn::tensor::Int>::from_ints([1_i64, 1, 2, 0], &device);
+        // 2 and -2 both normalize to dim 2 on rank 4.
+        let dup_axes = Tensor::<1, burn::tensor::Int>::from_ints([2_i64, -2], &device);
+        let _ = model.forward(input, pads, dup_axes);
+    }
+
+    #[test]
+    #[should_panic(expected = "runtime pads length mismatch")]
+    fn pad_runtime_axes_pads_length_mismatch() {
+        let device = Default::default();
+        let model: pad_runtime_axes::Model = pad_runtime_axes::Model::new(&device);
+        let input = Tensor::<4>::from_data(
+            TensorData::from([[[[1.0_f32, 2.], [3., 4.]]], [[[5., 6.], [7., 8.]]]]),
+            &device,
+        );
+        // axes.len() == 2 -> pads must be length 4; give 3 instead.
+        let pads = Tensor::<1, burn::tensor::Int>::from_ints([1_i64, 1, 2], &device);
+        let axes = Tensor::<1, burn::tensor::Int>::from_ints([2_i64, 0], &device);
+        let _ = model.forward(input, pads, axes);
+    }
+
+    #[test]
     fn pad_runtime_pads_shape() {
         // pads is computed as Concat(Shape(a), Shape(b)) so the
         // simplifier classifies it as Shape(4). Exercises the
