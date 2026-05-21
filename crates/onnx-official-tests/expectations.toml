@@ -1946,14 +1946,10 @@ status = "pass"
 status = "pass"
 
 [test_constant_pad_axes]
-status = "skip-codegen"
-reason = "Custom(\"Pad: runtime axes input is not supported\")"
-tracking = "#314"
+status = "pass"
 
 [test_constant_pad_negative_axes]
-status = "skip-codegen"
-reason = "Custom(\"Pad: runtime axes input is not supported\")"
-tracking = "#314"
+status = "pass"
 
 [test_constantofshape_float_ones]
 status = "skip-compile"

@@ -33,6 +33,7 @@ impl NodeCodegen for onnx_ir::pad::PadNode {
                 };
                 runtime_pads_expr(
                     scope,
+                    &self.inputs,
                     &self.inputs[runtime_ref.input_index],
                     axes,
                     input_rank,
@@ -61,17 +62,31 @@ impl NodeCodegen for onnx_ir::pad::PadNode {
 /// contract (ONNX `pads` layout vs. burn's `(before, after)` per dim).
 fn runtime_pads_expr(
     scope: &mut ScopeAtPosition<'_>,
+    inputs: &[Argument],
     pads_arg: &Argument,
-    axes: &Option<Vec<usize>>,
+    axes: &Option<onnx_ir::pad::AxesInput>,
     input_rank: usize,
 ) -> TokenStream {
     let pads_value = scope.arg(pads_arg);
-    let expected_len = match axes {
+    // Runtime axes carries an unknown number of pad pairs; the rest of
+    // the static-length checks happen at extract-config time.
+    if let Some(onnx_ir::pad::AxesInput::Runtime(axes_ref)) = axes {
+        let axes_arg = &inputs[axes_ref.input_index];
+        let axes_value = scope.arg(axes_arg);
+        return runtime_axes_scatter(&pads_value, pads_arg, &axes_value, axes_arg, input_rank);
+    }
+
+    let static_axes: Option<&[usize]> = match axes {
+        Some(onnx_ir::pad::AxesInput::Static(a)) => Some(a.as_slice()),
+        Some(onnx_ir::pad::AxesInput::Runtime(_)) => unreachable!("handled above"),
+        None => None,
+    };
+    let expected_len = match static_axes {
         Some(a) => 2 * a.len(),
         None => 2 * input_rank,
     };
 
-    let inline_pairs = |source: &TokenStream| match axes {
+    let inline_pairs = |source: &TokenStream| match static_axes {
         None => full_rank_pairs(source, input_rank),
         Some(axes_vec) => axes_pairs(source, axes_vec, input_rank),
     };
@@ -94,6 +109,66 @@ fn runtime_pads_expr(
             }
         }
         other => panic!("Pad: runtime pads input must be a tensor or shape, got {other:?}"),
+    }
+}
+
+/// Runtime-axes scatter: both `pads` values and `axes` indices arrive at
+/// forward() time. Codegen emits a host round-trip for each, normalizes
+/// negative axis indices (`a + rank`), and scatters the pad pairs into
+/// a full-rank `Vec<(usize, usize)>` (default `(0, 0)`).
+fn runtime_axes_scatter(
+    pads_value: &TokenStream,
+    pads_arg: &Argument,
+    axes_value: &TokenStream,
+    axes_arg: &Argument,
+    input_rank: usize,
+) -> TokenStream {
+    let pads_to_vec = match &pads_arg.ty {
+        ArgType::Tensor(_) => crate::burn::codegen::tensor_to_i64_vec(pads_value),
+        ArgType::Shape(_) => quote! {
+            #pads_value.iter().copied().collect::<alloc::vec::Vec<i64>>()
+        },
+        other => {
+            panic!("Pad: runtime pads input must be a tensor or shape, got {other:?}")
+        }
+    };
+    let axes_to_vec = match &axes_arg.ty {
+        ArgType::Tensor(_) => crate::burn::codegen::tensor_to_i64_vec(axes_value),
+        ArgType::Shape(_) => quote! {
+            #axes_value.iter().copied().collect::<alloc::vec::Vec<i64>>()
+        },
+        other => panic!("Pad: runtime axes input must be a tensor or shape, got {other:?}"),
+    };
+    let before_pad = pad_i64_to_usize_expr(quote! { __raw_pads[__i] }, quote! { __i });
+    let after_pad = pad_i64_to_usize_expr(quote! { __raw_pads[__n + __i] }, quote! { __n + __i });
+    quote! {
+        {
+            let __raw_pads: alloc::vec::Vec<i64> = #pads_to_vec;
+            let __raw_axes: alloc::vec::Vec<i64> = #axes_to_vec;
+            let __n = __raw_axes.len();
+            assert_eq!(
+                __raw_pads.len(), 2 * __n,
+                "Pad: runtime pads length mismatch (expected 2 * axes.len() = {}, got {})",
+                2 * __n, __raw_pads.len(),
+            );
+            let mut __pads: alloc::vec::Vec<(usize, usize)> =
+                alloc::vec![(0usize, 0usize); #input_rank];
+            for __i in 0..__n {
+                let __raw_axis = __raw_axes[__i];
+                let __dim_signed = if __raw_axis < 0 {
+                    __raw_axis + (#input_rank as i64)
+                } else {
+                    __raw_axis
+                };
+                assert!(
+                    __dim_signed >= 0 && (__dim_signed as usize) < #input_rank,
+                    "Pad: axis {} out of range for rank {}", __raw_axis, #input_rank,
+                );
+                let __dim = __dim_signed as usize;
+                __pads[__dim] = (#before_pad, #after_pad);
+            }
+            __pads
+        }
     }
 }
 
@@ -175,7 +250,9 @@ mod tests {
     use burn::tensor::DType;
     use insta::assert_snapshot;
     use onnx_ir::ir::RuntimeInputRef;
-    use onnx_ir::pad::{ConstantValueInput, PadConfig, PadInput, PadMode, PadNode, PadNodeBuilder};
+    use onnx_ir::pad::{
+        AxesInput, ConstantValueInput, PadConfig, PadInput, PadMode, PadNode, PadNodeBuilder,
+    };
 
     fn create_pad_node(
         name: &str,
@@ -477,7 +554,7 @@ mod tests {
         let config = PadConfig {
             pads: PadInput::Runtime {
                 input: RuntimeInputRef::new("pads".to_string(), 1),
-                axes: Some(vec![2, 0]),
+                axes: Some(AxesInput::Static(vec![2, 0])),
             },
             constant_value: ConstantValueInput::Static(0.0),
             mode: PadMode::Constant,
@@ -553,7 +630,7 @@ mod tests {
         let config = PadConfig {
             pads: PadInput::Runtime {
                 input: RuntimeInputRef::new("pads".to_string(), 1),
-                axes: Some(vec![2, 0]),
+                axes: Some(AxesInput::Static(vec![2, 0])),
             },
             constant_value: ConstantValueInput::Static(0.0),
             mode: PadMode::Constant,
@@ -696,6 +773,94 @@ mod tests {
                         ]
                     },
                     burn::tensor::ops::PadMode::Reflect,
+                );
+            output
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_pad_runtime_pads_with_runtime_axes() {
+        let config = PadConfig {
+            pads: PadInput::Runtime {
+                input: RuntimeInputRef::new("pads".to_string(), 1),
+                axes: Some(AxesInput::Runtime(RuntimeInputRef::new(
+                    "axes".to_string(),
+                    2,
+                ))),
+            },
+            constant_value: ConstantValueInput::Static(0.0),
+            mode: PadMode::Constant,
+        };
+        let node = PadNodeBuilder::new("pad_rt_rt_axes")
+            .input_tensor("input", 4, DType::F32)
+            .input_tensor("pads", 1, DType::I64)
+            .input_tensor("axes", 1, DType::I64)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(
+            &self,
+            input: Tensor<4>,
+            pads: Tensor<1, Int>,
+            axes: Tensor<1, Int>,
+        ) -> Tensor<4> {
+            let output = input
+                .pad(
+                    {
+                        let __raw_pads: alloc::vec::Vec<i64> = pads
+                            .to_data()
+                            .convert::<i64>()
+                            .into_vec::<i64>()
+                            .unwrap();
+                        let __raw_axes: alloc::vec::Vec<i64> = axes
+                            .to_data()
+                            .convert::<i64>()
+                            .into_vec::<i64>()
+                            .unwrap();
+                        let __n = __raw_axes.len();
+                        assert_eq!(
+                            __raw_pads.len(), 2 * __n,
+                            "Pad: runtime pads length mismatch (expected 2 * axes.len() = {}, got {})",
+                            2 * __n, __raw_pads.len(),
+                        );
+                        let mut __pads: alloc::vec::Vec<(usize, usize)> = alloc::vec![
+                            (0usize, 0usize); 4usize
+                        ];
+                        for __i in 0..__n {
+                            let __raw_axis = __raw_axes[__i];
+                            let __dim_signed = if __raw_axis < 0 {
+                                __raw_axis + (4usize as i64)
+                            } else {
+                                __raw_axis
+                            };
+                            assert!(
+                                __dim_signed >= 0 && (__dim_signed as usize) < 4usize,
+                                "Pad: axis {} out of range for rank {}", __raw_axis, 4usize,
+                            );
+                            let __dim = __dim_signed as usize;
+                            __pads[__dim] = (
+                                usize::try_from(__raw_pads[__i])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw_pads[__i],
+                                            __i
+                                        )
+                                    }),
+                                usize::try_from(__raw_pads[__n + __i])
+                                    .unwrap_or_else(|_| {
+                                        panic!(
+                                            "Pad: negative pad value {} at index {}", __raw_pads[__n +
+                                            __i], __n + __i
+                                        )
+                                    }),
+                            );
+                        }
+                        __pads
+                    },
+                    burn::tensor::ops::PadMode::Constant(0f32),
                 );
             output
         }

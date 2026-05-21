@@ -7,6 +7,7 @@ include_models!(
     pad_runtime_pads,
     pad_runtime_pads_axes,
     pad_runtime_pads_shape,
+    pad_runtime_axes,
     pad_optional_constant_value,
     pad_ndim
 );
@@ -117,6 +118,35 @@ mod tests {
             [[[0., 0.], [5., 6.], [7., 8.], [0., 0.], [0., 0.]]],
         ]);
         data.assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn pad_runtime_axes() {
+        // Both pads and axes supplied at runtime. Covers the
+        // runtime-axes scatter path including negative-axis
+        // normalization (a + rank).
+        let device = Default::default();
+        let model: pad_runtime_axes::Model = pad_runtime_axes::Model::new(&device);
+
+        let input = Tensor::<4>::from_data(
+            TensorData::from([[[[1.0_f32, 2.], [3., 4.]]], [[[5., 6.], [7., 8.]]]]),
+            &device,
+        );
+        let pads = Tensor::<1, burn::tensor::Int>::from_ints([1_i64, 1, 2, 0], &device);
+        let axes = Tensor::<1, burn::tensor::Int>::from_ints([2_i64, 0], &device);
+
+        let output = model.forward(input.clone(), pads.clone(), axes).to_data();
+        let expected = TensorData::from([
+            [[[0.0_f32, 0.], [0., 0.], [0., 0.], [0., 0.], [0., 0.]]],
+            [[[0., 0.], [1., 2.], [3., 4.], [0., 0.], [0., 0.]]],
+            [[[0., 0.], [5., 6.], [7., 8.], [0., 0.], [0., 0.]]],
+        ]);
+        output.assert_eq(&expected, true);
+
+        // Negative axes: -2 == 2, -4 == 0 for rank-4 input.
+        let neg_axes = Tensor::<1, burn::tensor::Int>::from_ints([-2_i64, -4], &device);
+        let output2 = model.forward(input, pads, neg_axes).to_data();
+        output2.assert_eq(&expected, true);
     }
 
     #[test]

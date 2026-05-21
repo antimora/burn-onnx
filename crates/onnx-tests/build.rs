@@ -389,6 +389,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/pad/pad_runtime_pads.onnx")
         .input("tests/pad/pad_runtime_pads_axes.onnx")
         .input("tests/pad/pad_runtime_pads_shape.onnx")
+        .input("tests/pad/pad_runtime_axes.onnx")
         .input("tests/pad/pad_optional_constant_value.onnx")
         .input("tests/pad/pad_ndim.onnx")
         .input("tests/pow/pow.onnx")
