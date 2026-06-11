@@ -8,11 +8,16 @@ use crate::burn::{BurnImports, Field};
 use burn_store::TensorSnapshot;
 
 /// Macro to implement NodeCodegen on onnx_ir::Node by dispatching to individual node impls
+///
+/// `Node::Custom` is handled explicitly: its structural accessors (inputs/outputs)
+/// read the CustomNode's own wiring, while the codegen methods panic with a
+/// message naming the op until custom-op hooks land (see DESIGN-CUSTOM-OPS.md).
 macro_rules! impl_node_codegen_dispatch {
     ($($variant:ident),* $(,)?) => {
         impl NodeCodegen for Node {
             fn inputs(&self) -> &[Argument] {
                 match self {
+                    Node::Custom(n) => &n.inputs,
                     $(Node::$variant(n) => n.inputs(),)*
                     _ => panic!("Unsupported node type for inputs: {:?}", self),
                 }
@@ -20,6 +25,7 @@ macro_rules! impl_node_codegen_dispatch {
 
             fn outputs(&self) -> &[Argument] {
                 match self {
+                    Node::Custom(n) => &n.outputs,
                     $(Node::$variant(n) => n.outputs(),)*
                     _ => panic!("Unsupported node type for outputs: {:?}", self),
                 }
@@ -27,6 +33,11 @@ macro_rules! impl_node_codegen_dispatch {
 
             fn forward(&self, scope: &mut crate::burn::scope::ScopeAtPosition<'_>) -> TokenStream {
                 match self {
+                    Node::Custom(n) => panic!(
+                        "Custom op '{}' (node '{}') requires a registered hook; \
+                         custom op codegen hooks are not implemented yet",
+                        n, n.name
+                    ),
                     $(Node::$variant(n) => n.forward(scope),)*
                     _ => panic!("Unsupported node type for forward: {:?}", self),
                 }

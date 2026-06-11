@@ -126,6 +126,7 @@ fn make_constant_node(
     let input_name = format!("{}_const", output_name);
 
     RawNode {
+        custom_identity: None,
         node_type: NodeType::Constant,
         name: node_name.to_string(),
         inputs: vec![Argument {
@@ -406,6 +407,7 @@ mod tests {
         attrs: HashMap<String, AttributeValue>,
     ) -> RawNode {
         RawNode {
+            custom_identity: None,
             node_type,
             name: name.to_string(),
             inputs,

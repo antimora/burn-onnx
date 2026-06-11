@@ -258,6 +258,7 @@ mod tests {
         let mut nodes = vec![
             // Producer: Relu outputs a tensor with unknown shape
             RawNode {
+                custom_identity: None,
                 node_type: NodeType::Relu,
                 name: "relu1".to_string(),
                 inputs: vec![Argument::new(
@@ -272,6 +273,7 @@ mod tests {
             },
             // Consumer: Another Relu whose input has shape info from value_info
             RawNode {
+                custom_identity: None,
                 node_type: NodeType::Relu,
                 name: "relu2".to_string(),
                 inputs: vec![Argument::new(
@@ -309,6 +311,7 @@ mod tests {
         let mut nodes = vec![
             // Producer: Relu with partially known output shape
             RawNode {
+                custom_identity: None,
                 node_type: NodeType::Relu,
                 name: "relu1".to_string(),
                 inputs: vec![Argument::new(
@@ -331,6 +334,7 @@ mod tests {
             },
             // Consumer: Input has different partial shape from value_info
             RawNode {
+                custom_identity: None,
                 node_type: NodeType::Relu,
                 name: "relu2".to_string(),
                 inputs: vec![Argument::new(
@@ -364,6 +368,7 @@ mod tests {
     fn test_unsupported_ops_detected_before_inference() {
         let mut nodes = vec![
             RawNode {
+                custom_identity: None,
                 node_type: NodeType::AffineGrid,
                 name: "affine1".to_string(),
                 inputs: vec![],
@@ -371,6 +376,7 @@ mod tests {
                 attrs: Default::default(),
             },
             RawNode {
+                custom_identity: None,
                 node_type: NodeType::CenterCropPad,
                 name: "ccp1".to_string(),
                 inputs: vec![],

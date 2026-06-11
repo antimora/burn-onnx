@@ -23,7 +23,9 @@
 //! let graph = OnnxGraphBuilder::new().parse_reader(file)?;
 //! ```
 
+use std::collections::HashMap;
 use std::io::Read;
+use std::sync::Arc;
 use std::{fmt, fs::File, path::Path};
 
 use protobuf::Message;
@@ -281,9 +283,15 @@ fn build_graph_with_options(
     base_path: Option<&Path>,
     simplify: bool,
 ) -> Result<OnnxGraph, Error> {
-    let opset_version = extract_opset_version(model)?;
-    let graph_builder =
-        build_graph_builder_from_proto(&model.graph, opset_version, None, base_path, simplify)?;
+    let (opset_version, domain_opsets) = extract_opset_versions(model)?;
+    let graph_builder = build_graph_builder_from_proto(
+        &model.graph,
+        opset_version,
+        &domain_opsets,
+        None,
+        base_path,
+        simplify,
+    )?;
 
     log::debug!(" PHASE 6: Node Conversion (RawNode -> Node) ");
     Ok(graph_builder.convert_to_graph(opset_version))
@@ -300,6 +308,7 @@ fn build_graph_with_options(
 pub(crate) fn build_graph_builder_from_proto(
     graph: &crate::protos::GraphProto,
     opset_version: usize,
+    domain_opsets: &DomainOpsets,
     name_registry: Option<crate::graph_state::NameRegistry>,
     base_path: Option<&Path>,
     simplify: bool,
@@ -307,6 +316,7 @@ pub(crate) fn build_graph_builder_from_proto(
     build_graph_builder_from_proto_with_outer_scope(
         graph,
         opset_version,
+        domain_opsets,
         name_registry,
         crate::ir::OuterScopeTypes::new(),
         base_path,
@@ -329,6 +339,7 @@ pub(crate) fn build_graph_builder_from_proto(
 pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
     graph: &crate::protos::GraphProto,
     opset_version: usize,
+    domain_opsets: &DomainOpsets,
     name_registry: Option<crate::graph_state::NameRegistry>,
     outer_scope: crate::ir::OuterScopeTypes,
     base_path: Option<&Path>,
@@ -343,7 +354,7 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
     );
 
     log::debug!(" PHASE 2: Node Conversion (Proto -> RawNode) ");
-    node_conversion::convert_nodes_from_graph(graph, &state_rc, opset_version)?;
+    node_conversion::convert_nodes_from_graph(graph, &state_rc, opset_version, domain_opsets)?;
 
     // Fold constant expressions (Slice, Concat, Unsqueeze, etc.) before type inference.
     // Models exported from PyTorch often split initializer weights via Slice+Concat+Unsqueeze
@@ -405,14 +416,61 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
     ))
 }
 
-/// Extract opset version from model (default ONNX domain)
-fn extract_opset_version(model: &ModelProto) -> Result<usize, Error> {
-    model
+/// Opset version for every domain listed in the model's `opset_import`.
+///
+/// ONNX operator identity is `(domain, op_type, opset-for-that-domain)`, so
+/// custom-domain nodes must be tagged with their own domain's opset, not the
+/// default ONNX opset. Wrapped in `Arc` for cheap cloning into `DeferredGraph`
+/// (subgraphs inherit the model-level imports). The default domain ("") is
+/// always present; `extract_opset_versions` errors otherwise.
+#[derive(Debug, Clone)]
+pub(crate) struct DomainOpsets {
+    versions: Arc<HashMap<String, usize>>,
+    default_opset: usize,
+}
+
+impl DomainOpsets {
+    pub(crate) fn new(versions: HashMap<String, usize>, default_opset: usize) -> Self {
+        Self {
+            versions: Arc::new(versions),
+            default_opset,
+        }
+    }
+
+    /// Opset version for `domain`, falling back to the default-domain opset.
+    ///
+    /// Per the ONNX spec every domain a node uses must appear in
+    /// `opset_import`; the fallback is robustness against malformed exporters.
+    pub(crate) fn opset_for(&self, domain: &str) -> usize {
+        if let Some(version) = self.versions.get(domain) {
+            return *version;
+        }
+        log::warn!(
+            "Domain '{domain}' has no opset_import entry (malformed model); \
+             falling back to default-domain opset {}",
+            self.default_opset
+        );
+        self.default_opset
+    }
+}
+
+/// Extract opset versions from the model: the default ONNX domain's version
+/// plus the per-domain map for custom-domain nodes.
+fn extract_opset_versions(model: &ModelProto) -> Result<(usize, DomainOpsets), Error> {
+    let default_opset = model
         .opset_import
         .iter()
         .find(|opset| opset.domain.is_empty())
         .map(|opset| opset.version as usize)
-        .ok_or(Error::MissingOpsetVersion)
+        .ok_or(Error::MissingOpsetVersion)?;
+
+    let versions: HashMap<String, usize> = model
+        .opset_import
+        .iter()
+        .map(|opset| (opset.domain.clone(), opset.version as usize))
+        .collect();
+
+    Ok((default_opset, DomainOpsets::new(versions, default_opset)))
 }
 
 /// Trait for checking if a list of nodes is topologically sorted
@@ -449,5 +507,131 @@ impl TopologicalSortable for Vec<NodeProto> {
 
         // The vector is topologically sorted
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{ArgType, DType, Node};
+    use crate::protos::{
+        GraphProto, ModelProto, NodeProto, OperatorSetIdProto, TypeProto, ValueInfoProto,
+    };
+    use crate::protos::{TensorShapeProto, tensor_shape_proto, type_proto};
+
+    fn tensor_value_info(name: &str, dims: &[i64]) -> ValueInfoProto {
+        let mut shape = TensorShapeProto::new();
+        for d in dims {
+            let mut dim = tensor_shape_proto::Dimension::new();
+            dim.set_dim_value(*d);
+            shape.dim.push(dim);
+        }
+        let mut tensor = type_proto::Tensor::new();
+        tensor.elem_type = 1; // FLOAT
+        tensor.shape = ::protobuf::MessageField::some(shape);
+        let mut ty = TypeProto::new();
+        ty.set_tensor_type(tensor);
+        let mut vi = ValueInfoProto::new();
+        vi.name = name.to_string();
+        vi.type_ = ::protobuf::MessageField::some(ty);
+        vi
+    }
+
+    /// A single-node model: input -> <domain>::<op_type> -> output
+    fn single_node_model(domain: &str, op_type: &str, opset_imports: &[(&str, i64)]) -> Vec<u8> {
+        let mut node = NodeProto::new();
+        node.name = "the_node".to_string();
+        node.op_type = op_type.to_string();
+        node.domain = domain.to_string();
+        node.input.push("input".to_string());
+        node.output.push("output".to_string());
+
+        let mut graph = GraphProto::new();
+        graph.name = "test_graph".to_string();
+        graph.input.push(tensor_value_info("input", &[2, 3]));
+        graph.output.push(tensor_value_info("output", &[2, 3]));
+        graph.node.push(node);
+
+        let mut model = ModelProto::new();
+        model.graph = ::protobuf::MessageField::some(graph);
+        for (domain, version) in opset_imports {
+            let mut op = OperatorSetIdProto::new();
+            op.domain = domain.to_string();
+            op.version = *version;
+            model.opset_import.push(op);
+        }
+        model.write_to_bytes().unwrap()
+    }
+
+    fn parse_single_custom(bytes: &[u8]) -> crate::node::custom::CustomNode {
+        let graph = OnnxGraphBuilder::new().parse_bytes(bytes).unwrap();
+        let custom = graph
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                Node::Custom(c) => Some(c.clone()),
+                _ => None,
+            })
+            .expect("graph should contain a Custom node");
+        custom
+    }
+
+    #[test]
+    fn custom_domain_node_parses_as_custom() {
+        let bytes = single_node_model(
+            "custom.domain",
+            "FftLike",
+            &[("", 16), ("custom.domain", 2)],
+        );
+        let custom = parse_single_custom(&bytes);
+
+        assert_eq!(custom.op_type, "FftLike");
+        assert_eq!(custom.domain, "custom.domain");
+        // Domain-specific opset, not the default ONNX opset
+        assert_eq!(custom.opset, 2);
+        // Fallback inference: output type mirrors input
+        assert!(matches!(
+            &custom.outputs[0].ty,
+            ArgType::Tensor(t) if t.dtype == DType::F32 && t.rank == 2
+        ));
+    }
+
+    #[test]
+    fn unknown_default_domain_op_parses_as_custom() {
+        let bytes = single_node_model("", "TotallyUnknownOp", &[("", 16)]);
+        let custom = parse_single_custom(&bytes);
+
+        assert_eq!(custom.op_type, "TotallyUnknownOp");
+        assert_eq!(custom.domain, "");
+        assert_eq!(custom.opset, 16);
+    }
+
+    #[test]
+    fn builtin_name_in_custom_domain_stays_custom() {
+        // ONNX identity is (domain, op_type): my.domain::MatMul is NOT the
+        // built-in MatMul and must not silently get default-domain semantics.
+        let bytes = single_node_model("my.domain", "MatMul", &[("", 16), ("my.domain", 5)]);
+        let custom = parse_single_custom(&bytes);
+
+        assert_eq!(custom.op_type, "MatMul");
+        assert_eq!(custom.domain, "my.domain");
+        assert_eq!(custom.opset, 5);
+    }
+
+    #[test]
+    fn missing_domain_import_falls_back_to_default_opset() {
+        // Malformed model: the node's domain has no opset_import entry.
+        let bytes = single_node_model("no.import.domain", "SomeOp", &[("", 16)]);
+        let custom = parse_single_custom(&bytes);
+
+        assert_eq!(custom.opset, 16);
+    }
+
+    #[test]
+    fn builtin_op_still_resolves_normally() {
+        let bytes = single_node_model("", "Relu", &[("", 16)]);
+        let graph = OnnxGraphBuilder::new().parse_bytes(&bytes).unwrap();
+        assert!(graph.nodes.iter().any(|n| matches!(n, Node::Relu(_))));
+        assert!(!graph.nodes.iter().any(|n| matches!(n, Node::Custom(_))));
     }
 }

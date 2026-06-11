@@ -44,6 +44,8 @@ pub struct DeferredGraph {
     pub proto: Arc<GraphProto>,
     /// The opset version to use when building the subgraph
     pub opset_version: usize,
+    /// Per-domain opset versions (inherited from the model's opset_import)
+    pub(crate) domain_opsets: crate::pipeline::DomainOpsets,
     /// Name registry for unique node naming across subgraphs
     pub name_registry: Option<crate::graph_state::NameRegistry>,
     /// Base path for resolving external tensor data (inherited from parent graph)
@@ -69,6 +71,7 @@ impl DeferredGraph {
         crate::pipeline::build_graph_builder_from_proto_with_outer_scope(
             &self.proto,
             self.opset_version,
+            &self.domain_opsets,
             self.name_registry.clone(),
             outer_scope,
             self.base_path.as_deref(),
@@ -129,6 +132,127 @@ pub(crate) enum AttributeValue {
 }
 
 pub type Attributes = HashMap<String, AttributeValue>;
+
+/// Scalar/tensor attribute values exposed to custom-op hooks.
+///
+/// Deliberately a separate enum from the internal `AttributeValue`: it has no
+/// graph variants (subgraph custom hooks are out of scope for v1) and no
+/// `Rc`-backed state, so types embedding it stay `Send + Sync`.
+#[derive(Debug, Clone)]
+enum PublicAttributeValue {
+    Float32(f32),
+    Float32s(Vec<f32>),
+    Int64(i64),
+    Int64s(Vec<i64>),
+    String(String),
+    Strings(Vec<String>),
+    Tensor(TensorData),
+    Tensors(Vec<TensorData>),
+}
+
+/// Read-only, owned view of a node's ONNX attributes for custom ops.
+///
+/// Exposes typed getters so the internal `AttributeValue` enum (which carries
+/// crate-private graph variants) stays private. Graph-valued attributes
+/// (`GRAPH` / `GRAPHS`) are not exposed.
+#[derive(Debug, Clone, Default)]
+pub struct PublicAttributesOwned(HashMap<String, PublicAttributeValue>);
+
+impl PublicAttributesOwned {
+    /// Snapshot the internal attribute map, dropping graph-valued attributes.
+    pub(crate) fn from_internal(attrs: &Attributes) -> Self {
+        let map = attrs
+            .iter()
+            .filter_map(|(name, value)| {
+                let public = match value {
+                    AttributeValue::Float32(v) => PublicAttributeValue::Float32(*v),
+                    AttributeValue::Float32s(v) => PublicAttributeValue::Float32s(v.clone()),
+                    AttributeValue::Int64(v) => PublicAttributeValue::Int64(*v),
+                    AttributeValue::Int64s(v) => PublicAttributeValue::Int64s(v.clone()),
+                    AttributeValue::String(v) => PublicAttributeValue::String(v.clone()),
+                    AttributeValue::Strings(v) => PublicAttributeValue::Strings(v.clone()),
+                    AttributeValue::Tensor(v) => PublicAttributeValue::Tensor(v.clone()),
+                    AttributeValue::Tensors(v) => PublicAttributeValue::Tensors(v.clone()),
+                    AttributeValue::DeferredGraph(_)
+                    | AttributeValue::DeferredGraphs(_)
+                    | AttributeValue::Graph(_)
+                    | AttributeValue::Graphs(_) => return None,
+                };
+                Some((name.clone(), public))
+            })
+            .collect();
+        Self(map)
+    }
+
+    /// Get an INT attribute.
+    pub fn get_i64(&self, name: &str) -> Option<i64> {
+        match self.0.get(name)? {
+            PublicAttributeValue::Int64(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Get an INTS attribute.
+    pub fn get_i64s(&self, name: &str) -> Option<&[i64]> {
+        match self.0.get(name)? {
+            PublicAttributeValue::Int64s(v) => Some(v.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Get a FLOAT attribute.
+    pub fn get_f32(&self, name: &str) -> Option<f32> {
+        match self.0.get(name)? {
+            PublicAttributeValue::Float32(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Get a FLOATS attribute.
+    pub fn get_f32s(&self, name: &str) -> Option<&[f32]> {
+        match self.0.get(name)? {
+            PublicAttributeValue::Float32s(v) => Some(v.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Get a STRING attribute.
+    pub fn get_string(&self, name: &str) -> Option<&str> {
+        match self.0.get(name)? {
+            PublicAttributeValue::String(v) => Some(v.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Get a STRINGS attribute.
+    pub fn get_strings(&self, name: &str) -> Option<&[String]> {
+        match self.0.get(name)? {
+            PublicAttributeValue::Strings(v) => Some(v.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Get a TENSOR attribute.
+    pub fn get_tensor(&self, name: &str) -> Option<&TensorData> {
+        match self.0.get(name)? {
+            PublicAttributeValue::Tensor(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Get a TENSORS attribute.
+    pub fn get_tensors(&self, name: &str) -> Option<&[TensorData]> {
+        match self.0.get(name)? {
+            PublicAttributeValue::Tensors(v) => Some(v.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Iterate over the attribute names present on the node.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.0.keys().map(String::as_str)
+    }
+}
 
 impl AttributeValue {
     pub fn into_f32(self) -> f32 {
