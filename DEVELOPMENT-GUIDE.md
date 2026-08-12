@@ -964,7 +964,7 @@ impl CustomOp for FftReal {
     }
 
     fn register_imports(&self, imports: &mut Imports<'_>) {
-        imports.register("my_crate::ops");           // emitted as `use my_crate::ops;`
+        imports.register("crate::ops");              // emitted as `use crate::ops;`
     }
 }
 
@@ -977,12 +977,73 @@ fn main() {
 }
 ```
 
-The runtime function (`my_crate::ops::fft_real` above) lives in your crate and
+The runtime function (`ops::fft_real` above) lives in your crate and
 takes/returns Burn tensors. The generated `forward` runs inside the model
 struct, so emitted code may also reference `&self.device`.
 
+#### How emitted paths resolve
+
+The generated model is `include!`-ed into YOUR crate, so paths in emitted code
+resolve from there:
+
+- Function in the importing crate itself: use a `crate::...` path (e.g.
+  `crate::ops::fft_real`), or register an import of a `crate::...` module and
+  call through it, as the example above does.
+- Function in a dependency: use the dependency's crate name
+  (`fft_kernels::fft_real`).
+
+A path like `my_crate::ops::...` only works when `my_crate` is literally the
+name of a dependency; for your own crate it fails to resolve inside the
+generated file.
+
+#### What `ctx.arg` produces (types in generated code)
+
+Generated code is monomorphic over the `burn::prelude` aliases (`Tensor<N>`,
+`Device`); there is no `B: Backend` parameter. Your runtime function
+signatures must match this mapping:
+
+| Input `ArgType` | Value type in generated code |
+|---|---|
+| `Tensor` (float, rank N) | `Tensor<N>` |
+| `Tensor` (int/uint, rank N) | `Tensor<N, Int>` |
+| `Tensor` (bool, rank N) | `Tensor<N, Bool>` |
+| `ScalarTensor` | `Tensor<1>` (or `Tensor<1, Int>` / `Tensor<1, Bool>`) |
+| `ScalarNative` | native scalar: `f32`, `i64`, `bool`, `half::f16`, ... |
+| `Shape(N)` | `[i64; N]` |
+
+`ctx.arg` returns an owned value for on-device types (inserting `.clone()`
+automatically when the tensor is used again later) and a bare identifier for
+host values (`ScalarNative`, `Shape`).
+
+Outputs: bind one local per output, named `arg_to_ident(&node.outputs[i])`.
+Downstream nodes find your results by those names. Single output:
+`let #out = ...;`. Multiple outputs: destructure,
+`let (#out0, #out1) = ...;`.
+
+In `infer_output_types`, populate `static_shape` on returned tensor types
+whenever it is computable from the inputs and attributes: downstream
+shape-dependent ops (Reshape, Expand, Slice folding) degrade without it.
+
+#### Discovering a model's custom ops, and iterating
+
+The fastest way to see what you need to implement: run `ModelGen` with NO
+hooks registered. The parse fails with a summary listing every custom
+`(domain, op_type)` pair, its usage count, and its opset - that list is your
+implementation TODO. Hooks with an out-of-range `opset_range` show up the
+same way.
+
+While iterating on `forward`, compile errors point into the generated file
+under `$OUT_DIR/<out_dir>/<model>.rs` - open it to see your emitted code in
+context. `ModelGen::development(true)` additionally writes `<model>.onnx.txt`
+and `<model>.graph.txt` debug dumps next to it.
+
 Notes:
 
+- `infer_output_types` and `forward` run in different phases, so both end up
+  reading the same attributes. Factor the parsing into one helper the two
+  methods share, e.g. `fn parse_config(node: &CustomNode) -> Result<Config,
+  ProcessError>`: validation errors surface at parse time with the friendly
+  summary, and `forward` reuses the same code path.
 - Consumers' output preferences are not consulted for custom ops; the hook is
   the sole authority on its output types.
 - A constant input still produces a zero-initialized `Param` field in the
@@ -1028,8 +1089,10 @@ impl OpOverride for MyMatMul {
         let lhs = ctx.arg(&mm.inputs[0]);
         let rhs = ctx.arg(&mm.inputs[1]);
         let out = arg_to_ident(&mm.outputs[0]);
+        // crate:: = the importing crate; use a dependency name for kernels
+        // that live in another crate.
         Ok(quote! {
-            let #out = my_crate::kernels::custom_matmul(#lhs, #rhs);
+            let #out = crate::kernels::custom_matmul(#lhs, #rhs);
         })
     }
 }

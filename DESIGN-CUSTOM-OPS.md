@@ -3,10 +3,15 @@
 Design document for [issue #23](https://github.com/tracel-ai/burn-onnx/issues/23):
 "Add a way to implement custom function for operators not supported in ONNX format".
 
-Status: draft v2, pre-implementation. Verified against the codebase at `846b2452`.
-File:line references throughout are survey notes against that pre-implementation
-tree; the implementation moved many of them. "Implementation note/correction"
-blocks record where the landed code deviates.
+Status: implemented (branch `custom-op-hooks`, design v2 plus the revisions
+below). This document is the design record: the rationale, the alternatives
+considered, and where the landed code deviates ("Implementation
+note/correction" blocks). **The maintained user-facing reference - worked
+examples, type mappings, iteration workflow - is the "Custom Operators and
+Overrides" section of `DEVELOPMENT-GUIDE.md`; when this document and that one
+disagree, that one is right.** File:line references are survey notes against
+the pre-implementation tree at `846b2452`; the implementation moved many of
+them.
 
 Post-implementation review revisions (2026-08-12):
 
@@ -472,7 +477,7 @@ impl OnnxGraphBuilder {
 ```
 
 When `custom_op_inference` is `None`, `PipelineHooks` wraps a no-op inference
-that always returns `Ok(None)` / `NoHook`, so behavior for models with no custom
+that always returns `Ok(None)` / `Missing(NoHook)`, so behavior for models with no custom
 ops is unchanged. The global singleton registry is never mutated after init, and
 nothing new is allocated per build beyond the single processor.
 
@@ -488,11 +493,21 @@ A narrow, object-safe interface defined in `onnx-ir` and implemented by
 the internal `RawNode`:
 
 ```rust
-/// Coverage answer for the pre-pass (5.4), with enough detail for diagnostics.
+/// Inclusive opset range a hook supports (also used by CustomOp::opset_range).
+pub struct OpsetRange { pub min: usize, pub max: Option<usize> }  // + contains()
+
+/// Why a custom op is not covered.
+#[non_exhaustive]
+pub enum MissingReason {
+    NoHook,
+    OpsetMismatch { supported: OpsetRange },
+}
+
+/// Coverage answer for the pre-pass (5.4).
+#[non_exhaustive]
 pub enum HookCoverage {
     Covered,
-    NoHook,
-    OpsetMismatch { supported_min: usize, supported_max: Option<usize> },
+    Missing(MissingReason),
 }
 
 pub trait CustomOpInference: Send + Sync {
@@ -500,13 +515,20 @@ pub trait CustomOpInference: Send + Sync {
     /// Used by the coverage pre-pass before type inference runs.
     fn coverage(&self, op_type: &str, domain: &str, opset: usize) -> HookCoverage;
 
-    /// Infer output types. `Ok(None)` => no hook; do default inference.
+    /// Infer output types. `Ok(None)` => no hook is registered for this node.
+    /// May be called more than once per node (fixed-point inference loop).
     fn infer(&self, node: &CustomNode) -> Result<Option<Vec<ArgType>>, ProcessError>;
 }
 ```
 
 The `burn-onnx` implementation dispatches to the matching user
-`CustomOp::infer_output_types`, after checking `opset_range()`.
+`CustomOp::infer_output_types`, after checking `opset_range()`. The
+`Covered | Missing(reason)` shape (a review revision from the flat
+`Covered / NoHook / OpsetMismatch`) makes a "missing but covered" diagnostic
+unrepresentable, and the contract is enforced: because the coverage pre-pass
+runs on the whole graph before inference, a hook answering `Covered` and then
+returning `Ok(None)` from `infer` is reported as a contract-violation error,
+never silently substituted with the fallback guess.
 
 ### 4.6 Public extension surface (onnx-ir side)
 
@@ -623,7 +645,8 @@ pub struct Imports<'a> {
 }
 
 impl<'a> Imports<'a> {
-    /// Register an import path, e.g. `use my_crate::ops;`.
+    /// Register an import path, e.g. `use crate::ops;` (resolved inside the
+    /// user's crate, where the generated file is included).
     pub fn register(&mut self, path: impl Into<String>) {
         self.inner.register(path);
     }
@@ -675,28 +698,31 @@ pub trait CustomOp: Send + Sync + 'static {
     /// ONNX domain. Empty string = default ONNX domain.
     fn domain(&self) -> &str { "" }
 
-    /// Min/max opset gate, checked against the node's domain opset by the
-    /// coverage pre-pass (5.4). Out-of-range is reported as a coverage error.
-    fn opset_range(&self) -> (usize, Option<usize>) { (1, None) }
+    /// Opset gate, checked against the node's domain opset by the coverage
+    /// pre-pass (5.4). Out-of-range is reported as a coverage error.
+    fn opset_range(&self) -> OpsetRange { OpsetRange::from_min(1) }
 
-    /// Infer output ArgTypes. Called during onnx-ir type inference.
-    /// MUST return exactly `node.outputs.len()` types; the processor rejects a
-    /// mismatch with a ProcessError (4.4). Constant inputs are readable via
+    /// Infer output ArgTypes. Called during onnx-ir type inference (possibly
+    /// more than once per node; the loop is a fixed point). MUST return
+    /// exactly `node.outputs.len()` types; the processor rejects a mismatch
+    /// with a ProcessError (4.4). Constant inputs are readable via
     /// `node.inputs[i].value()`.
     fn infer_output_types(&self, node: &CustomNode) -> Result<Vec<ArgType>, ProcessError>;
 
-    /// Generate the forward-pass code for this node.
-    fn forward(&self, node: &CustomNode, ctx: &mut CodegenContext<'_, '_>) -> TokenStream;
+    /// Generate the forward-pass code for this node. Err is reported with
+    /// the op's identity (review revision: no bare-TokenStream panic path).
+    fn forward(&self, node: &CustomNode, ctx: &mut CodegenContext<'_, '_>)
+        -> Result<TokenStream, ProcessError>;
 
     /// Optional: extra imports.
     fn register_imports(&self, _imports: &mut Imports<'_>) {}
 
     /// Optional: declare a module field (e.g. learnable params or RNG state).
-    fn field(&self, _node: &CustomNode) -> Option<Field> { None }
+    fn field(&self, _node: &CustomNode) -> Result<Option<Field>, ProcessError> { Ok(None) }
 
     /// Optional: weights/snapshot collection (parallels NodeCodegen).
     fn collect_snapshots(&self, _node: &CustomNode, _field_name: &str)
-        -> Vec<TensorSnapshot> { vec![] }
+        -> Result<Vec<TensorSnapshot>, ProcessError> { Ok(vec![]) }
 }
 ```
 
@@ -713,12 +739,13 @@ use crate::ext::Node;
 pub trait OpOverride: Send + Sync + 'static {
     fn target(&self) -> NodeType;
 
-    fn forward(&self, node: &Node, ctx: &mut CodegenContext<'_, '_>) -> TokenStream;
+    fn forward(&self, node: &Node, ctx: &mut CodegenContext<'_, '_>)
+        -> Result<TokenStream, ProcessError>;
 
     fn register_imports(&self, _imports: &mut Imports<'_>) {}
-    fn field(&self, _node: &Node) -> Option<Field> { None }
+    fn field(&self, _node: &Node) -> Result<Option<Field>, ProcessError> { Ok(None) }
     fn collect_snapshots(&self, _node: &Node, _field_name: &str)
-        -> Vec<TensorSnapshot> { vec![] }
+        -> Result<Vec<TensorSnapshot>, ProcessError> { Ok(vec![]) }
 }
 ```
 
@@ -873,9 +900,9 @@ PHASE 3  Type Inference
 
 The pass walks the `RawNode` list, and for every `node_type == NodeType::Custom`
 asks `hooks.coverage(&raw_op_type, &raw_domain, domain_opset)`. It accumulates
-all uncovered `(op_type, domain)` pairs with usage counts, distinguishing
-`NoHook` from `OpsetMismatch` (the latter reports the supported range), and if
-any exist returns a new `pipeline::Error::MissingCustomOpHooks(Vec<MissingHook>)`.
+all uncovered `(op_type, domain)` pairs with usage counts, carrying each
+`MissingReason` (`NoHook`, or `OpsetMismatch` with the hook's supported range),
+and if any exist returns `pipeline::Error::MissingCustomOpHooks(Vec<MissingHook>)`.
 Because this runs before any type inference, it is never preempted by a cascade
 error. Subgraph builds re-enter the pipeline (4.5 point 3), so a custom op
 inside an `If` branch is checked when that branch is built; its error surfaces
@@ -916,88 +943,49 @@ This replaces the current behavior of panicking at
 
 ## 6. Generated code shape
 
-### Custom op (FFT)
+Abridged real output from the `onnx-tests` custom-op fixture (three hooked
+custom ops plus an overridden Relu). Two things to notice: the model is
+monomorphic over the `burn::prelude` aliases (`Tensor<2>`, `Device`) - there
+is no `B: Backend` parameter - and emitted paths resolve inside the *user's*
+crate, because the generated file is `include!`-ed there (so same-crate
+functions are `crate::...`, not a crate-name path):
 
 ```rust
-// generated model.rs
-impl<B: Backend> Model<B> {
-    pub fn forward(&self, signal: Tensor<B, 2>) -> Tensor<B, 2> {
-        // ...
-        let fft_out = my_crate::ops::fft_real(signal, 1024_i64, 256_i64);
-        // ...
+// generated custom_ops.rs (abridged)
+use burn::prelude::*;
+use crate::custom_ops::ops;              // pushed by register_imports
+
+impl Model {
+    pub fn forward(&self, x: Tensor<2>) -> Tensor<2> {
+        let custom1_out1 = ops::scale_shift(x, 2f32, 0.5f32);          // CustomOp
+        let custom2_out1 = crate::custom_ops::ops::add_window(
+            custom1_out1,
+            &[0.25f32, 0.5f32, 0.75f32, 1f32],   // constant input inlined
+            &self.device,                        // struct device is reachable
+        );
+        let custom3_out1 = custom2_out1;                               // CustomOp
+        let relu1_out1 = crate::custom_ops::ops::my_relu(custom3_out1); // OpOverride
+        relu1_out1
     }
 }
 ```
 
-The user controls the emitted path via their `forward()` impl. They can call a
-free function, a struct method, a trait method. Imports they need are pushed
-via `register_imports`.
-
-### Override (MatMul to user kernel)
-
-```rust
-// generated model.rs
-impl<B: Backend> Model<B> {
-    pub fn forward(&self, ...) -> ... {
-        // ...
-        let mm_out = my_crate::kernels::custom_matmul(a, b);   // override
-        // ...
-    }
-}
-```
+The user controls the emitted path via their `forward()` impl: a free
+function, a struct method, a trait method. The `ArgType` to generated-Rust
+type mapping (`Tensor<N>` / `Tensor<N, Int>` / native scalars / `[i64; N]`
+shapes) and the output-binding convention are documented in
+`DEVELOPMENT-GUIDE.md`.
 
 ## 7. Example user code
 
-```rust
-// build.rs
-use burn_onnx::ModelGen;
-
-fn main() {
-    ModelGen::new()
-        .input("model.onnx")
-        .out_dir("model/")
-        .register_custom_op(FftReal)
-        .register_custom_op(FftImag)
-        .register_op_override(MyMatMul)
-        .run_from_script();
-}
-```
-
-```rust
-// src/custom_ops.rs (in user's crate)
-// Everything comes from the single curated `ext` module, including the
-// re-exported proc_macro2 / quote.
-use burn_onnx::ext::{
-    arg_to_ident, quote::quote, ArgType, CodegenContext, CustomNode, CustomOp,
-    ProcessError, TensorType,
-};
-use burn_onnx::ext::proc_macro2::TokenStream;
-
-pub struct FftReal;
-impl CustomOp for FftReal {
-    fn op_type(&self) -> &str { "FftReal" }
-    fn domain(&self)  -> &str { "custom_domain" }
-
-    fn infer_output_types(&self, node: &CustomNode) -> Result<Vec<ArgType>, ProcessError> {
-        let n_fft = node.attrs.get_i64("n_fft")
-            .ok_or_else(|| ProcessError::MissingAttribute("n_fft".into()))?;
-        let in_ty = &node.inputs[0].ty;
-        // Constant inputs (e.g. a window tensor) are readable here:
-        //   let window = node.inputs.get(1).and_then(|a| a.value());
-        // ... compute output type from input + attrs ...
-        Ok(vec![/* derived ArgType */])
-    }
-
-    fn forward(&self, node: &CustomNode, ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
-        let signal = ctx.arg(&node.inputs[0]);
-        let out    = arg_to_ident(&node.outputs[0]);
-        let n_fft  = node.attrs.get_i64("n_fft").unwrap();
-        quote! {
-            let #out = my_crate::ops::fft_real(#signal, #n_fft);
-        }
-    }
-}
-```
+Maintained in `DEVELOPMENT-GUIDE.md`, section "Custom Operators and
+Overrides": a complete `CustomOp` (attributes, constant inputs, imports), an
+`OpOverride`, the type-mapping table, the path-resolution rules, and the
+discovery/iteration workflow. A second complete, *compiled* example lives in
+`crates/onnx-tests/build.rs` (hooks) + `crates/onnx-tests/tests/custom_ops/`
+(runtime ops and the e2e test). This section previously carried its own copy
+of the example; it drifted from the landed API and was replaced by these
+pointers.
 
 ## 8. Implementation sequence
 
@@ -1097,6 +1085,34 @@ and fail with a friendly message" before any codegen capability lands.
 9. Static-method vs instance-based traits: resolved in revision 2 in favor of
    `&self` (object safety kills the erased-bridging layer; hooks can carry
    configuration). Recorded here because v1 chose the opposite.
+
+10. Testability of `forward`. `CodegenContext` is deliberately unforgeable
+    (`pub(crate)` constructor), which is right for semver but means a hook
+    author cannot call their own `forward` in a unit test; the only iteration
+    loop is a full `ModelGen` run plus reading the generated file.
+    `CustomNode::new` solved this for `infer_output_types`. A
+    `CodegenContext` test-support constructor (backed by a throwaway scope,
+    possibly behind a `test-support` feature) would close the gap without
+    widening the semver surface much.
+
+11. A declarative layer for the common case. The 90% hook is "call function F
+    with the inputs in order, plus attributes X and Y" - yet today that costs
+    learning `quote!`, the `ctx.arg` vs `arg_to_ident` split, and the
+    output-binding convention. A convenience registration that maps
+    `(op_type, domain)` to a function path plus an argument spec (inputs in
+    order, named attributes, device) could be built entirely on top of
+    `CustomOp` later, collapsing the common case to a few declarative lines
+    with no proc-macro exposure. The full trait remains the escape hatch.
+
+12. Config parsed once. `infer_output_types` and `forward` both parse the same
+    attributes (validation at parse time, values at codegen time); built-in
+    nodes avoid this via `extract_config`, custom ops cannot because the two
+    calls happen in different phases on different node snapshots. The
+    documented v1 pattern is a shared `fn parse_config(&CustomNode) ->
+    Result<Config, ProcessError>` called from both. A cached-config mechanism
+    (e.g. the trait declaring an associated config type produced once at
+    parse and replayed at codegen) would remove the duplication but couples
+    the phases; deferred until real hooks show the pain is worth it.
 
 ## 10. References
 
