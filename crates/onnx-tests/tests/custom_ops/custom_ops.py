@@ -89,11 +89,14 @@ def main():
     onnx.save(model, file_name)
     print(f"Finished exporting model to {file_name}")
 
-    # Ground truth for the Rust test input (negative row exercises the Relu)
+    # Ground truth for the Rust test input (negative row exercises the Relu).
+    # The +1.0 mirrors the deliberately unfaithful ReluOverride registered in
+    # build.rs, which adds 1 so the test can prove the override (not the
+    # built-in Relu codegen) produced the output.
     x = np.array(
         [[1.0, 2.0, 3.0, 4.0], [-1.0, -2.0, -3.0, -4.0]], dtype=np.float32
     )
-    expected = np.maximum((x * scale + shift) + window, 0.0)
+    expected = np.maximum((x * scale + shift) + window, 0.0) + 1.0
     print(f"Test input: {x.tolist()}")
     print(f"Expected output: {expected.tolist()}")
 

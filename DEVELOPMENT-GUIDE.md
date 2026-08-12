@@ -923,8 +923,8 @@ supplies both type inference (used during parsing) and code generation:
 use burn_onnx::ModelGen;
 use burn_onnx::ext::proc_macro2::TokenStream;
 use burn_onnx::ext::{
-    ArgType, CodegenContext, CustomNode, CustomOp, Imports, ProcessError,
-    arg_to_ident, quote::quote,
+    ArgType, CodegenContext, CustomNode, CustomOp, Imports, OpsetRange,
+    ProcessError, arg_to_ident, quote::quote,
 };
 
 struct FftReal;
@@ -932,26 +932,35 @@ struct FftReal;
 impl CustomOp for FftReal {
     fn op_type(&self) -> &str { "FftReal" }
     fn domain(&self) -> &str { "custom_domain" }        // "" = default domain
-    fn opset_range(&self) -> (usize, Option<usize>) { (1, None) }
+    fn opset_range(&self) -> OpsetRange { OpsetRange::from_min(1) }
 
     fn infer_output_types(&self, node: &CustomNode) -> Result<Vec<ArgType>, ProcessError> {
-        // Attributes are exposed read-only:
+        // Attributes are exposed read-only. Getters return None both for
+        // absent and differently-typed attributes; node.attrs.kind("n_fft")
+        // distinguishes the two when an exporter emits the wrong type.
         let n_fft = node.attrs.get_i64("n_fft")
             .ok_or_else(|| ProcessError::MissingAttribute("n_fft".into()))?;
         let _ = n_fft;
         // Constant inputs (e.g. a window tensor) are readable here:
         //   let window = node.inputs.get(1).and_then(|a| a.value());
-        // Must return exactly node.outputs.len() types.
+        // Must return exactly node.outputs.len() types. May be called more
+        // than once per node (inference is a fixed-point loop), so keep it
+        // deterministic and side-effect free.
         Ok(vec![node.inputs[0].ty.clone()])
     }
 
-    fn forward(&self, node: &CustomNode, ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
+    fn forward(
+        &self,
+        node: &CustomNode,
+        ctx: &mut CodegenContext<'_, '_>,
+    ) -> Result<TokenStream, ProcessError> {
         let input = ctx.arg(&node.inputs[0]);        // clone tracking handled
-        let out = arg_to_ident(&node.outputs[0]);
-        let n_fft = node.attrs.get_i64("n_fft").unwrap();
-        quote! {
+        let out = arg_to_ident(&node.outputs[0]);    // outputs only; inputs go through ctx.arg
+        let n_fft = node.attrs.get_i64("n_fft")
+            .ok_or_else(|| ProcessError::MissingAttribute("n_fft".into()))?;
+        Ok(quote! {
             let #out = ops::fft_real(#input, #n_fft);
-        }
+        })
     }
 
     fn register_imports(&self, imports: &mut Imports<'_>) {
@@ -987,29 +996,41 @@ Notes:
   `opset_range` excludes the model's domain opset), parsing fails fast with a
   list of every missing `(domain, op_type)` pair and usage counts.
 - Custom ops inside `If`/`Loop`/`Scan` subgraph bodies are type-inferred
-  through the hooks, but their code generation is not supported yet.
+  through the hooks, but their code generation is not supported yet: code
+  generation rejects them up front with an error naming the node.
 
 ### OpOverride: replace codegen for a built-in operator
 
 An `OpOverride` is matched by `NodeType` and replaces only the generated code;
-the built-in processor still performs type inference:
+the built-in processor still performs type inference. Imports as in the
+`CustomOp` example, plus `Node`, `NodeType`, and `OpOverride`:
 
 ```rust
-use burn_onnx::ext::{Node, NodeType, OpOverride};
+use burn_onnx::ext::proc_macro2::TokenStream;
+use burn_onnx::ext::{
+    CodegenContext, Node, NodeType, OpOverride, ProcessError, arg_to_ident,
+    quote::quote,
+};
 
 struct MyMatMul;
 
 impl OpOverride for MyMatMul {
     fn target(&self) -> NodeType { NodeType::MatMul }
 
-    fn forward(&self, node: &Node, ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
-        let Node::MatMul(mm) = node else { panic!("expected MatMul") };
+    fn forward(
+        &self,
+        node: &Node,
+        ctx: &mut CodegenContext<'_, '_>,
+    ) -> Result<TokenStream, ProcessError> {
+        let Node::MatMul(mm) = node else {
+            return Err(ProcessError::Custom("expected MatMul".into()));
+        };
         let lhs = ctx.arg(&mm.inputs[0]);
         let rhs = ctx.arg(&mm.inputs[1]);
         let out = arg_to_ident(&mm.outputs[0]);
-        quote! {
+        Ok(quote! {
             let #out = my_crate::kernels::custom_matmul(#lhs, #rhs);
-        }
+        })
     }
 }
 
@@ -1017,13 +1038,18 @@ impl OpOverride for MyMatMul {
 ```
 
 An override wins over the built-in for every node of the target type,
-including its `field()`/`collect_snapshots()` (the defaults suppress the
-built-in's field, since the override's forward will not reference it).
+including its `field()`/`collect_snapshots()`. The defaults suppress the
+built-in's field, so overriding a weighted op (Conv, Gemm, ...) means
+reimplementing both `field()` and `collect_snapshots()` for it; the built-in
+`Field` and its init code are not inherited. Override targets appearing
+inside `If`/`Loop`/`Scan` bodies are rejected at code generation (subgraph
+bodies always use built-in codegen).
 
 Direct `onnx-ir` users can plug inference-only hooks into the parser with
 `OnnxGraphBuilder::with_custom_op_inference` (the `CustomOpInference` trait);
-a hook-less parse keeps a tolerant same-as-input fallback so graphs with
-unknown ops stay inspectable.
+a hook-less parse keeps a tolerant fallback (declared `value_info` types are
+kept; undeclared outputs mirror the input type) so graphs with unknown ops
+stay inspectable.
 
 ## Resources
 

@@ -7,7 +7,10 @@
 
 use std::collections::HashMap;
 
-use onnx_ir::{ArgType, CustomNode, CustomOpInference, HookCoverage, Node, NodeType, ProcessError};
+use onnx_ir::{
+    ArgType, CustomNode, CustomOpInference, HookCoverage, MissingReason, Node, NodeType,
+    OpsetRange, ProcessError,
+};
 use proc_macro2::TokenStream;
 
 use crate::burn::node_traits::Field;
@@ -28,33 +31,46 @@ pub trait CustomOp: Send + Sync + 'static {
         ""
     }
 
-    /// Min/max opset gate, checked against the node's domain opset.
-    /// `None` max = unbounded.
-    fn opset_range(&self) -> (usize, Option<usize>) {
-        (1, None)
+    /// Opset gate, checked against the node's domain opset by the coverage
+    /// pre-pass. Out-of-range is reported as a missing hook.
+    fn opset_range(&self) -> OpsetRange {
+        OpsetRange::from_min(1)
     }
 
     /// Infer output ArgTypes. Called during onnx-ir type inference.
     ///
     /// Must return exactly `node.outputs.len()` types; the pipeline rejects a
     /// mismatch. Consumers' output preferences are not consulted for custom
-    /// ops: this hook is the sole authority on its output types.
+    /// ops: this hook is the sole authority on its output types. May be
+    /// called more than once per node (inference runs in a fixed-point
+    /// loop), so it must be deterministic and side-effect free.
     fn infer_output_types(&self, node: &CustomNode) -> Result<Vec<ArgType>, ProcessError>;
 
     /// Generate the forward-pass code for this node.
-    fn forward(&self, node: &CustomNode, ctx: &mut CodegenContext<'_, '_>) -> TokenStream;
+    ///
+    /// Return `Err` for configurations the hook cannot handle; the error is
+    /// reported with the op's identity instead of panicking inside codegen.
+    fn forward(
+        &self,
+        node: &CustomNode,
+        ctx: &mut CodegenContext<'_, '_>,
+    ) -> Result<TokenStream, ProcessError>;
 
     /// Optional: extra imports emitted as `use` statements in the model file.
     fn register_imports(&self, _imports: &mut Imports<'_>) {}
 
     /// Optional: declare a module field (e.g. learnable params or state).
-    fn field(&self, _node: &CustomNode) -> Option<Field> {
-        None
+    fn field(&self, _node: &CustomNode) -> Result<Option<Field>, ProcessError> {
+        Ok(None)
     }
 
     /// Optional: weights/snapshot collection (parallels the built-in nodes).
-    fn collect_snapshots(&self, _node: &CustomNode, _field_name: &str) -> Vec<TensorSnapshot> {
-        vec![]
+    fn collect_snapshots(
+        &self,
+        _node: &CustomNode,
+        _field_name: &str,
+    ) -> Result<Vec<TensorSnapshot>, ProcessError> {
+        Ok(vec![])
     }
 }
 
@@ -68,19 +84,33 @@ pub trait OpOverride: Send + Sync + 'static {
     fn target(&self) -> NodeType;
 
     /// Generate the forward-pass code for this node in place of the built-in.
-    fn forward(&self, node: &Node, ctx: &mut CodegenContext<'_, '_>) -> TokenStream;
+    ///
+    /// Return `Err` for configurations the override cannot handle; the error
+    /// is reported with the node's identity instead of panicking in codegen.
+    fn forward(
+        &self,
+        node: &Node,
+        ctx: &mut CodegenContext<'_, '_>,
+    ) -> Result<TokenStream, ProcessError>;
 
     /// Optional: extra imports emitted as `use` statements in the model file.
     fn register_imports(&self, _imports: &mut Imports<'_>) {}
 
     /// Optional: declare a module field in place of the built-in's.
-    fn field(&self, _node: &Node) -> Option<Field> {
-        None
+    ///
+    /// The default (`Ok(None)`) suppresses the built-in's field: overriding a
+    /// weighted op means reimplementing both `field` and `collect_snapshots`.
+    fn field(&self, _node: &Node) -> Result<Option<Field>, ProcessError> {
+        Ok(None)
     }
 
     /// Optional: weights/snapshot collection in place of the built-in's.
-    fn collect_snapshots(&self, _node: &Node, _field_name: &str) -> Vec<TensorSnapshot> {
-        vec![]
+    fn collect_snapshots(
+        &self,
+        _node: &Node,
+        _field_name: &str,
+    ) -> Result<Vec<TensorSnapshot>, ProcessError> {
+        Ok(vec![])
     }
 }
 
@@ -133,10 +163,15 @@ impl HookRegistry {
     }
 
     /// Look up the hook for an ONNX operator identity.
+    ///
+    /// Linear scan instead of a keyed lookup: a `(String, String)` map key
+    /// cannot be borrowed as `(&str, &str)`, so a HashMap would allocate two
+    /// Strings per lookup, and registries hold a handful of hooks at most.
     pub(crate) fn custom_for(&self, op_type: &str, domain: &str) -> Option<&dyn CustomOp> {
         self.customs
-            .get(&(op_type.to_string(), domain.to_string()))
-            .map(|b| b.as_ref())
+            .iter()
+            .find(|((t, d), _)| t == op_type && d == domain)
+            .map(|(_, b)| b.as_ref())
     }
 
     /// Look up the override for a built-in node type.
@@ -148,16 +183,13 @@ impl HookRegistry {
 impl CustomOpInference for HookRegistry {
     fn coverage(&self, op_type: &str, domain: &str, opset: usize) -> HookCoverage {
         match self.custom_for(op_type, domain) {
-            None => HookCoverage::NoHook,
+            None => HookCoverage::Missing(MissingReason::NoHook),
             Some(op) => {
-                let (min, max) = op.opset_range();
-                if opset >= min && max.is_none_or(|m| opset <= m) {
+                let supported = op.opset_range();
+                if supported.contains(opset) {
                     HookCoverage::Covered
                 } else {
-                    HookCoverage::OpsetMismatch {
-                        supported_min: min,
-                        supported_max: max,
-                    }
+                    HookCoverage::Missing(MissingReason::OpsetMismatch { supported })
                 }
             }
         }
@@ -187,16 +219,23 @@ mod tests {
             "custom_domain"
         }
 
-        fn opset_range(&self) -> (usize, Option<usize>) {
-            (2, Some(4))
+        fn opset_range(&self) -> OpsetRange {
+            OpsetRange {
+                min: 2,
+                max: Some(4),
+            }
         }
 
         fn infer_output_types(&self, _node: &CustomNode) -> Result<Vec<ArgType>, ProcessError> {
             Ok(vec![ArgType::Tensor(TensorType::new(DType::F32, 2, None))])
         }
 
-        fn forward(&self, _node: &CustomNode, _ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
-            TokenStream::new()
+        fn forward(
+            &self,
+            _node: &CustomNode,
+            _ctx: &mut CodegenContext<'_, '_>,
+        ) -> Result<TokenStream, ProcessError> {
+            Ok(TokenStream::new())
         }
     }
 
@@ -209,28 +248,22 @@ mod tests {
     #[test]
     fn coverage_checks_identity_and_opset_range() {
         let registry = registry_with_test_op();
+        let mismatch = HookCoverage::Missing(MissingReason::OpsetMismatch {
+            supported: OpsetRange {
+                min: 2,
+                max: Some(4),
+            },
+        });
         assert_eq!(
             registry.coverage("FftReal", "custom_domain", 3),
             HookCoverage::Covered
         );
-        assert_eq!(
-            registry.coverage("FftReal", "custom_domain", 1),
-            HookCoverage::OpsetMismatch {
-                supported_min: 2,
-                supported_max: Some(4),
-            }
-        );
-        assert_eq!(
-            registry.coverage("FftReal", "custom_domain", 5),
-            HookCoverage::OpsetMismatch {
-                supported_min: 2,
-                supported_max: Some(4),
-            }
-        );
+        assert_eq!(registry.coverage("FftReal", "custom_domain", 1), mismatch);
+        assert_eq!(registry.coverage("FftReal", "custom_domain", 5), mismatch);
         // Same op_type, different domain: distinct ONNX identity
         assert_eq!(
             registry.coverage("FftReal", "other_domain", 3),
-            HookCoverage::NoHook
+            HookCoverage::Missing(MissingReason::NoHook)
         );
     }
 
@@ -248,8 +281,12 @@ mod tests {
             self.0.clone()
         }
 
-        fn forward(&self, _node: &Node, _ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
-            TokenStream::new()
+        fn forward(
+            &self,
+            _node: &Node,
+            _ctx: &mut CodegenContext<'_, '_>,
+        ) -> Result<TokenStream, ProcessError> {
+            Ok(TokenStream::new())
         }
     }
 

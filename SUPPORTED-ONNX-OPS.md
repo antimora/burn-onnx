@@ -450,6 +450,7 @@ nodes, and you supply their behavior with hooks registered on `ModelGen`:
 Everything a hook needs is exported from the single `burn_onnx::ext` module,
 including the `proc_macro2`/`quote` re-exports used to build the emitted code.
 If a model contains custom ops with no covering hook, `ModelGen` fails fast
-with a list of the missing `(domain, op_type)` pairs. See the "Custom
-Operators and Overrides" section of `DEVELOPMENT-GUIDE.md` for a worked
-example.
+with a list of the missing `(domain, op_type)` pairs. Custom ops and override
+targets inside `If`/`Loop`/`Scan` subgraph bodies are not supported yet and
+are rejected with a clear error. See the "Custom Operators and Overrides"
+section of `DEVELOPMENT-GUIDE.md` for a worked example.

@@ -158,8 +158,9 @@ pub type Attributes = HashMap<String, AttributeValue>;
 /// Scalar/tensor attribute values exposed to custom-op hooks.
 ///
 /// Deliberately a separate enum from the internal `AttributeValue`: it has no
-/// graph variants (subgraph custom hooks are out of scope for v1) and no
-/// `Rc`-backed state, so types embedding it stay `Send + Sync`.
+/// graph payloads (subgraph custom hooks are out of scope for v1) and no
+/// `Rc`-backed state, so types embedding it stay `Send + Sync`. Graph-valued
+/// attributes are kept as payload-free markers so hooks can detect them.
 #[derive(Debug, Clone)]
 enum PublicAttributeValue {
     Float32(f32),
@@ -170,22 +171,62 @@ enum PublicAttributeValue {
     Strings(Vec<String>),
     Tensor(TensorData),
     Tensors(Vec<TensorData>),
+    Graph,
+    Graphs,
+}
+
+/// The ONNX kind of an attribute, as exposed to custom-op hooks.
+///
+/// Lets a hook distinguish "attribute absent" from "attribute present with a
+/// different type" (every typed getter returns `None` for both), and detect
+/// graph-valued attributes whose payload is not exposed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AttrKind {
+    /// FLOAT
+    Float32,
+    /// FLOATS
+    Float32s,
+    /// INT
+    Int64,
+    /// INTS
+    Int64s,
+    /// STRING
+    String,
+    /// STRINGS
+    Strings,
+    /// TENSOR
+    Tensor,
+    /// TENSORS
+    Tensors,
+    /// GRAPH: present on the node, but the subgraph payload is not exposed
+    /// to hooks (subgraph custom hooks are out of scope).
+    Graph,
+    /// GRAPHS: like [`AttrKind::Graph`], for a list of subgraphs.
+    Graphs,
 }
 
 /// Read-only, owned view of a node's ONNX attributes for custom ops.
 ///
 /// Exposes typed getters so the internal `AttributeValue` enum (which carries
 /// crate-private graph variants) stays private. Graph-valued attributes
-/// (`GRAPH` / `GRAPHS`) are not exposed.
+/// (`GRAPH` / `GRAPHS`) appear in [`names`](Self::names) and
+/// [`kind`](Self::kind) but their payload is not exposed.
+///
+/// Every typed getter returns `None` both when the attribute is absent and
+/// when it is present with a different ONNX type; use
+/// [`kind`](Self::kind) to distinguish (an exporter emitting e.g. `axis` as
+/// FLOAT instead of INT should be a detectable error, not a silent default).
 #[derive(Debug, Clone, Default)]
 pub struct PublicAttributesOwned(HashMap<String, PublicAttributeValue>);
 
 impl PublicAttributesOwned {
-    /// Snapshot the internal attribute map, dropping graph-valued attributes.
+    /// Snapshot the internal attribute map. Graph-valued attributes keep
+    /// only a payload-free marker.
     pub(crate) fn from_internal(attrs: &Attributes) -> Self {
         let map = attrs
             .iter()
-            .filter_map(|(name, value)| {
+            .map(|(name, value)| {
                 let public = match value {
                     AttributeValue::Float32(v) => PublicAttributeValue::Float32(*v),
                     AttributeValue::Float32s(v) => PublicAttributeValue::Float32s(v.clone()),
@@ -195,15 +236,33 @@ impl PublicAttributesOwned {
                     AttributeValue::Strings(v) => PublicAttributeValue::Strings(v.clone()),
                     AttributeValue::Tensor(v) => PublicAttributeValue::Tensor(v.clone()),
                     AttributeValue::Tensors(v) => PublicAttributeValue::Tensors(v.clone()),
-                    AttributeValue::DeferredGraph(_)
-                    | AttributeValue::DeferredGraphs(_)
-                    | AttributeValue::Graph(_)
-                    | AttributeValue::Graphs(_) => return None,
+                    AttributeValue::DeferredGraph(_) | AttributeValue::Graph(_) => {
+                        PublicAttributeValue::Graph
+                    }
+                    AttributeValue::DeferredGraphs(_) | AttributeValue::Graphs(_) => {
+                        PublicAttributeValue::Graphs
+                    }
                 };
-                Some((name.clone(), public))
+                (name.clone(), public)
             })
             .collect();
         Self(map)
+    }
+
+    /// The ONNX kind of an attribute, or `None` if absent.
+    pub fn kind(&self, name: &str) -> Option<AttrKind> {
+        Some(match self.0.get(name)? {
+            PublicAttributeValue::Float32(_) => AttrKind::Float32,
+            PublicAttributeValue::Float32s(_) => AttrKind::Float32s,
+            PublicAttributeValue::Int64(_) => AttrKind::Int64,
+            PublicAttributeValue::Int64s(_) => AttrKind::Int64s,
+            PublicAttributeValue::String(_) => AttrKind::String,
+            PublicAttributeValue::Strings(_) => AttrKind::Strings,
+            PublicAttributeValue::Tensor(_) => AttrKind::Tensor,
+            PublicAttributeValue::Tensors(_) => AttrKind::Tensors,
+            PublicAttributeValue::Graph => AttrKind::Graph,
+            PublicAttributeValue::Graphs => AttrKind::Graphs,
+        })
     }
 
     /// Get an INT attribute.
@@ -441,16 +500,32 @@ mod tests {
     }
 
     #[test]
-    fn graph_attributes_are_dropped() {
+    fn graph_attributes_are_visible_but_payload_free() {
         let attrs = PublicAttributesOwned::from_internal(&attrs_fixture());
+        // The graph attribute stays detectable via names() and kind()...
         let mut names: Vec<&str> = attrs.names().collect();
         names.sort_unstable();
         assert_eq!(
             names,
             vec![
-                "axes", "mode", "modes", "n_fft", "scale", "scales", "window", "windows"
+                "axes", "body", "mode", "modes", "n_fft", "scale", "scales", "window", "windows"
             ]
         );
+        assert_eq!(attrs.kind("body"), Some(AttrKind::Graph));
+        // ...but no typed getter exposes a payload for it.
+        assert_eq!(attrs.get_tensor("body"), None);
+        assert_eq!(attrs.get_string("body"), None);
+    }
+
+    #[test]
+    fn kind_distinguishes_absent_from_wrong_type() {
+        let attrs = PublicAttributesOwned::from_internal(&attrs_fixture());
+        // get_i64("scale") is None either way; kind() tells the difference.
+        assert_eq!(attrs.get_i64("scale"), None);
+        assert_eq!(attrs.kind("scale"), Some(AttrKind::Float32));
+        assert_eq!(attrs.kind("nonexistent"), None);
+        assert_eq!(attrs.kind("n_fft"), Some(AttrKind::Int64));
+        assert_eq!(attrs.kind("windows"), Some(AttrKind::Tensors));
     }
 
     #[test]

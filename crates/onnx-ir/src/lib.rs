@@ -16,7 +16,7 @@ mod tensor_store;
 
 // Public API - only expose essentials
 pub use ir::*;
-pub use node::custom::{CustomNode, CustomOpInference, HookCoverage};
+pub use node::custom::{CustomNode, CustomOpInference, HookCoverage, MissingReason, OpsetRange};
 pub use node::*;
 pub use pipeline::{Error, MissingHook, OnnxGraphBuilder};
 pub use processor::ProcessError;

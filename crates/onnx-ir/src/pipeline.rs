@@ -49,23 +49,21 @@ use super::phases::{
 /// overlay instead: `NodeType::Custom` gets the hook-aware processor, every
 /// other node type falls through to the global registry.
 pub(crate) struct PipelineHooks {
-    /// The user hook as registered (`None` = no hooks). Captured into
-    /// `DeferredGraph` so subgraph builds re-enter the pipeline with it.
-    inference: Option<Arc<dyn CustomOpInference>>,
+    /// Owns the user hook (`None` = no hooks); the sole storage of the Arc.
     custom: HookedCustomProcessor,
 }
 
 impl PipelineHooks {
     pub(crate) fn new(inference: Option<Arc<dyn CustomOpInference>>) -> Self {
         Self {
-            custom: HookedCustomProcessor::new(inference.clone()),
-            inference,
+            custom: HookedCustomProcessor::new(inference),
         }
     }
 
-    /// The registered inference hook, for capture into `DeferredGraph`.
+    /// The registered inference hook, for capture into `DeferredGraph` (so
+    /// subgraph builds re-enter the pipeline with it).
     pub(crate) fn inference(&self) -> Option<Arc<dyn CustomOpInference>> {
-        self.inference.clone()
+        self.custom.hooks()
     }
 
     /// Resolution point used by the type-inference phase in place of
@@ -84,6 +82,7 @@ impl PipelineHooks {
 
 /// A custom op present in the model that no registered hook covers.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct MissingHook {
     /// Raw ONNX op_type of the uncovered operator.
     pub op_type: String,
@@ -93,8 +92,28 @@ pub struct MissingHook {
     pub node_count: usize,
     /// The opset the model imports for the operator's domain.
     pub model_opset: usize,
-    /// Why the operator is uncovered (`NoHook` or `OpsetMismatch`).
-    pub coverage: crate::node::custom::HookCoverage,
+    /// Why the operator is uncovered.
+    pub reason: crate::node::custom::MissingReason,
+}
+
+impl MissingHook {
+    /// Construct a missing-hook diagnostic (the pipeline's coverage pre-pass
+    /// is the normal producer; this is public for tests and tooling).
+    pub fn new(
+        op_type: impl Into<String>,
+        domain: impl Into<String>,
+        node_count: usize,
+        model_opset: usize,
+        reason: crate::node::custom::MissingReason,
+    ) -> Self {
+        Self {
+            op_type: op_type.into(),
+            domain: domain.into(),
+            node_count,
+            model_opset,
+            reason,
+        }
+    }
 }
 
 impl fmt::Display for MissingHook {
@@ -105,23 +124,12 @@ impl fmt::Display for MissingHook {
             write!(f, "{}::{}", self.domain, self.op_type)?;
         }
         write!(f, " used by {} node(s)", self.node_count)?;
-        if let crate::node::custom::HookCoverage::OpsetMismatch {
-            supported_min,
-            supported_max,
-        } = &self.coverage
-        {
-            match supported_max {
-                Some(max) => write!(
-                    f,
-                    " (hook covers opsets {supported_min}..={max}, model uses {})",
-                    self.model_opset
-                )?,
-                None => write!(
-                    f,
-                    " (hook covers opsets {supported_min}.., model uses {})",
-                    self.model_opset
-                )?,
-            }
+        if let crate::node::custom::MissingReason::OpsetMismatch { supported } = &self.reason {
+            write!(
+                f,
+                " (hook covers opsets {supported}, model uses {})",
+                self.model_opset
+            )?;
         }
         Ok(())
     }
@@ -590,13 +598,16 @@ fn check_custom_op_coverage(
     let mut missing: BTreeMap<(String, String), MissingHook> = BTreeMap::new();
 
     for node in nodes.iter().filter(|n| n.node_type == NodeType::Custom) {
-        // Synthetic nodes never carry NodeType::Custom, but stay defensive.
-        let Some(identity) = node.custom_identity.as_ref() else {
-            continue;
-        };
+        // Same parser invariant custom_node_view enforces: a violated
+        // internal invariant must be loud, not silently skipped (a skipped
+        // node would dodge the coverage gate here and panic later anyway).
+        let identity = node
+            .custom_identity
+            .as_ref()
+            .expect("RawNode with NodeType::Custom must carry a CustomIdentity (parser invariant)");
         match hooks.coverage(&identity.op_type, &identity.domain, identity.domain_opset) {
             crate::node::custom::HookCoverage::Covered => {}
-            coverage => {
+            crate::node::custom::HookCoverage::Missing(reason) => {
                 missing
                     .entry((identity.domain.clone(), identity.op_type.clone()))
                     .and_modify(|m| m.node_count += 1)
@@ -605,7 +616,7 @@ fn check_custom_op_coverage(
                         domain: identity.domain.clone(),
                         node_count: 1,
                         model_opset: identity.domain_opset,
-                        coverage,
+                        reason,
                     });
             }
         }
@@ -632,7 +643,10 @@ pub(crate) struct DomainOpsets {
 }
 
 impl DomainOpsets {
-    pub(crate) fn new(versions: HashMap<String, usize>, default_opset: usize) -> Self {
+    pub(crate) fn new(mut versions: HashMap<String, usize>, default_opset: usize) -> Self {
+        // Enforce the documented invariant even for hand-built instances
+        // (tests): the default domain is always present.
+        versions.entry(String::new()).or_insert(default_opset);
         Self {
             versions: Arc::new(versions),
             default_opset,
@@ -905,7 +919,7 @@ mod tests {
             _domain: &str,
             _opset: usize,
         ) -> crate::node::custom::HookCoverage {
-            crate::node::custom::HookCoverage::NoHook
+            crate::node::custom::HookCoverage::Missing(crate::node::custom::MissingReason::NoHook)
         }
 
         fn infer(
@@ -946,10 +960,14 @@ mod tests {
                 _domain: &str,
                 _opset: usize,
             ) -> crate::node::custom::HookCoverage {
-                crate::node::custom::HookCoverage::OpsetMismatch {
-                    supported_min: 1,
-                    supported_max: Some(1),
-                }
+                crate::node::custom::HookCoverage::Missing(
+                    crate::node::custom::MissingReason::OpsetMismatch {
+                        supported: crate::node::custom::OpsetRange {
+                            min: 1,
+                            max: Some(1),
+                        },
+                    },
+                )
             }
 
             fn infer(

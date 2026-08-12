@@ -10,10 +10,19 @@
 //! `burn-onnx` links against.
 
 pub use crate::burn::custom_op::{CustomOp, OpOverride};
-pub use crate::burn::node_traits::{Field, arg_to_ident, create_lazy_snapshot};
+pub use crate::burn::node_traits::{Field, create_lazy_snapshot};
+
+/// Convert an argument's name to an identifier.
+///
+/// For OUTPUTS and host-side values only. Never use it for `Tensor` /
+/// `ScalarTensor` inputs: it bypasses clone tracking, producing generated
+/// code that moves a tensor still needed elsewhere. Inputs go through
+/// [`CodegenContext::arg`] instead.
+pub use crate::burn::node_traits::arg_to_ident;
 
 pub use onnx_ir::{
-    ArgType, Argument, CustomNode, DType, Node, NodeType, ProcessError, TensorData, TensorType,
+    ArgType, Argument, AttrKind, CustomNode, DType, Node, NodeType, OpsetRange, ProcessError,
+    TensorData, TensorType,
 };
 
 pub use burn_store::TensorSnapshot;

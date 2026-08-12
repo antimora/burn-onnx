@@ -32,6 +32,15 @@ fn require_custom_hook<'r>(hooks: &'r HookRegistry, node: &CustomNode) -> &'r dy
         })
 }
 
+/// Unwrap a hook result at the codegen boundary.
+///
+/// `BurnGraph::codegen` has no error channel, so hook errors surface as a
+/// panic that names the node and what the hook was doing. Build scripts are
+/// the caller, where an attributable panic is the failure channel.
+fn expect_hook<T>(result: Result<T, onnx_ir::ProcessError>, what: &str, node_name: &str) -> T {
+    result.unwrap_or_else(|e| panic!("Codegen hook failed in {what} for node '{node_name}': {e}"))
+}
+
 pub(crate) fn node_forward(
     node: &Node,
     scope: &mut ScopeAtPosition<'_>,
@@ -39,24 +48,30 @@ pub(crate) fn node_forward(
 ) -> TokenStream {
     if let Some(over) = hooks.override_for(&node.node_type()) {
         let mut ctx = CodegenContext::wrap(scope);
-        return over.forward(node, &mut ctx);
+        return expect_hook(
+            over.forward(node, &mut ctx),
+            "OpOverride::forward",
+            node.name(),
+        );
     }
     if let Node::Custom(c) = node {
         let mut ctx = CodegenContext::wrap(scope);
-        return require_custom_hook(hooks, c).forward(c, &mut ctx);
+        let hook = require_custom_hook(hooks, c);
+        return expect_hook(hook.forward(c, &mut ctx), "CustomOp::forward", &c.name);
     }
     NodeCodegen::forward(node, scope)
 }
 
 pub(crate) fn node_field(node: &Node, hooks: &HookRegistry) -> Option<Field> {
     // The override wins even when the built-in declares a field: an override
-    // with the default field() = None suppresses the built-in field, since
-    // the override's forward will not reference it.
+    // with the default field() = Ok(None) suppresses the built-in field,
+    // since the override's forward will not reference it.
     if let Some(over) = hooks.override_for(&node.node_type()) {
-        return over.field(node);
+        return expect_hook(over.field(node), "OpOverride::field", node.name());
     }
     if let Node::Custom(c) = node {
-        return require_custom_hook(hooks, c).field(c);
+        let hook = require_custom_hook(hooks, c);
+        return expect_hook(hook.field(c), "CustomOp::field", &c.name);
     }
     NodeCodegen::field(node)
 }
@@ -79,10 +94,19 @@ pub(crate) fn node_collect_snapshots(
     hooks: &HookRegistry,
 ) -> Vec<TensorSnapshot> {
     if let Some(over) = hooks.override_for(&node.node_type()) {
-        return over.collect_snapshots(node, field_name);
+        return expect_hook(
+            over.collect_snapshots(node, field_name),
+            "OpOverride::collect_snapshots",
+            node.name(),
+        );
     }
     if let Node::Custom(c) = node {
-        return require_custom_hook(hooks, c).collect_snapshots(c, field_name);
+        let hook = require_custom_hook(hooks, c);
+        return expect_hook(
+            hook.collect_snapshots(c, field_name),
+            "CustomOp::collect_snapshots",
+            &c.name,
+        );
     }
     NodeCodegen::collect_snapshots(node, field_name)
 }
@@ -90,8 +114,11 @@ pub(crate) fn node_collect_snapshots(
 /// Macro to implement NodeCodegen on onnx_ir::Node by dispatching to individual node impls
 ///
 /// `Node::Custom` is handled explicitly: its structural accessors (inputs/outputs)
-/// read the CustomNode's own wiring, while the codegen methods panic with a
-/// message naming the op until custom-op hooks land (see DESIGN-CUSTOM-OPS.md).
+/// read the CustomNode's own wiring. Hook-aware codegen goes through the free
+/// dispatch functions above (`node_forward` etc.); this trait impl's `forward`
+/// panics for `Node::Custom` because reaching it means hook dispatch was
+/// bypassed - today that is only possible for nodes inside If/Loop/Scan
+/// subgraph bodies, which `BurnGraph` rejects up front with a clearer error.
 macro_rules! impl_node_codegen_dispatch {
     ($($variant:ident),* $(,)?) => {
         impl NodeCodegen for Node {
@@ -114,8 +141,9 @@ macro_rules! impl_node_codegen_dispatch {
             fn forward(&self, scope: &mut crate::burn::scope::ScopeAtPosition<'_>) -> TokenStream {
                 match self {
                     Node::Custom(n) => panic!(
-                        "Custom op '{}' (node '{}') requires a registered hook; \
-                         custom op codegen hooks are not implemented yet",
+                        "Custom op '{}' (node '{}') reached built-in codegen dispatch; \
+                         custom op codegen inside If/Loop/Scan subgraph bodies is not \
+                         supported yet",
                         n, n.name
                     ),
                     $(Node::$variant(n) => n.forward(scope),)*

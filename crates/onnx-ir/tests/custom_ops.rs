@@ -132,3 +132,128 @@ fn fallback_inference_propagates_input_type() {
     // Without a registered hook, output type falls back to the input type.
     assert_eq!(fft.outputs[0].ty, fft.inputs[0].ty);
 }
+
+// ---------------------------------------------------------------------------
+// Hook-carrying parses (public with_custom_op_inference API)
+// ---------------------------------------------------------------------------
+
+use onnx_ir::ir::{ArgType, DType, TensorType};
+use onnx_ir::{CustomOpInference, HookCoverage, MissingReason, ProcessError};
+use std::sync::Arc;
+
+fn fixture_path(name: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
+}
+
+/// Covers everything; marks outputs with a distinctive F64 type derived from
+/// the input rank so tests can prove the hook (not the fallback) ran.
+struct MarkerInference;
+
+impl CustomOpInference for MarkerInference {
+    fn coverage(&self, _: &str, _: &str, _: usize) -> HookCoverage {
+        HookCoverage::Covered
+    }
+
+    fn infer(&self, node: &CustomNode) -> Result<Option<Vec<ArgType>>, ProcessError> {
+        let rank = match &node.inputs[0].ty {
+            ArgType::Tensor(t) => t.rank,
+            _ => 1,
+        };
+        Ok(Some(vec![
+            ArgType::Tensor(TensorType::new(
+                DType::F64,
+                rank,
+                None
+            ));
+            node.outputs.len()
+        ]))
+    }
+}
+
+/// Covers nothing (empty-registry equivalent).
+struct NoCoverageInference;
+
+impl CustomOpInference for NoCoverageInference {
+    fn coverage(&self, _: &str, _: &str, _: usize) -> HookCoverage {
+        HookCoverage::Missing(MissingReason::NoHook)
+    }
+
+    fn infer(&self, _: &CustomNode) -> Result<Option<Vec<ArgType>>, ProcessError> {
+        Ok(None)
+    }
+}
+
+#[test]
+fn inference_hooks_reach_if_subgraph_bodies() {
+    // The custom op lives inside the If node's then-branch; the hook must be
+    // carried into the subgraph build via DeferredGraph.
+    let graph = onnx_ir::OnnxGraphBuilder::new()
+        .simplify(false)
+        .with_custom_op_inference(Arc::new(MarkerInference))
+        .parse_file(fixture_path("custom_in_if.onnx"))
+        .expect("parse with hooks");
+
+    let if_node = graph
+        .nodes
+        .iter()
+        .find_map(|n| match n {
+            Node::If(n) => Some(n),
+            _ => None,
+        })
+        .expect("If node");
+    let sub_custom = if_node
+        .config
+        .then_branch
+        .nodes
+        .iter()
+        .find_map(|n| match n {
+            Node::Custom(c) => Some(c),
+            _ => None,
+        })
+        .expect("custom node inside then-branch");
+
+    assert!(
+        matches!(&sub_custom.outputs[0].ty, ArgType::Tensor(t) if t.dtype == DType::F64),
+        "hook-provided type missing inside subgraph: {:?}",
+        sub_custom.outputs[0].ty
+    );
+}
+
+#[test]
+fn hooks_and_simplification_compose() {
+    // With a covering hook AND simplify on, the CSE twins must still both
+    // survive and carry hook-provided types.
+    let graph = onnx_ir::OnnxGraphBuilder::new()
+        .simplify(true)
+        .with_custom_op_inference(Arc::new(MarkerInference))
+        .parse_file(fixture_path("custom_ops.onnx"))
+        .expect("parse with hooks and simplify");
+
+    let customs = custom_nodes(&graph);
+    let ffts: Vec<_> = customs.iter().filter(|c| c.op_type == "FftLike").collect();
+    assert_eq!(ffts.len(), 2, "CSE must not merge hooked custom nodes");
+    for fft in ffts {
+        assert!(
+            matches!(&fft.outputs[0].ty, ArgType::Tensor(t) if t.dtype == DType::F64),
+            "hook-provided type missing under simplify"
+        );
+    }
+}
+
+#[test]
+fn coverage_error_aggregates_node_counts() {
+    // The fixture uses FftLike twice; the missing-hook summary must say so.
+    let err = onnx_ir::OnnxGraphBuilder::new()
+        .with_custom_op_inference(Arc::new(NoCoverageInference))
+        .parse_file(fixture_path("custom_ops.onnx"))
+        .unwrap_err();
+
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("my.custom.domain::FftLike used by 2 node(s)"),
+        "got: {msg}"
+    );
+    assert!(msg.contains("MyUnknownOp used by 1 node(s)"), "got: {msg}");
+}

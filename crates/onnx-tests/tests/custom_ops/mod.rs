@@ -15,9 +15,11 @@ pub mod ops {
         x + window.unsqueeze()
     }
 
-    /// Backs the OpOverride for the built-in Relu.
+    /// Backs the OpOverride for the built-in Relu. Deliberately deviates
+    /// from relu (adds 1.0) so the test can prove the override, not the
+    /// built-in codegen, produced the output.
     pub fn my_relu(x: Tensor<2>) -> Tensor<2> {
-        x.clamp_min(0.0)
+        x.clamp_min(0.0) + 1.0
     }
 }
 
@@ -38,8 +40,10 @@ mod tests {
             Tensor::<2>::from_floats([[1.0, 2.0, 3.0, 4.0], [-1.0, -2.0, -3.0, -4.0]], &device);
         let output = model.forward(input);
 
-        // relu((x * 2.0 + 0.5) + [0.25, 0.5, 0.75, 1.0]); see custom_ops.py
-        let expected = TensorData::from([[2.75f32, 5.0, 7.25, 9.5], [0.0, 0.0, 0.0, 0.0]]);
+        // relu((x * 2.0 + 0.5) + [0.25, 0.5, 0.75, 1.0]) + 1.0; see
+        // custom_ops.py. The trailing +1.0 comes from the deliberately
+        // unfaithful ReluOverride and proves override dispatch end to end.
+        let expected = TensorData::from([[3.75f32, 6.0, 8.25, 10.5], [1.0, 1.0, 1.0, 1.0]]);
 
         output.to_data().assert_eq(&expected, true);
     }

@@ -4,6 +4,33 @@ Design document for [issue #23](https://github.com/tracel-ai/burn-onnx/issues/23
 "Add a way to implement custom function for operators not supported in ONNX format".
 
 Status: draft v2, pre-implementation. Verified against the codebase at `846b2452`.
+File:line references throughout are survey notes against that pre-implementation
+tree; the implementation moved many of them. "Implementation note/correction"
+blocks record where the landed code deviates.
+
+Post-implementation review revisions (2026-08-12):
+
+- Trait methods that produce data (`forward`, `field`, `collect_snapshots` on
+  both `CustomOp` and `OpOverride`) return `Result<_, ProcessError>` so hooks
+  have an error channel; codegen surfaces the error with node identity.
+- `opset_range()` returns an `OpsetRange { min, max }` struct (shared with the
+  coverage diagnostics) instead of a bare tuple.
+- `HookCoverage` is `Covered | Missing(MissingReason)`; `MissingHook.reason`
+  carries `MissingReason`, which makes a "missing but covered" state
+  unrepresentable. `coverage() == Covered` followed by `infer() == Ok(None)`
+  is enforced as an error (contract violation), not a silent fallback.
+- `CustomNode` is `#[non_exhaustive]` with a `new()` constructor;
+  `HookCoverage`, `MissingReason`, `MissingHook`, `AttrKind` are
+  `#[non_exhaustive]`.
+- Attribute surface: graph-valued attributes stay visible as payload-free
+  markers, and `PublicAttributesOwned::kind()` distinguishes "absent" from
+  "present with a different type".
+- The hook-free inference fallback preserves types the model declared via
+  `value_info` and fills every still-undeclared output, instead of
+  unconditionally overwriting `outputs[0]`.
+- `BurnGraph` rejects custom ops and override targets inside If/Loop/Scan
+  bodies up front (subgraph body codegen is hook-free by design in v1), so
+  the field/snapshot collection and forward codegen halves cannot disagree.
 
 ## 1. Goals
 

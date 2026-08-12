@@ -628,12 +628,23 @@ pub(crate) fn convert_node_proto(
     };
 
     let custom_identity = (node_type == NodeType::Custom).then(|| {
-        log::debug!(
-            "Unrecognized op '{}::{}' (node '{}'); treating as custom op",
-            node.domain,
-            node.op_type,
-            name
-        );
+        // Unknown op in the DEFAULT domain is the surprising case (possibly a
+        // newer standard operator this crate does not implement yet), so it
+        // warns; custom-domain ops are expected to be custom.
+        if node.domain.is_empty() {
+            log::warn!(
+                "Unrecognized default-domain op '{}' (node '{}'); treating as custom op",
+                node.op_type,
+                name
+            );
+        } else {
+            log::info!(
+                "Custom-domain op '{}::{}' (node '{}'); treating as custom op",
+                node.domain,
+                node.op_type,
+                name
+            );
+        }
         CustomIdentity {
             op_type: node.op_type.clone(),
             domain: node.domain.clone(),

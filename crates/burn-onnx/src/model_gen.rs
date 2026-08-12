@@ -394,15 +394,7 @@ impl ModelGen {
             .simplify(self.simplify)
             .with_custom_op_inference(self.hooks.clone())
             .parse_file(input)
-            .unwrap_or_else(|e| match e {
-                onnx_ir::Error::MissingCustomOpHooks(_) => panic!(
-                    "Failed to parse ONNX file '{}': {}\nRegister hooks via \
-                     ModelGen::register_custom_op.",
-                    input.display(),
-                    e
-                ),
-                e => panic!("Failed to parse ONNX file '{}': {}", input.display(), e),
-            });
+            .unwrap_or_else(|e| panic!("{}", parse_error_message(input, &e)));
 
         if self.development {
             self.write_debug_file(&out_file, "onnx.txt", &graph);
@@ -446,6 +438,47 @@ impl ModelGen {
             .with_top_comment(top_comment)
             .with_partition(self.partition)
             .codegen()
+    }
+}
+
+/// User-facing message for a parse failure, with hook-registration guidance
+/// appended for the missing-hook case (the onnx-ir error text itself does not
+/// name ModelGen).
+fn parse_error_message(input: &Path, error: &onnx_ir::Error) -> String {
+    let base = format!("Failed to parse ONNX file '{}': {}", input.display(), error);
+    match error {
+        onnx_ir::Error::MissingCustomOpHooks(_) => {
+            format!("{base}\nRegister hooks via ModelGen::register_custom_op.")
+        }
+        _ => base,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onnx_ir::{MissingHook, MissingReason};
+
+    #[test]
+    fn missing_hook_parse_error_appends_registration_hint() {
+        let error = onnx_ir::Error::MissingCustomOpHooks(vec![MissingHook::new(
+            "SelectiveScan",
+            "mamba",
+            12,
+            3,
+            MissingReason::NoHook,
+        )]);
+        let msg = parse_error_message(Path::new("mamba.onnx"), &error);
+        assert!(msg.contains("mamba::SelectiveScan"), "got: {msg}");
+        assert!(msg.contains("used by 12 node(s)"), "got: {msg}");
+        assert!(msg.contains("ModelGen::register_custom_op"), "got: {msg}");
+    }
+
+    #[test]
+    fn other_parse_errors_have_no_hook_hint() {
+        let error = onnx_ir::Error::MissingOpsetVersion;
+        let msg = parse_error_message(Path::new("m.onnx"), &error);
+        assert!(!msg.contains("register_custom_op"), "got: {msg}");
     }
 }
 
