@@ -37,6 +37,10 @@ pub(crate) fn node_forward(
     scope: &mut ScopeAtPosition<'_>,
     hooks: &HookRegistry,
 ) -> TokenStream {
+    if let Some(over) = hooks.override_for(&node.node_type()) {
+        let mut ctx = CodegenContext::wrap(scope);
+        return over.forward(node, &mut ctx);
+    }
     if let Node::Custom(c) = node {
         let mut ctx = CodegenContext::wrap(scope);
         return require_custom_hook(hooks, c).forward(c, &mut ctx);
@@ -45,6 +49,12 @@ pub(crate) fn node_forward(
 }
 
 pub(crate) fn node_field(node: &Node, hooks: &HookRegistry) -> Option<Field> {
+    // The override wins even when the built-in declares a field: an override
+    // with the default field() = None suppresses the built-in field, since
+    // the override's forward will not reference it.
+    if let Some(over) = hooks.override_for(&node.node_type()) {
+        return over.field(node);
+    }
     if let Node::Custom(c) = node {
         return require_custom_hook(hooks, c).field(c);
     }
@@ -52,6 +62,10 @@ pub(crate) fn node_field(node: &Node, hooks: &HookRegistry) -> Option<Field> {
 }
 
 pub(crate) fn node_register_imports(node: &Node, imports: &mut BurnImports, hooks: &HookRegistry) {
+    if let Some(over) = hooks.override_for(&node.node_type()) {
+        over.register_imports(&mut Imports::wrap(imports));
+        return;
+    }
     if let Node::Custom(c) = node {
         require_custom_hook(hooks, c).register_imports(&mut Imports::wrap(imports));
         return;
@@ -64,6 +78,9 @@ pub(crate) fn node_collect_snapshots(
     field_name: &str,
     hooks: &HookRegistry,
 ) -> Vec<TensorSnapshot> {
+    if let Some(over) = hooks.override_for(&node.node_type()) {
+        return over.collect_snapshots(node, field_name);
+    }
     if let Node::Custom(c) = node {
         return require_custom_hook(hooks, c).collect_snapshots(c, field_name);
     }

@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    burn::custom_op::{CustomOp, HookRegistry},
+    burn::custom_op::{CustomOp, HookRegistry, OpOverride},
     burn::graph::BurnGraph,
     format_tokens,
     logger::init_log,
@@ -272,6 +272,23 @@ impl ModelGen {
         Arc::get_mut(&mut self.hooks)
             .expect("register_custom_op must be called before running the generation")
             .add_custom_op(Box::new(op));
+        self
+    }
+
+    /// Register a codegen override for a built-in ONNX operator.
+    ///
+    /// The built-in processor still performs type inference; the override
+    /// replaces only the generated code for nodes of the target type. See
+    /// [`crate::ext::OpOverride`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if an override for the same target is already registered, or if
+    /// the target is `NodeType::Custom`.
+    pub fn register_op_override(&mut self, over: impl OpOverride) -> &mut Self {
+        Arc::get_mut(&mut self.hooks)
+            .expect("register_op_override must be called before running the generation")
+            .add_override(Box::new(over));
         self
     }
 

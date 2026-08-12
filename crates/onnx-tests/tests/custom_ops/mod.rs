@@ -14,6 +14,11 @@ pub mod ops {
         let window = Tensor::<1>::from_floats(window, device);
         x + window.unsqueeze()
     }
+
+    /// Backs the OpOverride for the built-in Relu.
+    pub fn my_relu(x: Tensor<2>) -> Tensor<2> {
+        x.clamp_min(0.0)
+    }
 }
 
 #[cfg(test)]
@@ -29,11 +34,12 @@ mod tests {
         let device = Default::default();
         let model: custom_ops::Model = custom_ops::Model::new(&device);
 
-        let input = Tensor::<2>::from_floats([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]], &device);
+        let input =
+            Tensor::<2>::from_floats([[1.0, 2.0, 3.0, 4.0], [-1.0, -2.0, -3.0, -4.0]], &device);
         let output = model.forward(input);
 
-        // (x * 2.0 + 0.5) + [0.25, 0.5, 0.75, 1.0]; see custom_ops.py
-        let expected = TensorData::from([[2.75f32, 5.0, 7.25, 9.5], [10.75, 13.0, 15.25, 17.5]]);
+        // relu((x * 2.0 + 0.5) + [0.25, 0.5, 0.75, 1.0]); see custom_ops.py
+        let expected = TensorData::from([[2.75f32, 5.0, 7.25, 9.5], [0.0, 0.0, 0.0, 0.0]]);
 
         output.to_data().assert_eq(&expected, true);
     }

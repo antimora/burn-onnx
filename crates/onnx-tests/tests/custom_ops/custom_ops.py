@@ -10,14 +10,17 @@
 # used to generate model: custom_ops.onnx
 #
 # The model chains three custom (non-built-in) operators whose semantics are
-# supplied by CustomOp hooks registered in onnx-tests/build.rs:
+# supplied by CustomOp hooks registered in onnx-tests/build.rs, plus a
+# built-in Relu whose codegen is replaced by a registered OpOverride:
 #   x -> ScaleShift(test.custom, scale=2.0, shift=0.5)
 #     -> AddWindow(test.custom, window constant initializer)
 #     -> MyIdentity(default domain)
+#     -> Relu (built-in, codegen overridden)
 #     -> y
 #
-# There is no ONNX reference implementation for these ops; the ground truth is
-# computed with numpy below and asserted in the Rust test with the same input.
+# There is no ONNX reference implementation for the custom ops; the ground
+# truth is computed with numpy below and asserted in the Rust test with the
+# same input.
 
 import numpy as np
 import onnx
@@ -47,13 +50,19 @@ def main():
     identity = helper.make_node(
         "MyIdentity",
         inputs=["y2"],
-        outputs=["y"],
+        outputs=["y3"],
         name="my_identity1",
         domain="",
     )
+    relu = helper.make_node(
+        "Relu",
+        inputs=["y3"],
+        outputs=["y"],
+        name="relu1",
+    )
 
     graph = helper.make_graph(
-        [scale_shift, add_window, identity],
+        [scale_shift, add_window, identity, relu],
         "custom_ops_graph",
         inputs=[helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 4])],
         outputs=[helper.make_tensor_value_info("y", TensorProto.FLOAT, [2, 4])],
@@ -80,11 +89,11 @@ def main():
     onnx.save(model, file_name)
     print(f"Finished exporting model to {file_name}")
 
-    # Ground truth for the Rust test input
+    # Ground truth for the Rust test input (negative row exercises the Relu)
     x = np.array(
-        [[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]], dtype=np.float32
+        [[1.0, 2.0, 3.0, 4.0], [-1.0, -2.0, -3.0, -4.0]], dtype=np.float32
     )
-    expected = (x * scale + shift) + window
+    expected = np.maximum((x * scale + shift) + window, 0.0)
     print(f"Test input: {x.tolist()}")
     print(f"Expected output: {expected.tolist()}")
 

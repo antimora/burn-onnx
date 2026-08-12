@@ -1,8 +1,8 @@
 use burn_onnx::ModelGen;
 use burn_onnx::ext::proc_macro2::TokenStream;
 use burn_onnx::ext::{
-    ArgType, CodegenContext, CustomNode, CustomOp, Imports, ProcessError, arg_to_ident,
-    quote::quote,
+    ArgType, CodegenContext, CustomNode, CustomOp, Imports, Node, NodeType, OpOverride,
+    ProcessError, arg_to_ident, quote::quote,
 };
 
 fn main() {
@@ -23,6 +23,7 @@ fn main() {
         .register_custom_op(ScaleShiftOp)
         .register_custom_op(AddWindowOp)
         .register_custom_op(MyIdentityOp)
+        .register_op_override(ReluOverride)
         .out_dir("model/")
         .run_from_script();
 
@@ -683,6 +684,27 @@ impl CustomOp for MyIdentityOp {
         let out = arg_to_ident(&node.outputs[0]);
         quote! {
             let #out = #input;
+        }
+    }
+}
+
+/// Codegen override for the built-in Relu: reroutes to a user kernel.
+/// Type inference still comes from the built-in Relu processor.
+struct ReluOverride;
+
+impl OpOverride for ReluOverride {
+    fn target(&self) -> NodeType {
+        NodeType::Relu
+    }
+
+    fn forward(&self, node: &Node, ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
+        let Node::Relu(relu) = node else {
+            panic!("ReluOverride received a non-Relu node");
+        };
+        let input = ctx.arg(&relu.inputs[0]);
+        let out = arg_to_ident(&relu.outputs[0]);
+        quote! {
+            let #out = crate::custom_ops::ops::my_relu(#input);
         }
     }
 }

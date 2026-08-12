@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use onnx_ir::{ArgType, CustomNode, CustomOpInference, HookCoverage, ProcessError};
+use onnx_ir::{ArgType, CustomNode, CustomOpInference, HookCoverage, Node, NodeType, ProcessError};
 use proc_macro2::TokenStream;
 
 use crate::burn::node_traits::Field;
@@ -58,6 +58,32 @@ pub trait CustomOp: Send + Sync + 'static {
     }
 }
 
+/// Codegen override for one built-in ONNX operator.
+///
+/// The built-in processor still performs type inference (overrides are
+/// codegen-only); the override replaces only the emitted code. It receives
+/// the typed [`Node`] so it can downcast to the concrete node variant.
+pub trait OpOverride: Send + Sync + 'static {
+    /// The built-in node type to override, e.g. `NodeType::MatMul`.
+    fn target(&self) -> NodeType;
+
+    /// Generate the forward-pass code for this node in place of the built-in.
+    fn forward(&self, node: &Node, ctx: &mut CodegenContext<'_, '_>) -> TokenStream;
+
+    /// Optional: extra imports emitted as `use` statements in the model file.
+    fn register_imports(&self, _imports: &mut Imports<'_>) {}
+
+    /// Optional: declare a module field in place of the built-in's.
+    fn field(&self, _node: &Node) -> Option<Field> {
+        None
+    }
+
+    /// Optional: weights/snapshot collection in place of the built-in's.
+    fn collect_snapshots(&self, _node: &Node, _field_name: &str) -> Vec<TensorSnapshot> {
+        vec![]
+    }
+}
+
 /// Registry of user codegen hooks, keyed by ONNX operator identity.
 ///
 /// Owned by `ModelGen` (behind `Arc`), shared with the onnx-ir parse pipeline
@@ -66,12 +92,14 @@ pub trait CustomOp: Send + Sync + 'static {
 #[derive(Default)]
 pub(crate) struct HookRegistry {
     customs: HashMap<(String, String), Box<dyn CustomOp>>,
+    overrides: HashMap<NodeType, Box<dyn OpOverride>>,
 }
 
 impl std::fmt::Debug for HookRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HookRegistry")
             .field("customs", &self.customs.keys().collect::<Vec<_>>())
+            .field("overrides", &self.overrides.keys().collect::<Vec<_>>())
             .finish()
     }
 }
@@ -91,6 +119,19 @@ impl HookRegistry {
         self.customs.insert(key, op);
     }
 
+    /// Register a built-in op override. Panics on duplicate target and on
+    /// `NodeType::Custom` (custom ops are handled by `add_custom_op`).
+    pub(crate) fn add_override(&mut self, over: Box<dyn OpOverride>) {
+        let target = over.target();
+        if target == NodeType::Custom {
+            panic!("OpOverride cannot target NodeType::Custom; register a CustomOp hook instead");
+        }
+        if self.overrides.contains_key(&target) {
+            panic!("Duplicate op override registration for {target:?}");
+        }
+        self.overrides.insert(target, over);
+    }
+
     /// Look up the hook for an ONNX operator identity.
     pub(crate) fn custom_for(&self, op_type: &str, domain: &str) -> Option<&dyn CustomOp> {
         self.customs
@@ -98,8 +139,13 @@ impl HookRegistry {
             .map(|b| b.as_ref())
     }
 
+    /// Look up the override for a built-in node type.
+    pub(crate) fn override_for(&self, node_type: &NodeType) -> Option<&dyn OpOverride> {
+        self.overrides.get(node_type).map(|b| b.as_ref())
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
-        self.customs.is_empty()
+        self.customs.is_empty() && self.overrides.is_empty()
     }
 }
 
@@ -197,5 +243,42 @@ mod tests {
     fn duplicate_registration_panics() {
         let mut registry = registry_with_test_op();
         registry.add_custom_op(Box::new(TestOp));
+    }
+
+    struct TestOverride(NodeType);
+
+    impl OpOverride for TestOverride {
+        fn target(&self) -> NodeType {
+            self.0.clone()
+        }
+
+        fn forward(&self, _node: &Node, _ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
+            TokenStream::new()
+        }
+    }
+
+    #[test]
+    fn override_lookup_by_node_type() {
+        let mut registry = HookRegistry::default();
+        assert!(registry.is_empty());
+        registry.add_override(Box::new(TestOverride(NodeType::MatMul)));
+        assert!(!registry.is_empty());
+        assert!(registry.override_for(&NodeType::MatMul).is_some());
+        assert!(registry.override_for(&NodeType::Relu).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "Duplicate op override registration")]
+    fn duplicate_override_panics() {
+        let mut registry = HookRegistry::default();
+        registry.add_override(Box::new(TestOverride(NodeType::MatMul)));
+        registry.add_override(Box::new(TestOverride(NodeType::MatMul)));
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot target NodeType::Custom")]
+    fn override_targeting_custom_panics() {
+        let mut registry = HookRegistry::default();
+        registry.add_override(Box::new(TestOverride(NodeType::Custom)));
     }
 }

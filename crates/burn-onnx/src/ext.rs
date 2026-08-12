@@ -9,7 +9,7 @@
 //! implementations build `TokenStream` values from the same crate build that
 //! `burn-onnx` links against.
 
-pub use crate::burn::custom_op::CustomOp;
+pub use crate::burn::custom_op::{CustomOp, OpOverride};
 pub use crate::burn::node_traits::{Field, arg_to_ident, create_lazy_snapshot};
 
 pub use onnx_ir::{

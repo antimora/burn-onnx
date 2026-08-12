@@ -1230,6 +1230,65 @@ mod tests {
         graph.codegen();
     }
 
+    /// Override that reroutes built-in Abs through a user kernel.
+    struct AbsOverride;
+
+    impl crate::ext::OpOverride for AbsOverride {
+        fn target(&self) -> onnx_ir::NodeType {
+            onnx_ir::NodeType::Abs
+        }
+
+        fn forward(
+            &self,
+            node: &Node,
+            ctx: &mut crate::ext::CodegenContext<'_, '_>,
+        ) -> TokenStream {
+            let Node::Abs(abs) = node else {
+                panic!("expected Abs node");
+            };
+            let input = ctx.arg(&abs.inputs[0]);
+            let out = crate::burn::node_traits::arg_to_ident(&abs.outputs[0]);
+            quote! {
+                let #out = my_crate::kernels::fast_abs(#input);
+            }
+        }
+
+        fn register_imports(&self, imports: &mut crate::ext::Imports<'_>) {
+            imports.register("my_crate::kernels");
+        }
+    }
+
+    #[test]
+    fn op_override_replaces_builtin_codegen() {
+        let mut registry = HookRegistry::default();
+        registry.add_override(Box::new(AbsOverride));
+
+        let graph = build_abs_chain(2).with_hooks(Arc::new(registry));
+        let code = format_tokens(graph.codegen());
+
+        assert!(
+            code.contains("let t0 = my_crate::kernels::fast_abs(input);"),
+            "override output missing:\n{code}"
+        );
+        assert!(
+            code.contains("let t1 = my_crate::kernels::fast_abs(t0);"),
+            "override output missing for second node:\n{code}"
+        );
+        assert!(
+            code.contains("use my_crate::kernels;"),
+            "override import missing:\n{code}"
+        );
+        // The built-in Abs codegen must not appear anywhere
+        assert!(!code.contains(".abs()"), "builtin abs leaked:\n{code}");
+    }
+
+    #[test]
+    fn builtin_codegen_unchanged_without_override() {
+        let graph = build_abs_chain(1);
+        let code = format_tokens(graph.codegen());
+        assert!(code.contains(".abs()"), "builtin abs missing:\n{code}");
+    }
+
     /// Build a chain of N abs nodes: input -> t0 -> t1 -> ... -> t{N-1}
     fn build_abs_chain(n: usize) -> BurnGraph {
         let mut graph = BurnGraph::default();
