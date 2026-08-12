@@ -913,6 +913,10 @@ registered on `ModelGen`. Everything a hook needs is exported from the single
 `burn_onnx::ext` module, including `proc_macro2`/`quote` re-exports so the
 emitted tokens come from the same crate build that burn-onnx links.
 
+A runnable version of everything below lives in `examples/custom-op-hooks/`
+(two custom ops, one override, verified against a numpy reference):
+`cargo run -p custom-op-hooks --bin custom_op_demo`.
+
 ### CustomOp: implement a non-built-in operator
 
 A `CustomOp` is matched by ONNX operator identity `(op_type, domain)` and
@@ -1099,6 +1103,14 @@ impl OpOverride for MyMatMul {
 
 // ModelGen::new()...register_op_override(MyMatMul)...
 ```
+
+`target()` names an IR node type, which is not always the ONNX op type the
+model was exported with: the parser rewrites some patterns before codegen (a
+`MatMul` with a constant 2D weight becomes `Linear`, `Conv` becomes
+`Conv1d`/`Conv2d`/`Conv3d`, decomposed attention coalesces into `Attention`).
+An override whose target was rewritten never fires, silently. Check the
+generated code, or `ModelGen::development(true)` which dumps the parsed graph,
+to see the node types your override will actually be matched against.
 
 An override wins over the built-in for every node of the target type,
 including its `field()`/`collect_snapshots()`. The defaults suppress the

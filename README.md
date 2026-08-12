@@ -26,6 +26,8 @@ TensorFlow, and other frameworks on any Burn backend - from WebAssembly to CUDA.
 - Works with any Burn backend (CPU, GPU, WebGPU, embedded)
 - Supports both `std` and `no_std` environments
 - Full opset compliance: all supported operators work across ONNX opset versions 1 through 24
+- Extensible: hook operators outside the supported set (custom/vendor domains) to your own Rust
+  kernels, or override the generated code for a built-in operator
 - Graph simplification (enabled by default): attention coalescing, constant folding, constant shape
   propagation, idempotent-op elimination, identity-element elimination, CSE, dead code elimination,
   and permute-reshape detection
@@ -74,10 +76,11 @@ For detailed usage instructions, see the
 
 ## Examples
 
-| Example                                                       | Description                         |
-| ------------------------------------------------------------- | ----------------------------------- |
-| [onnx-inference](examples/onnx-inference)                     | Basic ONNX model inference          |
-| [image-classification-web](examples/image-classification-web) | WebAssembly/WebGPU image classifier |
+| Example                                                       | Description                                    |
+| ------------------------------------------------------------- | ---------------------------------------------- |
+| [onnx-inference](examples/onnx-inference)                     | Basic ONNX model inference                     |
+| [image-classification-web](examples/image-classification-web) | WebAssembly/WebGPU image classifier            |
+| [custom-op-hooks](examples/custom-op-hooks)                   | Hooks for custom ops and built-in op overrides |
 
 ## Model Validation
 
@@ -89,7 +92,10 @@ numerical accuracy against ONNX Runtime reference outputs.
 ## Supported Operators
 
 See the [Supported ONNX Operators](SUPPORTED-ONNX-OPS.md) table for the complete list of supported
-operators.
+operators. Operators outside that table (custom or vendor domains such as `com.microsoft`, or
+op types this crate does not implement yet) do not have to block an import: register a hook for
+them with `ModelGen::register_custom_op` and supply the Rust code yourself. See the
+[custom-op-hooks example](examples/custom-op-hooks).
 
 ## Contributing
 

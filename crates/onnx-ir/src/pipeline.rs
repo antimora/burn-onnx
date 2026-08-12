@@ -194,15 +194,18 @@ impl fmt::Display for Error {
                 write!(f, "Processing error: {e}")
             }
             Error::MissingCustomOpHooks(missing) => {
-                writeln!(
+                // No trailing "register a hook" instruction: the actionable
+                // hint names an API this layer does not know about, so the
+                // caller appends it (ModelGen points at register_custom_op).
+                write!(
                     f,
                     "model contains {} custom op(s) with no covering inference hook:",
                     missing.len()
                 )?;
                 for hook in missing {
-                    writeln!(f, "  - {hook}")?;
+                    write!(f, "\n  - {hook}")?;
                 }
-                write!(f, "Register a hook for each custom op before parsing.")
+                Ok(())
             }
         }
     }
@@ -946,7 +949,10 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("custom.domain::FftLike"), "got: {msg}");
         assert!(msg.contains("used by 1 node(s)"), "got: {msg}");
-        assert!(msg.contains("Register a hook"), "got: {msg}");
+        // The actionable "register a hook via ..." hint belongs to the caller
+        // (ModelGen appends it); this layer only reports what is missing.
+        assert!(!msg.contains("register"), "got: {msg}");
+        assert!(msg.trim_end() == msg, "message must not end in whitespace");
     }
 
     #[test]

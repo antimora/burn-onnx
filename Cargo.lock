@@ -2482,6 +2482,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "custom-op-hooks"
+version = "0.22.0-pre.1"
+dependencies = [
+ "burn",
+ "burn-onnx",
+ "burn-store",
+]
+
+[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"

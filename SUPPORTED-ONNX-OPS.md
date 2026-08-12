@@ -453,4 +453,5 @@ If a model contains custom ops with no covering hook, `ModelGen` fails fast
 with a list of the missing `(domain, op_type)` pairs. Custom ops and override
 targets inside `If`/`Loop`/`Scan` subgraph bodies are not supported yet and
 are rejected with a clear error. See the "Custom Operators and Overrides"
-section of `DEVELOPMENT-GUIDE.md` for a worked example.
+section of `DEVELOPMENT-GUIDE.md` for the full reference, and
+`examples/custom-op-hooks/` for a runnable example.

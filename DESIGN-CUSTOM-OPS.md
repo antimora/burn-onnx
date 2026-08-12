@@ -1104,7 +1104,21 @@ and fail with a friendly message" before any codegen capability lands.
     `CustomOp` later, collapsing the common case to a few declarative lines
     with no proc-macro exposure. The full trait remains the escape hatch.
 
-12. Config parsed once. `infer_output_types` and `forward` both parse the same
+12. Build-time-only constant inputs stay live. A hook that reads a constant
+    input via `Argument::value()` and inlines the values (the `ChannelScale`
+    op in `examples/custom-op-hooks/`) leaves nothing consuming that input at
+    runtime - but the graph still sees the custom node as a consumer, so the
+    initializer is lifted to a `Param` field, written into the `.bpk`, and
+    bound by an unused `let ... = self.constantN.val();` line that trips
+    `unused_variables` in the user's build. Harmless, but it wastes weight-file
+    space and puts a warning in code the user cannot edit. A fix needs the hook
+    to declare which inputs it consumes at build time (e.g. a
+    `build_time_inputs()` method) so the pipeline can drop them; that is an API
+    addition, deferred rather than bolted on. (Unused bindings from
+    multi-output built-ins - dropout masks, LSTM states - are a pre-existing,
+    separate instance of the same warning class.)
+
+13. Config parsed once. `infer_output_types` and `forward` both parse the same
     attributes (validation at parse time, values at codegen time); built-in
     nodes avoid this via `extract_config`, custom ops cannot because the two
     calls happen in different phases on different node snapshots. The
