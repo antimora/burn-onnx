@@ -802,7 +802,7 @@ The `impl_node_codegen_dispatch!` macro (`node_codegen.rs:11`) already has
 catch-all arms (`_ => panic!("Unsupported node type ...")` for
 `inputs`/`outputs`/`forward`; silent defaults for the rest), so before PR 5
 lands, a `Node::Custom` reaching codegen panics with a clear message; PR 1
-upgrades those catch-alls to name the custom op. The macro-generated impl is
+upgrades those catch-all arms to name the custom op. The macro-generated impl is
 renamed to `*_builtin` inherent methods, and the macro gains explicit
 `Node::Custom(c)` arms for the structural accessors (`&c.inputs` / `&c.outputs`);
 without them the builtin catch-all would panic on wiring queries that hooks
@@ -1003,7 +1003,7 @@ Six PRs, each independently reviewable:
    opset map. Register the hook-free `CustomProcessor` in the global registry
    (4.4) so parse, `build_node`, and the simplify exclusions (4.7) work with no
    threading. Codegen gets explicit structural-accessor arms plus a clear
-   "custom op requires a registered hook" panic in the dispatch catch-alls.
+   "custom op requires a registered hook" panic in the dispatch catch-all arms.
    This alone lets users parse models with unknown ops, useful for debugging.
 
 2. Public extension surface (4.6, 5.0). Promote the `NodeType` re-export,
