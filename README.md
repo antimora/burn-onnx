@@ -10,7 +10,8 @@
 
 **Import ONNX models into the [Burn](https://burn.dev) deep learning framework.**
 
-[Repository](https://github.com/tracel-ai/burn-onnx) | [Burn Repository](https://github.com/tracel-ai/burn)
+[Repository](https://github.com/tracel-ai/burn-onnx) |
+[Burn Repository](https://github.com/tracel-ai/burn)
 
 </div>
 
@@ -90,19 +91,19 @@ ModelGen::new()
     .run_from_script();
 ```
 
-- **`CustomOp`** supplies type inference and code generation for one ONNX `(op_type, domain)`.
-  It can read the node's attributes and its constant inputs.
+- **`CustomOp`** supplies type inference and code generation for one ONNX `(op_type, domain)`. It
+  can read the node's attributes and its constant inputs.
 - **`OpOverride`** replaces the generated code for a built-in operator, to route it to a fused,
   quantized, or hardware-specific kernel of your own. Type inference still comes from the built-in.
 
 Everything a hook needs is re-exported from `burn_onnx::ext`, so implementing one does not mean
 depending on `onnx-ir` or matching `proc-macro2`/`quote` versions by hand.
 
-Not sure which operators a given model needs? Run the import with no hooks registered: it fails
-with a list of every unsupported operator, its domain, and how many nodes use it.
+Not sure which operators a given model needs? Run the import with no hooks registered: it fails with
+a list of every unsupported operator, its domain, and how many nodes use it.
 
-Runnable example: [custom-op-hooks](examples/custom-op-hooks). Full reference: "Custom Operators
-and Overrides" in the [Development Guide](DEVELOPMENT-GUIDE.md).
+Runnable example: [custom-op-hooks](examples/custom-op-hooks). Full reference: "Custom Operators and
+Overrides" in the [Development Guide](DEVELOPMENT-GUIDE.md).
 
 ## Examples
 
@@ -114,7 +115,8 @@ and Overrides" in the [Development Guide](DEVELOPMENT-GUIDE.md).
 
 ## Model Validation
 
-We validate burn-onnx against [26 real-world models](https://github.com/tracel-ai/burn-onnx/tree/main/crates/model-checks)
+We validate burn-onnx against
+[26 real-world models](https://github.com/tracel-ai/burn-onnx/tree/main/crates/model-checks)
 spanning image classification, object detection, depth estimation, NLP, speech, and generative AI.
 Each model check verifies the full pipeline: ONNX import, Rust codegen, weight loading, and
 numerical accuracy against ONNX Runtime reference outputs.
