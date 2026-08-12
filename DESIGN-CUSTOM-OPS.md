@@ -198,9 +198,10 @@ read-only wrapper rather than the internal enum:
 
 ```rust
 // crates/onnx-ir/src/ir/attribute.rs
-pub struct PublicAttributes<'a>(&'a Attributes);
+pub struct PublicAttributesOwned(/* private scalar/tensor value map */);
 
-impl<'a> PublicAttributes<'a> {
+impl PublicAttributesOwned {
+    pub(crate) fn from_internal(attrs: &Attributes) -> Self;
     pub fn get_i64(&self, name: &str) -> Option<i64>;
     pub fn get_i64s(&self, name: &str) -> Option<&[i64]>;
     pub fn get_f32(&self, name: &str) -> Option<f32>;
@@ -216,9 +217,15 @@ impl<'a> PublicAttributes<'a> {
 Reason for the wrapper: the internal enum has `DeferredGraph` / `Graph` variants
 and `pub(crate)` access we don't want to leak (graph-valued attributes are
 explicitly out of scope for v1, matching non-goal "subgraph hooks"). Hiding it
-behind getter methods keeps the existing internals private. An owned form
-(`PublicAttributesOwned`) is attached to `CustomNode` so the user can hold the
-attributes past the parse scope.
+behind getter methods keeps the existing internals private. The owned form is
+attached to `CustomNode` so the user can hold the attributes past the parse
+scope.
+
+Implementation correction: an earlier draft also had a borrowed
+`PublicAttributes<'a>(&'a Attributes)` view. It was dropped: in the v2 contract
+every hook method receives `&CustomNode` (or the typed `Node`), so the borrowed
+form has no consumer, and `CustomNode` must own its attributes anyway because
+it outlives the parse.
 
 Implementation correction: the owned form must NOT wrap the internal
 `AttributeValue` map. Auto traits are type-based, so embedding `AttributeValue`
@@ -489,11 +496,11 @@ Verified current state:
 pub use ir::NodeType;                       // promote the re-export
 pub use processor::ProcessError;            // expose the error type
 pub use node::custom::CustomNode;           // plus HookCoverage, CustomOpInference
-// PublicAttributes / PublicAttributesOwned ride the existing `pub use ir::*;`
+// PublicAttributesOwned rides the existing `pub use ir::*;`
 ```
 
 `RawNode` deliberately stays crate-private; the public contract is expressed
-entirely through `CustomNode` and `PublicAttributes`, which is why
+entirely through `CustomNode` and `PublicAttributesOwned`, which is why
 `CustomOpInference::infer` takes `&CustomNode` rather than `&RawNode`.
 
 Constant inputs deserve a callout because they make ops like FFT practical:
@@ -947,7 +954,9 @@ Six PRs, each independently reviewable:
    `CodegenContext`, `Imports`, and the curated re-exports (including
    `proc_macro2` / `quote`). No behavior change; pure surfacing.
 
-3. `PublicAttributes` wrapper + owned form. Tests on each accessor.
+3. `PublicAttributesOwned` accessor completeness. The owned form itself lands
+   with PR 1 (`CustomNode` needs it); this PR adds tests on each accessor. The
+   borrowed `PublicAttributes<'a>` from the earlier draft is dropped (4.3).
 
 4. `CustomOp` trait + `CustomOpInference` + `PipelineHooks` threading (4.5,
    type-inference phase only) + `HookRegistry` + `ModelGen::register_custom_op`

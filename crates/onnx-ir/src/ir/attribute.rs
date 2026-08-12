@@ -348,3 +348,99 @@ impl AttributeValue {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn attrs_fixture() -> Attributes {
+        let mut attrs = Attributes::new();
+        attrs.insert("n_fft".into(), AttributeValue::Int64(1024));
+        attrs.insert("axes".into(), AttributeValue::Int64s(vec![0, 1]));
+        attrs.insert("scale".into(), AttributeValue::Float32(0.5));
+        attrs.insert("scales".into(), AttributeValue::Float32s(vec![1.0, 2.0]));
+        attrs.insert("mode".into(), AttributeValue::String("real".into()));
+        attrs.insert(
+            "modes".into(),
+            AttributeValue::Strings(vec!["a".into(), "b".into()]),
+        );
+        attrs.insert(
+            "window".into(),
+            AttributeValue::Tensor(TensorData::new(vec![0.25f32, 0.75], [2usize])),
+        );
+        attrs.insert(
+            "windows".into(),
+            AttributeValue::Tensors(vec![
+                TensorData::new(vec![1i64], [1usize]),
+                TensorData::new(vec![2i64, 3], [2usize]),
+            ]),
+        );
+        attrs.insert(
+            "body".into(),
+            AttributeValue::DeferredGraph(DeferredGraph {
+                proto: Arc::new(GraphProto::default()),
+                opset_version: 16,
+                domain_opsets: crate::pipeline::DomainOpsets::new(Default::default(), 16),
+                name_registry: None,
+                base_path: None,
+            }),
+        );
+        attrs
+    }
+
+    #[test]
+    fn scalar_accessors() {
+        let attrs = PublicAttributesOwned::from_internal(&attrs_fixture());
+        assert_eq!(attrs.get_i64("n_fft"), Some(1024));
+        assert_eq!(attrs.get_f32("scale"), Some(0.5));
+        assert_eq!(attrs.get_string("mode"), Some("real"));
+    }
+
+    #[test]
+    fn list_accessors() {
+        let attrs = PublicAttributesOwned::from_internal(&attrs_fixture());
+        assert_eq!(attrs.get_i64s("axes"), Some(&[0i64, 1][..]));
+        assert_eq!(attrs.get_f32s("scales"), Some(&[1.0f32, 2.0][..]));
+        assert_eq!(
+            attrs.get_strings("modes"),
+            Some(&["a".to_string(), "b".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn tensor_accessors() {
+        let attrs = PublicAttributesOwned::from_internal(&attrs_fixture());
+        let window = attrs.get_tensor("window").unwrap();
+        assert_eq!(window.to_vec::<f32>().unwrap(), vec![0.25, 0.75]);
+        let windows = attrs.get_tensors("windows").unwrap();
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[1].to_vec::<i64>().unwrap(), vec![2, 3]);
+    }
+
+    #[test]
+    fn graph_attributes_are_dropped() {
+        let attrs = PublicAttributesOwned::from_internal(&attrs_fixture());
+        let mut names: Vec<&str> = attrs.names().collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            vec![
+                "axes", "mode", "modes", "n_fft", "scale", "scales", "window", "windows"
+            ]
+        );
+    }
+
+    #[test]
+    fn wrong_type_and_absent_lookups_return_none() {
+        let attrs = PublicAttributesOwned::from_internal(&attrs_fixture());
+        assert_eq!(attrs.get_i64("scale"), None);
+        assert_eq!(attrs.get_i64s("n_fft"), None);
+        assert_eq!(attrs.get_f32("n_fft"), None);
+        assert_eq!(attrs.get_f32s("axes"), None);
+        assert_eq!(attrs.get_string("window"), None);
+        assert_eq!(attrs.get_strings("mode"), None);
+        assert!(attrs.get_tensor("windows").is_none());
+        assert!(attrs.get_tensors("window").is_none());
+        assert_eq!(attrs.get_i64("nonexistent"), None);
+    }
+}
