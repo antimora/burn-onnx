@@ -143,10 +143,6 @@ impl HookRegistry {
     pub(crate) fn override_for(&self, node_type: &NodeType) -> Option<&dyn OpOverride> {
         self.overrides.get(node_type).map(|b| b.as_ref())
     }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.customs.is_empty() && self.overrides.is_empty()
-    }
 }
 
 impl CustomOpInference for HookRegistry {
@@ -260,9 +256,7 @@ mod tests {
     #[test]
     fn override_lookup_by_node_type() {
         let mut registry = HookRegistry::default();
-        assert!(registry.is_empty());
         registry.add_override(Box::new(TestOverride(NodeType::MatMul)));
-        assert!(!registry.is_empty());
         assert!(registry.override_for(&NodeType::MatMul).is_some());
         assert!(registry.override_for(&NodeType::Relu).is_none());
     }

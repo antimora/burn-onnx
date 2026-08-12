@@ -82,8 +82,54 @@ impl PipelineHooks {
     }
 }
 
+/// A custom op present in the model that no registered hook covers.
+#[derive(Debug, Clone)]
+pub struct MissingHook {
+    /// Raw ONNX op_type of the uncovered operator.
+    pub op_type: String,
+    /// Raw ONNX domain ("" = default domain).
+    pub domain: String,
+    /// Number of nodes in the graph using this operator.
+    pub node_count: usize,
+    /// The opset the model imports for the operator's domain.
+    pub model_opset: usize,
+    /// Why the operator is uncovered (`NoHook` or `OpsetMismatch`).
+    pub coverage: crate::node::custom::HookCoverage,
+}
+
+impl fmt::Display for MissingHook {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.domain.is_empty() {
+            write!(f, "{}", self.op_type)?;
+        } else {
+            write!(f, "{}::{}", self.domain, self.op_type)?;
+        }
+        write!(f, " used by {} node(s)", self.node_count)?;
+        if let crate::node::custom::HookCoverage::OpsetMismatch {
+            supported_min,
+            supported_max,
+        } = &self.coverage
+        {
+            match supported_max {
+                Some(max) => write!(
+                    f,
+                    " (hook covers opsets {supported_min}..={max}, model uses {})",
+                    self.model_opset
+                )?,
+                None => write!(
+                    f,
+                    " (hook covers opsets {supported_min}.., model uses {})",
+                    self.model_opset
+                )?,
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Errors that can occur when parsing ONNX models
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// Failed to open or read the ONNX file
     Io { path: String, error: std::io::Error },
@@ -102,6 +148,13 @@ pub enum Error {
 
     /// Generic processing error
     Processing(ProcessError),
+
+    /// Custom ops present that no registered inference hook covers.
+    ///
+    /// Only raised when hooks are registered (via
+    /// [`OnnxGraphBuilder::with_custom_op_inference`]); a hook-less parse
+    /// keeps the tolerant same-as-input fallback for inspection.
+    MissingCustomOpHooks(Vec<MissingHook>),
 }
 
 impl fmt::Display for Error {
@@ -131,6 +184,17 @@ impl fmt::Display for Error {
             }
             Error::Processing(e) => {
                 write!(f, "Processing error: {e}")
+            }
+            Error::MissingCustomOpHooks(missing) => {
+                writeln!(
+                    f,
+                    "model contains {} custom op(s) with no covering inference hook:",
+                    missing.len()
+                )?;
+                for hook in missing {
+                    writeln!(f, "  - {hook}")?;
+                }
+                write!(f, "Register a hook for each custom op before parsing.")
             }
         }
     }
@@ -480,6 +544,16 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
         state.processed_nodes = nodes;
     }
 
+    // Coverage runs before type inference: an uncovered custom op would get
+    // the same-as-input fallback there, and a possibly-wrong guessed type
+    // then fails a *downstream* node with an unrelated cascade error before
+    // any friendly summary could be produced. Hook-less parses skip this and
+    // keep the tolerant fallback (useful for inspection/debugging).
+    if let Some(inference) = hooks.inference() {
+        log::debug!(" PHASE 2c: Custom-op coverage check ");
+        check_custom_op_coverage(&state_rc.borrow().processed_nodes, inference.as_ref())?;
+    }
+
     log::debug!(" PHASE 3: Type Inference ");
     type_inference::infer_types(&state_rc, opset_version, hooks).map_err(Error::TypeInference)?;
 
@@ -500,6 +574,48 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
         &mut outputs,
         state_rc,
     ))
+}
+
+/// Phase 2c: verify every custom op is covered by the registered hooks.
+///
+/// Aggregates all uncovered `(domain, op_type)` pairs with usage counts so
+/// the user sees the complete list at once instead of failing one op at a
+/// time.
+fn check_custom_op_coverage(
+    nodes: &[crate::ir::RawNode],
+    hooks: &dyn CustomOpInference,
+) -> Result<(), Error> {
+    use std::collections::BTreeMap;
+
+    let mut missing: BTreeMap<(String, String), MissingHook> = BTreeMap::new();
+
+    for node in nodes.iter().filter(|n| n.node_type == NodeType::Custom) {
+        // Synthetic nodes never carry NodeType::Custom, but stay defensive.
+        let Some(identity) = node.custom_identity.as_ref() else {
+            continue;
+        };
+        match hooks.coverage(&identity.op_type, &identity.domain, identity.domain_opset) {
+            crate::node::custom::HookCoverage::Covered => {}
+            coverage => {
+                missing
+                    .entry((identity.domain.clone(), identity.op_type.clone()))
+                    .and_modify(|m| m.node_count += 1)
+                    .or_insert_with(|| MissingHook {
+                        op_type: identity.op_type.clone(),
+                        domain: identity.domain.clone(),
+                        node_count: 1,
+                        model_opset: identity.domain_opset,
+                        coverage,
+                    });
+            }
+        }
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::MissingCustomOpHooks(missing.into_values().collect()))
+    }
 }
 
 /// Opset version for every domain listed in the model's `opset_import`.
@@ -777,6 +893,100 @@ mod tests {
             &custom.outputs[0].ty,
             ArgType::Tensor(t) if t.dtype == DType::F64 && t.rank == 3
         ));
+    }
+
+    /// Inference with no coverage for anything (empty registry equivalent).
+    struct NoCoverageInference;
+
+    impl crate::node::custom::CustomOpInference for NoCoverageInference {
+        fn coverage(
+            &self,
+            _op_type: &str,
+            _domain: &str,
+            _opset: usize,
+        ) -> crate::node::custom::HookCoverage {
+            crate::node::custom::HookCoverage::NoHook
+        }
+
+        fn infer(
+            &self,
+            _node: &crate::node::custom::CustomNode,
+        ) -> Result<Option<Vec<ArgType>>, ProcessError> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn coverage_pre_pass_reports_uncovered_ops() {
+        let bytes = single_node_model(
+            "custom.domain",
+            "FftLike",
+            &[("", 16), ("custom.domain", 2)],
+        );
+        let err = OnnxGraphBuilder::new()
+            .with_custom_op_inference(Arc::new(NoCoverageInference))
+            .parse_bytes(&bytes)
+            .unwrap_err();
+
+        assert!(matches!(err, Error::MissingCustomOpHooks(_)));
+        let msg = format!("{err}");
+        assert!(msg.contains("custom.domain::FftLike"), "got: {msg}");
+        assert!(msg.contains("used by 1 node(s)"), "got: {msg}");
+        assert!(msg.contains("Register a hook"), "got: {msg}");
+    }
+
+    #[test]
+    fn coverage_pre_pass_reports_opset_mismatch() {
+        struct MismatchInference;
+
+        impl crate::node::custom::CustomOpInference for MismatchInference {
+            fn coverage(
+                &self,
+                _op_type: &str,
+                _domain: &str,
+                _opset: usize,
+            ) -> crate::node::custom::HookCoverage {
+                crate::node::custom::HookCoverage::OpsetMismatch {
+                    supported_min: 1,
+                    supported_max: Some(1),
+                }
+            }
+
+            fn infer(
+                &self,
+                _node: &crate::node::custom::CustomNode,
+            ) -> Result<Option<Vec<ArgType>>, ProcessError> {
+                Ok(None)
+            }
+        }
+
+        let bytes = single_node_model(
+            "custom.domain",
+            "FftLike",
+            &[("", 16), ("custom.domain", 3)],
+        );
+        let err = OnnxGraphBuilder::new()
+            .with_custom_op_inference(Arc::new(MismatchInference))
+            .parse_bytes(&bytes)
+            .unwrap_err();
+
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("hook covers opsets 1..=1, model uses 3"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn hookless_parse_skips_coverage_pre_pass() {
+        // No hooks registered: custom ops keep the tolerant fallback so the
+        // graph stays inspectable (PR 1 behavior).
+        let bytes = single_node_model(
+            "custom.domain",
+            "FftLike",
+            &[("", 16), ("custom.domain", 2)],
+        );
+        assert!(OnnxGraphBuilder::new().parse_bytes(&bytes).is_ok());
     }
 
     #[test]

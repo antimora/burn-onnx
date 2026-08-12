@@ -904,6 +904,127 @@ let weights_path = concat!(env!("OUT_DIR"), "/model/<model-name>.bpk");
 let model: Model = Model::from_file(weights_path, &device);
 ```
 
+## Custom Operators and Overrides
+
+Operators that are not built in (custom domains like `com.microsoft`, or
+unknown op_types in the default domain) parse as `Node::Custom` instead of
+failing the import. Their type inference and code generation come from hooks
+registered on `ModelGen`. Everything a hook needs is exported from the single
+`burn_onnx::ext` module, including `proc_macro2`/`quote` re-exports so the
+emitted tokens come from the same crate build that burn-onnx links.
+
+### CustomOp: implement a non-built-in operator
+
+A `CustomOp` is matched by ONNX operator identity `(op_type, domain)` and
+supplies both type inference (used during parsing) and code generation:
+
+```rust
+// build.rs of the crate importing the model
+use burn_onnx::ModelGen;
+use burn_onnx::ext::proc_macro2::TokenStream;
+use burn_onnx::ext::{
+    ArgType, CodegenContext, CustomNode, CustomOp, Imports, ProcessError,
+    arg_to_ident, quote::quote,
+};
+
+struct FftReal;
+
+impl CustomOp for FftReal {
+    fn op_type(&self) -> &str { "FftReal" }
+    fn domain(&self) -> &str { "custom_domain" }        // "" = default domain
+    fn opset_range(&self) -> (usize, Option<usize>) { (1, None) }
+
+    fn infer_output_types(&self, node: &CustomNode) -> Result<Vec<ArgType>, ProcessError> {
+        // Attributes are exposed read-only:
+        let n_fft = node.attrs.get_i64("n_fft")
+            .ok_or_else(|| ProcessError::MissingAttribute("n_fft".into()))?;
+        let _ = n_fft;
+        // Constant inputs (e.g. a window tensor) are readable here:
+        //   let window = node.inputs.get(1).and_then(|a| a.value());
+        // Must return exactly node.outputs.len() types.
+        Ok(vec![node.inputs[0].ty.clone()])
+    }
+
+    fn forward(&self, node: &CustomNode, ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
+        let input = ctx.arg(&node.inputs[0]);        // clone tracking handled
+        let out = arg_to_ident(&node.outputs[0]);
+        let n_fft = node.attrs.get_i64("n_fft").unwrap();
+        quote! {
+            let #out = ops::fft_real(#input, #n_fft);
+        }
+    }
+
+    fn register_imports(&self, imports: &mut Imports<'_>) {
+        imports.register("my_crate::ops");           // emitted as `use my_crate::ops;`
+    }
+}
+
+fn main() {
+    ModelGen::new()
+        .input("model.onnx")
+        .out_dir("model/")
+        .register_custom_op(FftReal)
+        .run_from_script();
+}
+```
+
+The runtime function (`my_crate::ops::fft_real` above) lives in your crate and
+takes/returns Burn tensors. The generated `forward` runs inside the model
+struct, so emitted code may also reference `&self.device`.
+
+Notes:
+
+- Consumers' output preferences are not consulted for custom ops; the hook is
+  the sole authority on its output types.
+- A constant input still produces a zero-initialized `Param` field in the
+  generated struct. A hook that reads the value via `Argument::value()` and
+  inlines it leaves that field unused (safe with `Model::new`); a hook that
+  consumes the input via `ctx.arg()` gets the runtime tensor, which is only
+  correct when the model is loaded with `from_file`/`from_bytes`.
+- Custom nodes are opaque to graph simplification: they are never CSE-merged,
+  folded, or pattern-matched across. Dead-node elimination still applies.
+- If the model contains custom ops with no covering hook (or the hook's
+  `opset_range` excludes the model's domain opset), parsing fails fast with a
+  list of every missing `(domain, op_type)` pair and usage counts.
+- Custom ops inside `If`/`Loop`/`Scan` subgraph bodies are type-inferred
+  through the hooks, but their code generation is not supported yet.
+
+### OpOverride: replace codegen for a built-in operator
+
+An `OpOverride` is matched by `NodeType` and replaces only the generated code;
+the built-in processor still performs type inference:
+
+```rust
+use burn_onnx::ext::{Node, NodeType, OpOverride};
+
+struct MyMatMul;
+
+impl OpOverride for MyMatMul {
+    fn target(&self) -> NodeType { NodeType::MatMul }
+
+    fn forward(&self, node: &Node, ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
+        let Node::MatMul(mm) = node else { panic!("expected MatMul") };
+        let lhs = ctx.arg(&mm.inputs[0]);
+        let rhs = ctx.arg(&mm.inputs[1]);
+        let out = arg_to_ident(&mm.outputs[0]);
+        quote! {
+            let #out = my_crate::kernels::custom_matmul(#lhs, #rhs);
+        }
+    }
+}
+
+// ModelGen::new()...register_op_override(MyMatMul)...
+```
+
+An override wins over the built-in for every node of the target type,
+including its `field()`/`collect_snapshots()` (the defaults suppress the
+built-in's field, since the override's forward will not reference it).
+
+Direct `onnx-ir` users can plug inference-only hooks into the parser with
+`OnnxGraphBuilder::with_custom_op_inference` (the `CustomOpInference` trait);
+a hook-less parse keeps a tolerant same-as-input fallback so graphs with
+unknown ops stay inspectable.
+
 ## Resources
 
 1. [PyTorch to ONNX](https://pytorch.org/docs/stable/onnx.html)

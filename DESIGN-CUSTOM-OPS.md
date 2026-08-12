@@ -865,6 +865,15 @@ cannot be type-inferred, so failing here is correct. Built-in op overrides live
 only in `burn-onnx` and need no onnx-ir validation (the built-in always has a
 processor).
 
+Implementation note on gating: the pre-pass runs only when an inference hook
+object is registered at all. A hook-less `OnnxGraphBuilder` parse keeps the
+tolerant same-as-input fallback (the PR 1 debugging value: unknown-op models
+stay inspectable). `ModelGen` therefore passes its `HookRegistry` Arc
+unconditionally, even when empty, so build scripts always get the aggregated
+missing-hook summary. The onnx-ir error text does not name `ModelGen`
+(layering); `ModelGen` matches `Error::MissingCustomOpHooks` and appends the
+"Register hooks via ModelGen::register_custom_op" hint itself.
+
 `ModelGen` maps the error to a user-facing message:
 
 ```

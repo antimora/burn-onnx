@@ -386,13 +386,23 @@ impl ModelGen {
         log::debug!("Development mode: {:?}", self.development);
         log::debug!("Output file: {out_file:?}");
 
-        let mut builder = OnnxGraphBuilder::new().simplify(self.simplify);
-        if !self.hooks.is_empty() {
-            builder = builder.with_custom_op_inference(self.hooks.clone());
-        }
-        let graph = builder
+        // The registry is passed even when empty: with hooks present (any
+        // registry at all), the pipeline's coverage pre-pass reports ALL
+        // uncovered custom ops in one friendly summary instead of failing
+        // deep inside type inference.
+        let graph = OnnxGraphBuilder::new()
+            .simplify(self.simplify)
+            .with_custom_op_inference(self.hooks.clone())
             .parse_file(input)
-            .unwrap_or_else(|e| panic!("Failed to parse ONNX file '{}': {}", input.display(), e));
+            .unwrap_or_else(|e| match e {
+                onnx_ir::Error::MissingCustomOpHooks(_) => panic!(
+                    "Failed to parse ONNX file '{}': {}\nRegister hooks via \
+                     ModelGen::register_custom_op.",
+                    input.display(),
+                    e
+                ),
+                e => panic!("Failed to parse ONNX file '{}': {}", input.display(), e),
+            });
 
         if self.development {
             self.write_debug_file(&out_file, "onnx.txt", &graph);
