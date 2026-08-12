@@ -16,8 +16,10 @@ mod tensor_store;
 
 // Public API - only expose essentials
 pub use ir::*;
+pub use node::custom::CustomNode;
 pub use node::*;
 pub use pipeline::{Error, OnnxGraphBuilder};
+pub use processor::ProcessError;
 
 /// Generated protobuf bindings for the ONNX wire format messages that
 /// sibling crates need to decode on-disk artifacts.

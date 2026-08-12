@@ -7,8 +7,8 @@
 
 mod test_utils;
 
+use onnx_ir::CustomNode;
 use onnx_ir::ir::Node;
-use onnx_ir::node::custom::CustomNode;
 use test_utils::*;
 
 fn custom_nodes(graph: &onnx_ir::ir::OnnxGraph) -> Vec<&CustomNode> {
