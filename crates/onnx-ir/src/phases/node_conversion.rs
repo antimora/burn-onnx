@@ -10,7 +10,7 @@ use std::{cell::RefCell, collections::HashMap, iter::Peekable, rc::Rc, slice::It
 use crate::{
     graph_state::GraphState,
     ir::{ArgType, AttributeValue, NodeType, RawNode, TensorData, TensorDataExt},
-    pipeline::{DomainOpsets, Error},
+    pipeline::{DomainOpsets, Error, PipelineHooks},
     processor::get_processor_registry,
     proto_conversion::convert_node_proto,
     protos::{GraphProto, NodeProto},
@@ -26,8 +26,9 @@ pub(crate) fn convert_nodes_from_graph(
     state_rc: &Rc<RefCell<GraphState>>,
     opset_version: usize,
     domain_opsets: &DomainOpsets,
+    hooks: &PipelineHooks,
 ) -> Result<(), Error> {
-    convert_nodes_impl(&graph.node, state_rc, opset_version, domain_opsets)
+    convert_nodes_impl(&graph.node, state_rc, opset_version, domain_opsets, hooks)
 }
 
 /// Internal implementation for node conversion
@@ -40,6 +41,7 @@ fn convert_nodes_impl(
     state_rc: &Rc<RefCell<GraphState>>,
     opset_version: usize,
     domain_opsets: &DomainOpsets,
+    hooks: &PipelineHooks,
 ) -> Result<(), Error> {
     let mut node_name_counter: HashMap<NodeType, usize> = HashMap::new();
 
@@ -158,6 +160,7 @@ fn convert_nodes_impl(
                 domain_opsets,
                 Some(parent_registry),
                 base_path.as_deref(),
+                hooks.inference(),
             );
             // Merge graph attributes with existing attributes
             for (key, value) in graph_attrs {

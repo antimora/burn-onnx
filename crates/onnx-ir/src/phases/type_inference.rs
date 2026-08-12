@@ -11,6 +11,7 @@ use std::{
 use crate::{
     graph_state::GraphState,
     ir::{ArgType, RawNode},
+    pipeline::PipelineHooks,
     processor::{ArgPreference, ProcessError, get_processor_registry},
 };
 
@@ -18,11 +19,12 @@ use crate::{
 pub(crate) fn infer_types(
     state_rc: &Rc<RefCell<GraphState>>,
     opset_version: usize,
+    hooks: &PipelineHooks,
 ) -> Result<(), ProcessError> {
     // Extract nodes temporarily to avoid holding mutable borrow during type inference
     // (type inference may call .value() which needs immutable borrows)
     let mut nodes = std::mem::take(&mut state_rc.borrow_mut().processed_nodes);
-    iterative_type_inference_with_preferences(&mut nodes, opset_version)?;
+    iterative_type_inference_with_preferences(&mut nodes, opset_version, hooks)?;
     state_rc.borrow_mut().processed_nodes = nodes;
     Ok(())
 }
@@ -35,6 +37,7 @@ pub(crate) fn infer_types(
 pub(super) fn iterative_type_inference_with_preferences(
     nodes: &mut [RawNode],
     opset: usize,
+    hooks: &PipelineHooks,
 ) -> Result<(), ProcessError> {
     let registry = get_processor_registry();
 
@@ -114,7 +117,7 @@ pub(super) fn iterative_type_inference_with_preferences(
                 .unwrap_or_else(crate::processor::OutputPreferences::new);
 
             // Validate node against its spec before processing
-            let processor = registry.get(&nodes[i].node_type);
+            let processor = hooks.resolve(&nodes[i].node_type, registry);
             let spec = processor.spec();
             crate::processor::validate_node_spec(&nodes[i], opset, &spec)?;
 
@@ -184,7 +187,7 @@ pub(super) fn iterative_type_inference_with_preferences(
         let mut new_preferences_found = false;
 
         for consumer_node in nodes.iter() {
-            let processor = registry.get(&consumer_node.node_type);
+            let processor = hooks.resolve(&consumer_node.node_type, registry);
 
             if let Ok(Some(input_prefs)) = processor.input_preferences(consumer_node, opset) {
                 // For each input this consumer has preferences for
@@ -292,7 +295,8 @@ mod tests {
             },
         ];
 
-        iterative_type_inference_with_preferences(&mut nodes, 17).unwrap();
+        iterative_type_inference_with_preferences(&mut nodes, 17, &PipelineHooks::new(None))
+            .unwrap();
 
         // The consumer's input should have merged shape info preserved
         let consumer_input = &nodes[1].inputs[0];
@@ -353,7 +357,8 @@ mod tests {
             },
         ];
 
-        iterative_type_inference_with_preferences(&mut nodes, 17).unwrap();
+        iterative_type_inference_with_preferences(&mut nodes, 17, &PipelineHooks::new(None))
+            .unwrap();
 
         // The consumer's input should have merged shape: [Some(5), Some(10)]
         let consumer_input = &nodes[1].inputs[0];
@@ -385,7 +390,8 @@ mod tests {
             },
         ];
 
-        let result = iterative_type_inference_with_preferences(&mut nodes, 17);
+        let result =
+            iterative_type_inference_with_preferences(&mut nodes, 17, &PipelineHooks::new(None));
         let err = result.unwrap_err();
 
         match &err {

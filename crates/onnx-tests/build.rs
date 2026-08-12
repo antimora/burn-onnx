@@ -1,4 +1,9 @@
 use burn_onnx::ModelGen;
+use burn_onnx::ext::proc_macro2::TokenStream;
+use burn_onnx::ext::{
+    ArgType, CodegenContext, CustomNode, CustomOp, Imports, ProcessError, arg_to_ident,
+    quote::quote,
+};
 
 fn main() {
     // Re-run this build script if the onnx-tests directory changes.
@@ -9,6 +14,17 @@ fn main() {
     model_gen.simplify(false);
     add_all_inputs(&mut model_gen);
     model_gen.out_dir("model/").run_from_script();
+
+    // Custom (non-built-in) op models: need registered CustomOp hooks.
+    let mut custom = ModelGen::new();
+    custom
+        .simplify(false)
+        .input("tests/custom_ops/custom_ops.onnx")
+        .register_custom_op(ScaleShiftOp)
+        .register_custom_op(AddWindowOp)
+        .register_custom_op(MyIdentityOp)
+        .out_dir("model/")
+        .run_from_script();
 
     // Generate simplified models for comparison testing.
     let mut simplified = ModelGen::new();
@@ -576,6 +592,99 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/subgraph/outer_scope_loop.onnx")
         .input("tests/subgraph/outer_scope_scan.onnx")
         .input("tests/subgraph/outer_scope_constant.onnx");
+}
+
+/// `test.custom::ScaleShift`: y = x * scale + shift (scale/shift are FLOAT attrs).
+///
+/// Exercises attribute access and hook-registered imports: the emitted call
+/// relies on `use crate::custom_ops::ops;` registered below.
+struct ScaleShiftOp;
+
+impl CustomOp for ScaleShiftOp {
+    fn op_type(&self) -> &str {
+        "ScaleShift"
+    }
+
+    fn domain(&self) -> &str {
+        "test.custom"
+    }
+
+    fn infer_output_types(&self, node: &CustomNode) -> Result<Vec<ArgType>, ProcessError> {
+        Ok(vec![node.inputs[0].ty.clone()])
+    }
+
+    fn forward(&self, node: &CustomNode, ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
+        let input = ctx.arg(&node.inputs[0]);
+        let out = arg_to_ident(&node.outputs[0]);
+        let scale = node.attrs.get_f32("scale").expect("scale attribute");
+        let shift = node.attrs.get_f32("shift").expect("shift attribute");
+        quote! {
+            let #out = ops::scale_shift(#input, #scale, #shift);
+        }
+    }
+
+    fn register_imports(&self, imports: &mut Imports<'_>) {
+        imports.register("crate::custom_ops::ops");
+    }
+}
+
+/// `test.custom::AddWindow`: y = x + window (broadcast over rows).
+///
+/// The window is a constant initializer input, read at codegen time via
+/// `Argument::value()` and inlined into the generated call.
+struct AddWindowOp;
+
+impl CustomOp for AddWindowOp {
+    fn op_type(&self) -> &str {
+        "AddWindow"
+    }
+
+    fn domain(&self) -> &str {
+        "test.custom"
+    }
+
+    fn infer_output_types(&self, node: &CustomNode) -> Result<Vec<ArgType>, ProcessError> {
+        if node.inputs.get(1).and_then(|arg| arg.value()).is_none() {
+            return Err(ProcessError::Custom(
+                "AddWindow requires a constant window input".to_string(),
+            ));
+        }
+        Ok(vec![node.inputs[0].ty.clone()])
+    }
+
+    fn forward(&self, node: &CustomNode, ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
+        let input = ctx.arg(&node.inputs[0]);
+        let out = arg_to_ident(&node.outputs[0]);
+        let window = node.inputs[1]
+            .value()
+            .expect("window constant")
+            .to_vec::<f32>()
+            .expect("f32 window");
+        quote! {
+            let #out = crate::custom_ops::ops::add_window(#input, &[#(#window),*], &self.device);
+        }
+    }
+}
+
+/// `MyIdentity` (default ONNX domain): unknown op_type, passes input through.
+struct MyIdentityOp;
+
+impl CustomOp for MyIdentityOp {
+    fn op_type(&self) -> &str {
+        "MyIdentity"
+    }
+
+    fn infer_output_types(&self, node: &CustomNode) -> Result<Vec<ArgType>, ProcessError> {
+        Ok(vec![node.inputs[0].ty.clone()])
+    }
+
+    fn forward(&self, node: &CustomNode, ctx: &mut CodegenContext<'_, '_>) -> TokenStream {
+        let input = ctx.arg(&node.inputs[0]);
+        let out = arg_to_ident(&node.outputs[0]);
+        quote! {
+            let #out = #input;
+        }
+    }
 }
 
 fn add_simplify_inputs(model_gen: &mut ModelGen) {

@@ -6,8 +6,44 @@
 //! registered in `burn-onnx` (see `DESIGN-CUSTOM-OPS.md`); without a hook, a
 //! best-effort same-as-input fallback keeps the graph buildable for inspection.
 
-use crate::ir::{Argument, Node, PublicAttributesOwned, RawNode};
+use std::sync::Arc;
+
+use crate::ir::{ArgType, Argument, Node, PublicAttributesOwned, RawNode};
 use crate::processor::{NodeProcessor, NodeSpec, OutputPreferences, ProcessError, same_as_input};
+
+/// Coverage answer for a `(op_type, domain, opset)` triple, with enough
+/// detail for diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HookCoverage {
+    /// A hook is registered and its opset range covers the node.
+    Covered,
+    /// No hook is registered for this `(op_type, domain)`.
+    NoHook,
+    /// A hook is registered but its opset range excludes the node's opset.
+    OpsetMismatch {
+        /// Lowest opset the hook supports.
+        supported_min: usize,
+        /// Highest opset the hook supports (`None` = unbounded).
+        supported_max: Option<usize>,
+    },
+}
+
+/// Type-inference hooks for custom (non-built-in) operators.
+///
+/// Implemented by the hook registry in `burn-onnx` and passed to the parse
+/// pipeline via `OnnxGraphBuilder::with_custom_op_inference`. Output
+/// preferences from consumers are not consulted for custom ops: the hook is
+/// the sole authority on its output types.
+pub trait CustomOpInference: Send + Sync {
+    /// Coverage for this `(op_type, domain)` at the node's domain opset.
+    fn coverage(&self, op_type: &str, domain: &str, opset: usize) -> HookCoverage;
+
+    /// Infer output types. `Ok(None)` means no hook is registered for this
+    /// node; the pipeline then falls back to default inference.
+    ///
+    /// Constant inputs are readable via `node.inputs[i].value()`.
+    fn infer(&self, node: &CustomNode) -> Result<Option<Vec<ArgType>>, ProcessError>;
+}
 
 /// Public view of a custom (non-built-in) ONNX node.
 ///
@@ -103,6 +139,70 @@ impl NodeProcessor for CustomProcessor {
     }
 }
 
+/// Hook-aware processor used by the type-inference phase in place of the
+/// globally registered [`CustomProcessor`] when inference hooks are present.
+///
+/// Only `infer_types` differs from the hook-free processor; every other
+/// `NodeProcessor` responsibility is hook-independent.
+pub(crate) struct HookedCustomProcessor {
+    hooks: Option<Arc<dyn CustomOpInference>>,
+}
+
+impl HookedCustomProcessor {
+    pub(crate) fn new(hooks: Option<Arc<dyn CustomOpInference>>) -> Self {
+        Self { hooks }
+    }
+}
+
+impl NodeProcessor for HookedCustomProcessor {
+    type Config = ();
+
+    fn spec(&self) -> NodeSpec {
+        NodeSpec::default()
+    }
+
+    fn infer_types(
+        &self,
+        node: &mut RawNode,
+        opset: usize,
+        output_preferences: &OutputPreferences,
+    ) -> Result<(), ProcessError> {
+        let inferred = match &self.hooks {
+            Some(hooks) => hooks.infer(&custom_node_view(node))?,
+            None => None,
+        };
+        match inferred {
+            Some(types) => {
+                if types.len() != node.outputs.len() {
+                    let identity = node.custom_identity.as_ref();
+                    return Err(ProcessError::Custom(format!(
+                        "Custom op hook for '{}' ({}::{}) returned {} output type(s) but the node has {} output(s)",
+                        node.name,
+                        identity.map(|i| i.domain.as_str()).unwrap_or(""),
+                        identity.map(|i| i.op_type.as_str()).unwrap_or("?"),
+                        types.len(),
+                        node.outputs.len(),
+                    )));
+                }
+                for (out, ty) in node.outputs.iter_mut().zip(types) {
+                    out.ty = ty;
+                }
+                Ok(())
+            }
+            // No hook for this (op_type, domain): mirror the hook-free fallback.
+            None => CustomProcessor.infer_types(node, opset, output_preferences),
+        }
+    }
+
+    fn extract_config(&self, _node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
+        Ok(())
+    }
+
+    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
+        CustomProcessor.build_node(builder, opset)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +279,78 @@ mod tests {
         use core::str::FromStr;
         assert!(NodeType::from_str("Custom").is_err());
         assert!(NodeType::from_str("custom").is_err());
+    }
+
+    /// Inference stub that returns a fixed set of output types for "FftReal".
+    struct FixedInference {
+        types: Vec<ArgType>,
+    }
+
+    impl CustomOpInference for FixedInference {
+        fn coverage(&self, op_type: &str, _domain: &str, _opset: usize) -> HookCoverage {
+            if op_type == "FftReal" {
+                HookCoverage::Covered
+            } else {
+                HookCoverage::NoHook
+            }
+        }
+
+        fn infer(&self, node: &CustomNode) -> Result<Option<Vec<ArgType>>, ProcessError> {
+            if node.op_type == "FftReal" {
+                Ok(Some(self.types.clone()))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    #[test]
+    fn hooked_processor_applies_hook_types() {
+        let mut node = make_custom_node();
+        let hook_ty = ArgType::Tensor(TensorType::new(DType::F64, 5, None));
+        let processor = HookedCustomProcessor::new(Some(Arc::new(FixedInference {
+            types: vec![hook_ty.clone()],
+        })));
+        processor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .unwrap();
+        assert_eq!(node.outputs[0].ty, hook_ty);
+    }
+
+    #[test]
+    fn hooked_processor_rejects_output_count_mismatch() {
+        let mut node = make_custom_node();
+        let ty = ArgType::Tensor(TensorType::new(DType::F32, 1, None));
+        let processor = HookedCustomProcessor::new(Some(Arc::new(FixedInference {
+            types: vec![ty.clone(), ty],
+        })));
+        let err = processor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("returned 2 output type(s)"), "got: {msg}");
+        assert!(msg.contains("custom_domain::FftReal"), "got: {msg}");
+    }
+
+    #[test]
+    fn hooked_processor_without_hook_falls_back() {
+        let mut node = make_custom_node();
+        node.custom_identity.as_mut().unwrap().op_type = "OtherOp".to_string();
+        let processor =
+            HookedCustomProcessor::new(Some(Arc::new(FixedInference { types: vec![] })));
+        processor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .unwrap();
+        // Same-as-input fallback, as if no hooks were registered
+        assert_eq!(node.outputs[0].ty, node.inputs[0].ty);
+    }
+
+    #[test]
+    fn hooked_processor_with_no_hooks_matches_hook_free() {
+        let mut node = make_custom_node();
+        HookedCustomProcessor::new(None)
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .unwrap();
+        assert_eq!(node.outputs[0].ty, node.inputs[0].ty);
     }
 }

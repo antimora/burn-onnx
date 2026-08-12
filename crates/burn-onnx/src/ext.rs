@@ -9,6 +9,7 @@
 //! implementations build `TokenStream` values from the same crate build that
 //! `burn-onnx` links against.
 
+pub use crate::burn::custom_op::CustomOp;
 pub use crate::burn::node_traits::{Field, arg_to_ident, create_lazy_snapshot};
 
 pub use onnx_ir::{
@@ -29,6 +30,10 @@ pub struct CodegenContext<'a, 'b> {
 }
 
 impl<'a, 'b> CodegenContext<'a, 'b> {
+    pub(crate) fn wrap(inner: &'a mut crate::burn::ScopeAtPosition<'b>) -> Self {
+        Self { inner }
+    }
+
     /// Resolve an input argument to a token stream.
     ///
     /// Handles clone tracking for on-device values (`Tensor`, `ScalarTensor`)
@@ -48,6 +53,10 @@ pub struct Imports<'a> {
 }
 
 impl<'a> Imports<'a> {
+    pub(crate) fn wrap(inner: &'a mut crate::burn::BurnImports) -> Self {
+        Self { inner }
+    }
+
     /// Register an import path, e.g. `my_crate::ops::fft`.
     pub fn register(&mut self, path: impl Into<String>) {
         self.inner.register(path);

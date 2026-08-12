@@ -2,9 +2,15 @@ use std::{
     env,
     fs::{self, create_dir_all},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
-use crate::{burn::graph::BurnGraph, format_tokens, logger::init_log};
+use crate::{
+    burn::custom_op::{CustomOp, HookRegistry},
+    burn::graph::BurnGraph,
+    format_tokens,
+    logger::init_log,
+};
 
 use onnx_ir::{OnnxGraphBuilder, ir::OnnxGraph};
 
@@ -95,6 +101,9 @@ pub struct ModelGen {
     simplify: bool,
     /// Whether to partition large models into submodules (default: true)
     partition: bool,
+    /// User hooks for custom (non-built-in) ops. Shared with the onnx-ir
+    /// parse pipeline (type inference) and the codegen dispatch.
+    hooks: Arc<HookRegistry>,
 }
 
 impl Default for ModelGen {
@@ -106,6 +115,7 @@ impl Default for ModelGen {
             load_strategy: LoadStrategy::default(),
             simplify: true,
             partition: true,
+            hooks: Arc::new(HookRegistry::default()),
         }
     }
 }
@@ -249,6 +259,22 @@ impl ModelGen {
         self
     }
 
+    /// Register a codegen hook for a custom (non-built-in) ONNX operator.
+    ///
+    /// The hook is matched by ONNX operator identity `(op_type, domain)` and
+    /// supplies both type inference (during parsing) and code generation for
+    /// matching nodes. See [`crate::ext::CustomOp`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if a hook for the same `(op_type, domain)` is already registered.
+    pub fn register_custom_op(&mut self, op: impl CustomOp) -> &mut Self {
+        Arc::get_mut(&mut self.hooks)
+            .expect("register_custom_op must be called before running the generation")
+            .add_custom_op(Box::new(op));
+        self
+    }
+
     /// Runs code generation from a build script context.
     ///
     /// Use this method when calling from `build.rs`. The output directory will be
@@ -343,8 +369,11 @@ impl ModelGen {
         log::debug!("Development mode: {:?}", self.development);
         log::debug!("Output file: {out_file:?}");
 
-        let graph = OnnxGraphBuilder::new()
-            .simplify(self.simplify)
+        let mut builder = OnnxGraphBuilder::new().simplify(self.simplify);
+        if !self.hooks.is_empty() {
+            builder = builder.with_custom_op_inference(self.hooks.clone());
+        }
+        let graph = builder
             .parse_file(input)
             .unwrap_or_else(|e| panic!("Failed to parse ONNX file '{}': {}", input.display(), e));
 
@@ -384,6 +413,7 @@ impl ModelGen {
         let bpk_file = out_file.with_extension("bpk");
         graph
             .into_burn()
+            .with_hooks(self.hooks.clone())
             .with_burnpack(bpk_file, self.load_strategy)
             .with_blank_space(true)
             .with_top_comment(top_comment)

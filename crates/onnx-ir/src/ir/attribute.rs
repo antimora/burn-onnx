@@ -38,7 +38,7 @@ use crate::protos::GraphProto;
 ///
 /// This lazy evaluation pattern ensures subgraphs have access to all type information
 /// from the parent scope when they are finally built.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DeferredGraph {
     /// The raw ONNX GraphProto (wrapped in Arc for cheap cloning)
     pub proto: Arc<GraphProto>,
@@ -50,6 +50,26 @@ pub struct DeferredGraph {
     pub name_registry: Option<crate::graph_state::NameRegistry>,
     /// Base path for resolving external tensor data (inherited from parent graph)
     pub base_path: Option<PathBuf>,
+    /// Custom-op inference hooks inherited from the parent parse. Subgraph
+    /// builds run inside the parent's type-inference phase, so this Arc is
+    /// the only channel that carries hooks into them.
+    pub(crate) custom_op_inference: Option<Arc<dyn crate::node::custom::CustomOpInference>>,
+}
+
+impl std::fmt::Debug for DeferredGraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeferredGraph")
+            .field("proto", &self.proto)
+            .field("opset_version", &self.opset_version)
+            .field("domain_opsets", &self.domain_opsets)
+            .field("name_registry", &self.name_registry)
+            .field("base_path", &self.base_path)
+            .field(
+                "custom_op_inference",
+                &self.custom_op_inference.as_ref().map(|_| "<hooks>"),
+            )
+            .finish()
+    }
 }
 
 /// A map of outer-scope value names to their resolved arguments (including type and value)
@@ -68,6 +88,7 @@ impl DeferredGraph {
         &self,
         outer_scope: OuterScopeTypes,
     ) -> Result<OnnxGraphBuilder, crate::pipeline::Error> {
+        let hooks = crate::pipeline::PipelineHooks::new(self.custom_op_inference.clone());
         crate::pipeline::build_graph_builder_from_proto_with_outer_scope(
             &self.proto,
             self.opset_version,
@@ -76,6 +97,7 @@ impl DeferredGraph {
             outer_scope,
             self.base_path.as_deref(),
             false,
+            &hooks,
         )
     }
 
@@ -383,6 +405,7 @@ mod tests {
                 domain_opsets: crate::pipeline::DomainOpsets::new(Default::default(), 16),
                 name_registry: None,
                 base_path: None,
+                custom_op_inference: None,
             }),
         );
         attrs

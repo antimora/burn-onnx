@@ -2,7 +2,8 @@
 pub mod graph;
 
 mod codegen;
-mod node_codegen; // Implements NodeCodegen<PS> for onnx_ir::Node
+pub(crate) mod custom_op;
+pub(crate) mod node_codegen; // Implements NodeCodegen<PS> for onnx_ir::Node
 pub(crate) mod node_traits;
 
 mod imports;

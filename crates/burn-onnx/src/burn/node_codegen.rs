@@ -1,11 +1,74 @@
 /// Implements NodeCodegen trait on onnx_ir::Node enum
 /// Uses a simple macro to generate match arms for all supported nodes
-use onnx_ir::{Argument, Node};
+use onnx_ir::{Argument, CustomNode, Node};
 use proc_macro2::TokenStream;
 
 use super::node_traits::NodeCodegen;
+use crate::burn::custom_op::{CustomOp, HookRegistry};
+use crate::burn::scope::ScopeAtPosition;
 use crate::burn::{BurnImports, Field};
+use crate::ext::{CodegenContext, Imports};
 use burn_store::TensorSnapshot;
+
+// ============================================================================
+// Hook-aware dispatch
+//
+// The graph-level codegen goes through these functions instead of the plain
+// NodeCodegen impl so Node::Custom can be routed to its registered hook.
+// The NodeCodegen trait itself stays hook-free: per-node impls never see the
+// registry, and neither do the structural accessors (inputs/outputs), because
+// hooks cannot change the graph's wiring.
+// ============================================================================
+
+fn require_custom_hook<'r>(hooks: &'r HookRegistry, node: &CustomNode) -> &'r dyn CustomOp {
+    hooks
+        .custom_for(&node.op_type, &node.domain)
+        .unwrap_or_else(|| {
+            panic!(
+                "Custom op '{}' (node '{}') has no registered hook; \
+             register one via ModelGen::register_custom_op",
+                node, node.name
+            )
+        })
+}
+
+pub(crate) fn node_forward(
+    node: &Node,
+    scope: &mut ScopeAtPosition<'_>,
+    hooks: &HookRegistry,
+) -> TokenStream {
+    if let Node::Custom(c) = node {
+        let mut ctx = CodegenContext::wrap(scope);
+        return require_custom_hook(hooks, c).forward(c, &mut ctx);
+    }
+    NodeCodegen::forward(node, scope)
+}
+
+pub(crate) fn node_field(node: &Node, hooks: &HookRegistry) -> Option<Field> {
+    if let Node::Custom(c) = node {
+        return require_custom_hook(hooks, c).field(c);
+    }
+    NodeCodegen::field(node)
+}
+
+pub(crate) fn node_register_imports(node: &Node, imports: &mut BurnImports, hooks: &HookRegistry) {
+    if let Node::Custom(c) = node {
+        require_custom_hook(hooks, c).register_imports(&mut Imports::wrap(imports));
+        return;
+    }
+    NodeCodegen::register_imports(node, imports)
+}
+
+pub(crate) fn node_collect_snapshots(
+    node: &Node,
+    field_name: &str,
+    hooks: &HookRegistry,
+) -> Vec<TensorSnapshot> {
+    if let Node::Custom(c) = node {
+        return require_custom_hook(hooks, c).collect_snapshots(c, field_name);
+    }
+    NodeCodegen::collect_snapshots(node, field_name)
+}
 
 /// Macro to implement NodeCodegen on onnx_ir::Node by dispatching to individual node impls
 ///

@@ -30,11 +30,57 @@ use std::{fmt, fs::File, path::Path};
 
 use protobuf::Message;
 
-use crate::{ir::OnnxGraph, processor::ProcessError, protos::ModelProto};
+use crate::{
+    ir::{NodeType, OnnxGraph},
+    node::custom::{CustomOpInference, HookedCustomProcessor},
+    processor::ProcessError,
+    protos::ModelProto,
+    registry::{ProcessorMethods, ProcessorRegistry},
+};
 
 use super::phases::{
     finalization, initialization, node_conversion, post_processing, type_inference,
 };
+
+/// Per-parse hook state threaded through the pipeline phases.
+///
+/// The global processor registry cannot carry user hooks (it is a shared
+/// singleton), so the type-inference phase resolves processors through this
+/// overlay instead: `NodeType::Custom` gets the hook-aware processor, every
+/// other node type falls through to the global registry.
+pub(crate) struct PipelineHooks {
+    /// The user hook as registered (`None` = no hooks). Captured into
+    /// `DeferredGraph` so subgraph builds re-enter the pipeline with it.
+    inference: Option<Arc<dyn CustomOpInference>>,
+    custom: HookedCustomProcessor,
+}
+
+impl PipelineHooks {
+    pub(crate) fn new(inference: Option<Arc<dyn CustomOpInference>>) -> Self {
+        Self {
+            custom: HookedCustomProcessor::new(inference.clone()),
+            inference,
+        }
+    }
+
+    /// The registered inference hook, for capture into `DeferredGraph`.
+    pub(crate) fn inference(&self) -> Option<Arc<dyn CustomOpInference>> {
+        self.inference.clone()
+    }
+
+    /// Resolution point used by the type-inference phase in place of
+    /// `registry.get(node_type)`.
+    pub(crate) fn resolve<'a>(
+        &'a self,
+        node_type: &NodeType,
+        registry: &'a ProcessorRegistry,
+    ) -> &'a dyn ProcessorMethods {
+        match node_type {
+            NodeType::Custom => &self.custom,
+            other => registry.get(other),
+        }
+    }
+}
 
 /// Errors that can occur when parsing ONNX models
 #[derive(Debug)]
@@ -124,15 +170,32 @@ impl From<ProcessError> for Error {
 /// // Build from reader
 /// let graph = OnnxGraphBuilder::new().parse_reader(std::io::Cursor::new(data))?;
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OnnxGraphBuilder {
     /// Whether to run graph simplification passes (default: true)
     simplify: bool,
+    /// Type-inference hooks for custom (non-built-in) operators
+    custom_op_inference: Option<Arc<dyn CustomOpInference>>,
+}
+
+impl fmt::Debug for OnnxGraphBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OnnxGraphBuilder")
+            .field("simplify", &self.simplify)
+            .field(
+                "custom_op_inference",
+                &self.custom_op_inference.as_ref().map(|_| "<hooks>"),
+            )
+            .finish()
+    }
 }
 
 impl Default for OnnxGraphBuilder {
     fn default() -> Self {
-        Self { simplify: true }
+        Self {
+            simplify: true,
+            custom_op_inference: None,
+        }
     }
 }
 
@@ -149,6 +212,16 @@ impl OnnxGraphBuilder {
     /// pattern-based simplifications.
     pub fn simplify(mut self, simplify: bool) -> Self {
         self.simplify = simplify;
+        self
+    }
+
+    /// Register type-inference hooks for custom (non-built-in) operators.
+    ///
+    /// During type inference, `NodeType::Custom` nodes are resolved through
+    /// the given hooks instead of the best-effort same-as-input fallback.
+    /// Subgraph builds (If/Loop/Scan bodies) inherit the hooks.
+    pub fn with_custom_op_inference(mut self, hooks: Arc<dyn CustomOpInference>) -> Self {
+        self.custom_op_inference = Some(hooks);
         self
     }
 
@@ -266,7 +339,8 @@ impl OnnxGraphBuilder {
             });
         }
 
-        let graph = build_graph_with_options(&model, base_path, self.simplify)?;
+        let hooks = PipelineHooks::new(self.custom_op_inference.clone());
+        let graph = build_graph_with_options(&model, base_path, self.simplify, &hooks)?;
 
         if let Some(path) = path_str {
             log::info!("Finished parsing ONNX file: {}", path);
@@ -282,6 +356,7 @@ fn build_graph_with_options(
     model: &ModelProto,
     base_path: Option<&Path>,
     simplify: bool,
+    hooks: &PipelineHooks,
 ) -> Result<OnnxGraph, Error> {
     let (opset_version, domain_opsets) = extract_opset_versions(model)?;
     let graph_builder = build_graph_builder_from_proto(
@@ -291,6 +366,7 @@ fn build_graph_with_options(
         None,
         base_path,
         simplify,
+        hooks,
     )?;
 
     log::debug!(" PHASE 6: Node Conversion (RawNode -> Node) ");
@@ -312,6 +388,7 @@ pub(crate) fn build_graph_builder_from_proto(
     name_registry: Option<crate::graph_state::NameRegistry>,
     base_path: Option<&Path>,
     simplify: bool,
+    hooks: &PipelineHooks,
 ) -> Result<crate::ir::OnnxGraphBuilder, Error> {
     build_graph_builder_from_proto_with_outer_scope(
         graph,
@@ -321,6 +398,7 @@ pub(crate) fn build_graph_builder_from_proto(
         crate::ir::OuterScopeTypes::new(),
         base_path,
         simplify,
+        hooks,
     )
 }
 
@@ -336,6 +414,7 @@ pub(crate) fn build_graph_builder_from_proto(
 /// # Errors
 ///
 /// Returns an error if node conversion or type inference fails
+#[allow(clippy::too_many_arguments)] // internal per-parse context, threaded explicitly
 pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
     graph: &crate::protos::GraphProto,
     opset_version: usize,
@@ -344,6 +423,7 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
     outer_scope: crate::ir::OuterScopeTypes,
     base_path: Option<&Path>,
     simplify: bool,
+    hooks: &PipelineHooks,
 ) -> Result<crate::ir::OnnxGraphBuilder, Error> {
     log::debug!(" PHASE 1: Initialization ");
     let state_rc = initialization::initialize_from_graph_with_registry_and_outer_scope(
@@ -354,7 +434,13 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
     );
 
     log::debug!(" PHASE 2: Node Conversion (Proto -> RawNode) ");
-    node_conversion::convert_nodes_from_graph(graph, &state_rc, opset_version, domain_opsets)?;
+    node_conversion::convert_nodes_from_graph(
+        graph,
+        &state_rc,
+        opset_version,
+        domain_opsets,
+        hooks,
+    )?;
 
     // Fold constant expressions (Slice, Concat, Unsqueeze, etc.) before type inference.
     // Models exported from PyTorch often split initializer weights via Slice+Concat+Unsqueeze
@@ -395,7 +481,7 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
     }
 
     log::debug!(" PHASE 3: Type Inference ");
-    type_inference::infer_types(&state_rc, opset_version).map_err(Error::TypeInference)?;
+    type_inference::infer_types(&state_rc, opset_version, hooks).map_err(Error::TypeInference)?;
 
     log::debug!(" PHASE 4: Post-processing ");
     let (nodes, inputs, outputs) = post_processing::post_process(&state_rc, simplify);
@@ -565,15 +651,14 @@ mod tests {
 
     fn parse_single_custom(bytes: &[u8]) -> crate::node::custom::CustomNode {
         let graph = OnnxGraphBuilder::new().parse_bytes(bytes).unwrap();
-        let custom = graph
+        graph
             .nodes
             .iter()
             .find_map(|n| match n {
                 Node::Custom(c) => Some(c.clone()),
                 _ => None,
             })
-            .expect("graph should contain a Custom node");
-        custom
+            .expect("graph should contain a Custom node")
     }
 
     #[test]
@@ -633,5 +718,100 @@ mod tests {
         let graph = OnnxGraphBuilder::new().parse_bytes(&bytes).unwrap();
         assert!(graph.nodes.iter().any(|n| matches!(n, Node::Relu(_))));
         assert!(!graph.nodes.iter().any(|n| matches!(n, Node::Custom(_))));
+    }
+
+    /// Hook that gives every custom op a fixed F64 rank-3 output type.
+    struct RankThreeInference;
+
+    impl crate::node::custom::CustomOpInference for RankThreeInference {
+        fn coverage(
+            &self,
+            _op_type: &str,
+            _domain: &str,
+            _opset: usize,
+        ) -> crate::node::custom::HookCoverage {
+            crate::node::custom::HookCoverage::Covered
+        }
+
+        fn infer(
+            &self,
+            node: &crate::node::custom::CustomNode,
+        ) -> Result<Option<Vec<ArgType>>, ProcessError> {
+            Ok(Some(vec![
+                ArgType::Tensor(crate::ir::TensorType::new(
+                    DType::F64,
+                    3,
+                    None
+                ));
+                node.outputs.len()
+            ]))
+        }
+    }
+
+    #[test]
+    fn registered_inference_hook_overrides_fallback() {
+        let bytes = single_node_model(
+            "custom.domain",
+            "FftLike",
+            &[("", 16), ("custom.domain", 2)],
+        );
+        // Simplify off: the graph output type check would reject the
+        // rank change against the declared rank-2 graph output otherwise.
+        let graph = OnnxGraphBuilder::new()
+            .simplify(false)
+            .with_custom_op_inference(Arc::new(RankThreeInference))
+            .parse_bytes(&bytes)
+            .unwrap();
+
+        let custom = graph
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                Node::Custom(c) => Some(c),
+                _ => None,
+            })
+            .expect("graph should contain a Custom node");
+
+        // Hook-provided type, not the same-as-input (F32 rank-2) fallback
+        assert!(matches!(
+            &custom.outputs[0].ty,
+            ArgType::Tensor(t) if t.dtype == DType::F64 && t.rank == 3
+        ));
+    }
+
+    #[test]
+    fn hook_error_fails_the_parse() {
+        struct FailingInference;
+
+        impl crate::node::custom::CustomOpInference for FailingInference {
+            fn coverage(
+                &self,
+                _op_type: &str,
+                _domain: &str,
+                _opset: usize,
+            ) -> crate::node::custom::HookCoverage {
+                crate::node::custom::HookCoverage::Covered
+            }
+
+            fn infer(
+                &self,
+                _node: &crate::node::custom::CustomNode,
+            ) -> Result<Option<Vec<ArgType>>, ProcessError> {
+                Err(ProcessError::MissingAttribute("n_fft".to_string()))
+            }
+        }
+
+        let bytes = single_node_model(
+            "custom.domain",
+            "FftLike",
+            &[("", 16), ("custom.domain", 2)],
+        );
+        let err = OnnxGraphBuilder::new()
+            .with_custom_op_inference(Arc::new(FailingInference))
+            .parse_bytes(&bytes)
+            .unwrap_err();
+
+        let msg = format!("{err}");
+        assert!(msg.contains("n_fft"), "got: {msg}");
     }
 }

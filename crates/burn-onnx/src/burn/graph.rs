@@ -1,6 +1,10 @@
 use super::{BurnImports, Scope, ToTokens};
 use crate::LoadStrategy;
+use crate::burn::custom_op::HookRegistry;
 use crate::burn::node::NodeCodegen;
+use crate::burn::node_codegen::{
+    node_collect_snapshots, node_field, node_forward, node_register_imports,
+};
 use crate::burn::partition::{
     MIN_GRAPH_SIZE, Partition, reorder_constants_to_consumers, try_partition,
 };
@@ -9,7 +13,7 @@ use burn_store::TensorSnapshot;
 use onnx_ir::{Node, ir::ArgType};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 /// Burn graph intermediate representation of modules and tensor operations.
 #[derive(Debug)]
@@ -32,6 +36,8 @@ pub struct BurnGraph {
     /// - Inputs: `Tensor::from_data([name as T], &self.device)` after the params
     boundary_output_conversions: HashMap<String, onnx_ir::ir::DType>,
     boundary_input_conversions: HashMap<String, onnx_ir::ir::DType>,
+    /// User codegen hooks for custom (non-built-in) ops
+    hooks: Arc<HookRegistry>,
 }
 
 impl Default for BurnGraph {
@@ -49,6 +55,7 @@ impl Default for BurnGraph {
             cached_partition: None,
             boundary_output_conversions: HashMap::new(),
             boundary_input_conversions: HashMap::new(),
+            hooks: Arc::new(HookRegistry::default()),
         }
     }
 }
@@ -144,7 +151,13 @@ impl BurnGraph {
     fn collect_snapshots_flat(&self) -> Vec<TensorSnapshot> {
         let mut snapshots = Vec::new();
         let mut field_name_counts: HashMap<String, usize> = HashMap::new();
-        collect_snapshots_from_nodes(&self.nodes, "", &mut field_name_counts, &mut snapshots);
+        collect_snapshots_from_nodes(
+            &self.nodes,
+            "",
+            &mut field_name_counts,
+            &mut snapshots,
+            &self.hooks,
+        );
         snapshots
     }
 
@@ -161,6 +174,7 @@ impl BurnGraph {
                 &prefix,
                 &mut field_name_counts,
                 &mut snapshots,
+                &self.hooks,
             );
         }
         snapshots
@@ -185,6 +199,15 @@ impl BurnGraph {
     /// Enable or disable submodule partitioning for large models.
     pub fn with_partition(mut self, partition: bool) -> Self {
         self.partition = partition;
+        self
+    }
+
+    /// Set the codegen hooks for custom (non-built-in) ops.
+    ///
+    /// Must be applied before `with_burnpack`, which collects snapshots and
+    /// therefore consults the hooks for `Node::Custom` fields.
+    pub(crate) fn with_hooks(mut self, hooks: Arc<HookRegistry>) -> Self {
+        self.hooks = hooks;
         self
     }
 
@@ -334,7 +357,7 @@ impl BurnGraph {
             }
 
             // Collect fields from this chunk's nodes
-            let chunk_fields = collect_fields_for_nodes(chunk_nodes);
+            let chunk_fields = collect_fields_for_nodes(chunk_nodes, &self.hooks);
 
             // Generate the submodule struct body
             let struct_fields: Vec<_> = chunk_fields
@@ -360,7 +383,7 @@ impl BurnGraph {
             let mut forward_body = quote! {};
             for (local_pos, node) in chunk_nodes.iter().enumerate() {
                 let mut scope_at_pos = scope.at_position(local_pos);
-                let code = NodeCodegen::forward(node, &mut scope_at_pos);
+                let code = node_forward(node, &mut scope_at_pos, &self.hooks);
                 forward_body.extend(code);
             }
 
@@ -492,7 +515,7 @@ impl BurnGraph {
         // Register imports from nodes
         self.nodes
             .iter()
-            .for_each(|node| NodeCodegen::register_imports(node, &mut self.imports));
+            .for_each(|node| node_register_imports(node, &mut self.imports, &self.hooks));
     }
 
     /// Build the scope state to make sure tensor clones are added where needed.
@@ -643,7 +666,7 @@ impl BurnGraph {
 
     /// Recursively collect all fields from nodes, including subgraph nodes in If/Loop/Scan
     fn collect_all_fields(&self) -> Vec<FieldTuple> {
-        collect_fields_for_nodes(&self.nodes)
+        collect_fields_for_nodes(&self.nodes, &self.hooks)
     }
 
     fn codegen_struct(&self) -> TokenStream {
@@ -705,7 +728,7 @@ impl BurnGraph {
         let mut body = quote! {};
         for (index, node) in self.nodes.iter().enumerate() {
             let mut scope_at_pos = self.scope.at_position(index);
-            let code = NodeCodegen::forward(node, &mut scope_at_pos);
+            let code = node_forward(node, &mut scope_at_pos, &self.hooks);
             body.extend(code);
         }
 
@@ -892,7 +915,7 @@ impl BurnGraph {
 type FieldTuple = (proc_macro2::Ident, TokenStream, Option<TokenStream>);
 
 /// Collect fields from a slice of nodes (including If/Loop subgraph fields).
-fn collect_fields_for_nodes(nodes: &[Node]) -> Vec<FieldTuple> {
+fn collect_fields_for_nodes(nodes: &[Node], hooks: &HookRegistry) -> Vec<FieldTuple> {
     let mut field_name_counts: HashMap<String, usize> = HashMap::new();
     let mut all_fields: Vec<FieldTuple> = Vec::new();
 
@@ -900,9 +923,10 @@ fn collect_fields_for_nodes(nodes: &[Node]) -> Vec<FieldTuple> {
         subgraph: &onnx_ir::OnnxGraph,
         field_name_counts: &mut HashMap<String, usize>,
         all_fields: &mut Vec<FieldTuple>,
+        hooks: &HookRegistry,
     ) {
         for node in &subgraph.nodes {
-            if let Some(mut field) = NodeCodegen::field(node) {
+            if let Some(mut field) = node_field(node, hooks) {
                 let base_name = field.name.to_string();
                 let count = field_name_counts.entry(base_name.clone()).or_insert(0);
                 *count += 1;
@@ -938,24 +962,27 @@ fn collect_fields_for_nodes(nodes: &[Node]) -> Vec<FieldTuple> {
                     &nested.config.then_branch,
                     field_name_counts,
                     all_fields,
+                    hooks,
                 );
                 collect_subgraph_fields_recursive(
                     &nested.config.else_branch,
                     field_name_counts,
                     all_fields,
+                    hooks,
                 );
             } else if let Node::Loop(nested) = node {
                 collect_subgraph_fields_recursive(
                     &nested.config.body,
                     field_name_counts,
                     all_fields,
+                    hooks,
                 );
             }
         }
     }
 
     for node in nodes {
-        if let Some(field) = NodeCodegen::field(node) {
+        if let Some(field) = node_field(node, hooks) {
             all_fields.push((field.name, field.ty, Some(field.init)));
         }
 
@@ -964,17 +991,20 @@ fn collect_fields_for_nodes(nodes: &[Node]) -> Vec<FieldTuple> {
                 &if_node.config.then_branch,
                 &mut field_name_counts,
                 &mut all_fields,
+                hooks,
             );
             collect_subgraph_fields_recursive(
                 &if_node.config.else_branch,
                 &mut field_name_counts,
                 &mut all_fields,
+                hooks,
             );
         } else if let Node::Loop(loop_node) = node {
             collect_subgraph_fields_recursive(
                 &loop_node.config.body,
                 &mut field_name_counts,
                 &mut all_fields,
+                hooks,
             );
         }
     }
@@ -990,15 +1020,17 @@ fn collect_snapshots_from_nodes(
     prefix: &str,
     field_name_counts: &mut HashMap<String, usize>,
     snapshots: &mut Vec<TensorSnapshot>,
+    hooks: &HookRegistry,
 ) {
     fn collect_subgraph_snapshots_recursive(
         subgraph: &onnx_ir::OnnxGraph,
         prefix: &str,
         field_name_counts: &mut HashMap<String, usize>,
         snapshots: &mut Vec<TensorSnapshot>,
+        hooks: &HookRegistry,
     ) {
         for node in &subgraph.nodes {
-            if let Some(field) = NodeCodegen::field(node) {
+            if let Some(field) = node_field(node, hooks) {
                 let base_name = field.name.to_string();
                 let count = field_name_counts.entry(base_name.clone()).or_insert(0);
                 *count += 1;
@@ -1014,7 +1046,7 @@ fn collect_snapshots_from_nodes(
                 } else {
                     format!("{}.{}", prefix, unique_name)
                 };
-                let node_snapshots = NodeCodegen::collect_snapshots(node, &full_name);
+                let node_snapshots = node_collect_snapshots(node, &full_name, hooks);
                 snapshots.extend(node_snapshots);
             }
 
@@ -1024,12 +1056,14 @@ fn collect_snapshots_from_nodes(
                     prefix,
                     field_name_counts,
                     snapshots,
+                    hooks,
                 );
                 collect_subgraph_snapshots_recursive(
                     &nested.config.else_branch,
                     prefix,
                     field_name_counts,
                     snapshots,
+                    hooks,
                 );
             } else if let Node::Loop(nested) = node {
                 collect_subgraph_snapshots_recursive(
@@ -1037,13 +1071,14 @@ fn collect_snapshots_from_nodes(
                     prefix,
                     field_name_counts,
                     snapshots,
+                    hooks,
                 );
             }
         }
     }
 
     for node in nodes {
-        if let Some(field) = NodeCodegen::field(node) {
+        if let Some(field) = node_field(node, hooks) {
             let base_name = field.name.to_string();
             let count = field_name_counts.entry(base_name.clone()).or_insert(0);
             *count += 1;
@@ -1059,7 +1094,7 @@ fn collect_snapshots_from_nodes(
             } else {
                 format!("{}.{}", prefix, unique_name)
             };
-            let node_snapshots = NodeCodegen::collect_snapshots(node, &full_name);
+            let node_snapshots = node_collect_snapshots(node, &full_name, hooks);
             snapshots.extend(node_snapshots);
         }
 
@@ -1069,12 +1104,14 @@ fn collect_snapshots_from_nodes(
                 prefix,
                 field_name_counts,
                 snapshots,
+                hooks,
             );
             collect_subgraph_snapshots_recursive(
                 &if_node.config.else_branch,
                 prefix,
                 field_name_counts,
                 snapshots,
+                hooks,
             );
         } else if let Node::Loop(loop_node) = node {
             collect_subgraph_snapshots_recursive(
@@ -1082,6 +1119,7 @@ fn collect_snapshots_from_nodes(
                 prefix,
                 field_name_counts,
                 snapshots,
+                hooks,
             );
         }
     }
@@ -1100,6 +1138,96 @@ mod tests {
         formatter
             .format_tokens(tokens)
             .unwrap_or_else(|_| "FORMATTING FAILED".to_string())
+    }
+
+    /// input -> FftLike (custom, domain my.domain) -> output
+    fn build_custom_op_graph() -> BurnGraph {
+        use onnx_ir::ir::TensorType;
+
+        let mut graph = BurnGraph::default();
+
+        let custom = onnx_ir::CustomNode {
+            name: "fftlike1".to_string(),
+            op_type: "FftLike".to_string(),
+            domain: "my.domain".to_string(),
+            inputs: vec![onnx_ir::Argument::new(
+                "input",
+                ArgType::Tensor(TensorType::new(DType::F32, 2, None)),
+            )],
+            outputs: vec![onnx_ir::Argument::new(
+                "t0",
+                ArgType::Tensor(TensorType::new(DType::F32, 2, None)),
+            )],
+            attrs: Default::default(),
+            opset: 3,
+        };
+        graph.register(Node::Custom(custom));
+
+        graph.register_input_output(vec!["input".to_string()], vec!["t0".to_string()], &[], &[]);
+
+        graph
+    }
+
+    /// Hook that emits a call into a user crate for FftLike nodes.
+    struct FftLikeOp;
+
+    impl crate::ext::CustomOp for FftLikeOp {
+        fn op_type(&self) -> &str {
+            "FftLike"
+        }
+
+        fn domain(&self) -> &str {
+            "my.domain"
+        }
+
+        fn infer_output_types(
+            &self,
+            node: &onnx_ir::CustomNode,
+        ) -> Result<Vec<ArgType>, onnx_ir::ProcessError> {
+            Ok(vec![node.inputs[0].ty.clone()])
+        }
+
+        fn forward(
+            &self,
+            node: &onnx_ir::CustomNode,
+            ctx: &mut crate::ext::CodegenContext<'_, '_>,
+        ) -> TokenStream {
+            let input = ctx.arg(&node.inputs[0]);
+            let out = crate::burn::node_traits::arg_to_ident(&node.outputs[0]);
+            quote! {
+                let #out = my_crate::ops::fft_like(#input);
+            }
+        }
+
+        fn register_imports(&self, imports: &mut crate::ext::Imports<'_>) {
+            imports.register("my_crate::ops");
+        }
+    }
+
+    #[test]
+    fn custom_op_codegen_dispatches_to_hook() {
+        let mut registry = HookRegistry::default();
+        registry.add_custom_op(Box::new(FftLikeOp));
+
+        let graph = build_custom_op_graph().with_hooks(Arc::new(registry));
+        let code = format_tokens(graph.codegen());
+
+        // Hook-emitted forward line and hook-registered import
+        assert!(
+            code.contains("let t0 = my_crate::ops::fft_like(input);"),
+            "generated code missing hook output:\n{code}"
+        );
+        assert!(
+            code.contains("use my_crate::ops;"),
+            "generated code missing hook import:\n{code}"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "has no registered hook")]
+    fn custom_op_without_hook_panics_with_clear_message() {
+        let graph = build_custom_op_graph();
+        graph.codegen();
     }
 
     /// Build a chain of N abs nodes: input -> t0 -> t1 -> ... -> t{N-1}

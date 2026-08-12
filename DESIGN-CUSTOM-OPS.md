@@ -449,6 +449,11 @@ that always returns `Ok(None)` / `NoHook`, so behavior for models with no custom
 ops is unchanged. The global singleton registry is never mutated after init, and
 nothing new is allocated per build beyond the single processor.
 
+Implementation note: rather than a separate no-op inference impl,
+`HookedCustomProcessor` holds `Option<Arc<dyn CustomOpInference>>` and treats
+`None` identically to a hook returning `Ok(None)` (fall through to the
+hook-free fallback). Same behavior, one less type.
+
 #### The `CustomOpInference` trait
 
 A narrow, object-safe interface defined in `onnx-ir` and implemented by
@@ -728,6 +733,11 @@ context; immediate, attributable). `HookRegistry` (behind `Arc`) implements
 the `Arc` to `OnnxGraphBuilder::with_custom_op_inference` at the existing parse
 site (`model_gen.rs:346`).
 
+Implementation note: `ModelGen` stores `Arc<HookRegistry>` directly;
+`register_custom_op` mutates through `Arc::get_mut` (always succeeds during
+builder setup, before any clone is handed out). The same `Arc` is cloned into
+the parse pipeline and into `BurnGraph::with_hooks` for codegen.
+
 ### 5.3 Codegen dispatch with overrides
 
 The `impl_node_codegen_dispatch!` macro (`node_codegen.rs:11`) already has
@@ -797,6 +807,25 @@ structural and unchanged). `partition.rs` has no direct `NodeCodegen` calls, so
 partitioned models pick up hooks for free through `graph.rs`.
 `ScopeAtPosition` itself does not carry the registry; this keeps it out of the
 scope's clone-tracking state.
+
+Implementation correction: the hook-aware surface landed as free dispatch
+functions in `node_codegen.rs` (`node_forward`, `node_field`,
+`node_register_imports`, `node_collect_snapshots`), not as new parameters on
+the `NodeCodegen` trait. Adding `&HookRegistry` to the trait would have
+re-signatured every per-node impl (~150 files) for a parameter none of them
+use; `Node` is a foreign type, so inherent methods were not an option either.
+`graph.rs` call sites route through the free functions; the trait and all
+per-node impls are untouched. Custom ops inside If/Loop/Scan subgraph bodies
+still reach the trait's `Node::Custom` panic arm (codegen for those is the
+known v1 punt, open question 1).
+
+One behavior worth knowing: a custom op's constant input still goes through
+the standard initializer-to-Constant path, producing a zero-initialized
+`Param` field in the generated struct. A hook that reads the value via
+`Argument::value()` and inlines it leaves that `Param` unused (harmless, and
+`Model::new` stays safe); a hook that instead consumes the input via
+`ctx.arg()` gets the runtime tensor, which is only correct when the model is
+loaded with `from_file`/`from_bytes`.
 
 ### 5.4 Missing-hook validation (coverage pre-pass in onnx-ir)
 

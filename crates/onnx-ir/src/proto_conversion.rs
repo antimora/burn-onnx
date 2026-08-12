@@ -856,6 +856,7 @@ pub(crate) fn convert_graph_attributes(
     domain_opsets: &crate::pipeline::DomainOpsets,
     parent_registry: Option<crate::graph_state::NameRegistry>,
     base_path: Option<&Path>,
+    custom_op_inference: Option<std::sync::Arc<dyn crate::node::custom::CustomOpInference>>,
 ) -> Attributes {
     use crate::ir::DeferredGraph;
     use std::sync::Arc;
@@ -878,6 +879,7 @@ pub(crate) fn convert_graph_attributes(
                             domain_opsets: domain_opsets.clone(),
                             name_registry: Some(name_registry.clone()),
                             base_path: base_path.map(|p| p.to_path_buf()),
+                            custom_op_inference: custom_op_inference.clone(),
                         };
                         result.insert(attr.name.clone(), AttributeValue::DeferredGraph(deferred));
                     }
@@ -892,6 +894,7 @@ pub(crate) fn convert_graph_attributes(
                             domain_opsets: domain_opsets.clone(),
                             name_registry: Some(name_registry.clone()),
                             base_path: base_path.map(|p| p.to_path_buf()),
+                            custom_op_inference: custom_op_inference.clone(),
                         })
                         .collect();
                     result.insert(
