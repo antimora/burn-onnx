@@ -74,6 +74,36 @@ let output = model.forward(input_tensor);
 For detailed usage instructions, see the
 [ONNX Import Guide](https://burn.dev/books/burn/onnx-import.html) in the Burn Book.
 
+## Custom Operators
+
+Operators outside the [supported set](SUPPORTED-ONNX-OPS.md) do not have to block an import. That
+covers vendor domains such as `com.microsoft`, ops from a framework's custom export, and op types
+not implemented yet. Register a hook and supply the Rust yourself:
+
+```rust
+// build.rs
+ModelGen::new()
+    .input("src/model/my_model.onnx")
+    .out_dir("model/")
+    .register_custom_op(FftReal)      // handles my_domain::FftReal
+    .register_op_override(MyMatMul)   // replaces the generated code for every MatMul
+    .run_from_script();
+```
+
+- **`CustomOp`** supplies type inference and code generation for one ONNX `(op_type, domain)`.
+  It can read the node's attributes and its constant inputs.
+- **`OpOverride`** replaces the generated code for a built-in operator, to route it to a fused,
+  quantized, or hardware-specific kernel of your own. Type inference still comes from the built-in.
+
+Everything a hook needs is re-exported from `burn_onnx::ext`, so implementing one does not mean
+depending on `onnx-ir` or matching `proc-macro2`/`quote` versions by hand.
+
+Not sure which operators a given model needs? Run the import with no hooks registered: it fails
+with a list of every unsupported operator, its domain, and how many nodes use it.
+
+Runnable example: [custom-op-hooks](examples/custom-op-hooks). Full reference: "Custom Operators
+and Overrides" in the [Development Guide](DEVELOPMENT-GUIDE.md).
+
 ## Examples
 
 | Example                                                       | Description                                    |
@@ -92,10 +122,8 @@ numerical accuracy against ONNX Runtime reference outputs.
 ## Supported Operators
 
 See the [Supported ONNX Operators](SUPPORTED-ONNX-OPS.md) table for the complete list of supported
-operators. Operators outside that table (custom or vendor domains such as `com.microsoft`, or
-op types this crate does not implement yet) do not have to block an import: register a hook for
-them with `ModelGen::register_custom_op` and supply the Rust code yourself. See the
-[custom-op-hooks example](examples/custom-op-hooks).
+operators. Anything outside that table can still be imported by registering a hook — see
+[Custom Operators](#custom-operators) above.
 
 ## Contributing
 
