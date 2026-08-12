@@ -16,8 +16,11 @@ them.
 Post-implementation review revisions (2026-08-12):
 
 - Trait methods that produce data (`forward`, `field`, `collect_snapshots` on
-  both `CustomOp` and `OpOverride`) return `Result<_, ProcessError>` so hooks
-  have an error channel; codegen surfaces the error with node identity.
+  both `CustomOp` and `OpOverride`) return `Result<_, ProcessError>` so a hook
+  can reject a configuration it cannot handle. Code generation itself has no
+  recoverable error channel (`BurnGraph::codegen` returns a `TokenStream`), so
+  an `Err` fails the build with a message naming the node and the method; the
+  gain over a panic inside the hook is attribution, not recoverability.
 - `opset_range()` returns an `OpsetRange { min, max }` struct (shared with the
   coverage diagnostics) instead of a bare tuple.
 - `HookCoverage` is `Covered | Missing(MissingReason)`; `MissingHook.reason`
@@ -709,8 +712,9 @@ pub trait CustomOp: Send + Sync + 'static {
     /// `node.inputs[i].value()`.
     fn infer_output_types(&self, node: &CustomNode) -> Result<Vec<ArgType>, ProcessError>;
 
-    /// Generate the forward-pass code for this node. Err is reported with
-    /// the op's identity (review revision: no bare-TokenStream panic path).
+    /// Generate the forward-pass code for this node. Err fails the build with
+    /// a message naming the op and method (review revision: hooks previously
+    /// returned a bare TokenStream and could only panic).
     fn forward(&self, node: &CustomNode, ctx: &mut CodegenContext<'_, '_>)
         -> Result<TokenStream, ProcessError>;
 

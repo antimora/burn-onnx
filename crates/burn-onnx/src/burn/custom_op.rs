@@ -48,8 +48,13 @@ pub trait CustomOp: Send + Sync + 'static {
 
     /// Generate the forward-pass code for this node.
     ///
-    /// Return `Err` for configurations the hook cannot handle; the error is
-    /// reported with the op's identity instead of panicking inside codegen.
+    /// Code generation has no recoverable error channel: an `Err` here fails
+    /// the build, with a message naming this op and the method that failed.
+    /// It is still the right way to reject a configuration you cannot
+    /// handle, because the failure is attributed to your hook instead of
+    /// surfacing as a raw panic from inside it. Better still, reject in
+    /// [`infer_output_types`](Self::infer_output_types), which fails during
+    /// parsing alongside the other custom-op diagnostics.
     fn forward(
         &self,
         node: &CustomNode,
@@ -85,8 +90,12 @@ pub trait OpOverride: Send + Sync + 'static {
 
     /// Generate the forward-pass code for this node in place of the built-in.
     ///
-    /// Return `Err` for configurations the override cannot handle; the error
-    /// is reported with the node's identity instead of panicking in codegen.
+    /// Code generation has no recoverable error channel: an `Err` here fails
+    /// the build, with a message naming the node and the method that failed.
+    /// It is still the right way to reject a node you cannot handle (e.g. a
+    /// variant your kernel does not support), because the failure is
+    /// attributed to your override instead of surfacing as a raw panic from
+    /// inside it.
     fn forward(
         &self,
         node: &Node,
@@ -134,6 +143,17 @@ impl std::fmt::Debug for HookRegistry {
     }
 }
 
+/// Render an ONNX operator identity for diagnostics, matching how
+/// `CustomNode`'s `Display` renders it: the default domain is the empty
+/// string, so `domain::op_type` would print a bare leading `::`.
+fn format_identity(op_type: &str, domain: &str) -> String {
+    if domain.is_empty() {
+        op_type.to_string()
+    } else {
+        format!("{domain}::{op_type}")
+    }
+}
+
 impl HookRegistry {
     /// Register a custom op hook. Panics on duplicate `(op_type, domain)`:
     /// registration happens in build scripts, where an immediate, attributable
@@ -142,8 +162,8 @@ impl HookRegistry {
         let key = (op.op_type().to_string(), op.domain().to_string());
         if self.customs.contains_key(&key) {
             panic!(
-                "Duplicate custom op registration for '{}::{}'",
-                key.1, key.0
+                "Duplicate custom op registration for '{}'",
+                format_identity(&key.0, &key.1)
             );
         }
         self.customs.insert(key, op);
@@ -272,6 +292,38 @@ mod tests {
     fn duplicate_registration_panics() {
         let mut registry = registry_with_test_op();
         registry.add_custom_op(Box::new(TestOp));
+    }
+
+    /// Custom op in the DEFAULT ONNX domain (an unknown op_type there is a
+    /// legitimate custom op), where the domain string is empty.
+    struct DefaultDomainOp;
+
+    impl CustomOp for DefaultDomainOp {
+        fn op_type(&self) -> &str {
+            "MyUnknownOp"
+        }
+
+        fn infer_output_types(&self, _node: &CustomNode) -> Result<Vec<ArgType>, ProcessError> {
+            Ok(vec![ArgType::Tensor(TensorType::new(DType::F32, 2, None))])
+        }
+
+        fn forward(
+            &self,
+            _node: &CustomNode,
+            _ctx: &mut CodegenContext<'_, '_>,
+        ) -> Result<TokenStream, ProcessError> {
+            Ok(TokenStream::new())
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Duplicate custom op registration for 'MyUnknownOp'")]
+    fn duplicate_default_domain_registration_names_the_op_without_a_bare_separator() {
+        // The default domain is the empty string, so a naive
+        // "{domain}::{op_type}" would read "::MyUnknownOp".
+        let mut registry = HookRegistry::default();
+        registry.add_custom_op(Box::new(DefaultDomainOp));
+        registry.add_custom_op(Box::new(DefaultDomainOp));
     }
 
     struct TestOverride(NodeType);
