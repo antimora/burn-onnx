@@ -212,17 +212,23 @@ invariant becomes checkable: `node_type == Custom` iff `custom_identity` is
 
 #### Per-domain opset
 
-`extract_opset_version` (`pipeline.rs:409`) currently returns
-`Result<usize, Error>` for the default domain only, erroring with
-`Error::MissingOpsetVersion` when no default-domain entry exists. It is extended
-to also build a `HashMap<String, usize>` of every `(domain, version)` in
-`opset_import`. `RawNode::domain_opset` is set from this map keyed by
-`raw_domain`. Per the ONNX spec, every domain a node uses must appear in
-`opset_import`; for robustness against malformed exporters we fall back to the
-default-domain opset (with a `log::warn!`) rather than failing. This
-domain-specific opset is the value checked against the hook's `opset_range()`
-gate in the coverage pre-pass (5.4) and exposed on `CustomNode`, so a hook for
-`custom_domain` opset 2 sees `2`, not the default ONNX opset.
+`extract_opset_versions` (`pipeline.rs`) returns the model-level opset plus a
+`HashMap<String, usize>` of every `(domain, version)` in `opset_import`.
+`RawNode::domain_opset` is set from this map keyed by `raw_domain`. Per the ONNX
+spec, every domain a node uses must appear in `opset_import`; for robustness
+against malformed exporters we fall back to the default-domain opset (with a
+`log::warn!`) rather than failing. This domain-specific opset is the value
+checked against the hook's `opset_range()` gate in the coverage pre-pass (5.4)
+and exposed on `CustomNode`, so a hook for `custom_domain` opset 2 sees `2`, not
+the default ONNX opset.
+
+`""` and `"ai.onnx"` are the same domain per the ONNX spec, so both the map keys
+and a node's `CustomIdentity.domain` are canonicalized to `""` (and burn-onnx
+canonicalizes a hook's declared `domain()` to match). A model that declares no
+default-domain opset at all is not an error when it uses no default-domain
+operators, which is the case for `ai.onnx.ml`-only exports;
+`Error::MissingOpsetVersion` is raised only when default-domain nodes are
+actually present.
 
 ### 4.3 Public `AttributeValue` surface
 

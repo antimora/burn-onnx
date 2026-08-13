@@ -654,7 +654,11 @@ const AI_ONNX_DOMAIN: &str = "ai.onnx";
 const LATEST_DEFAULT_OPSET: usize = 24;
 
 /// Fold `ai.onnx` onto the canonical empty-string spelling of the default domain.
-fn normalize_domain(domain: &str) -> &str {
+///
+/// Public because operator identity is `(op_type, domain)` on both sides of a
+/// custom-op hook: burn-onnx canonicalizes a hook's declared domain with this
+/// so a hook registered for `""` covers a node whose model spells it `ai.onnx`.
+pub fn normalize_domain(domain: &str) -> &str {
     if domain == AI_ONNX_DOMAIN { "" } else { domain }
 }
 
@@ -988,13 +992,16 @@ mod tests {
         // No spurious "domain has no opset_import entry" fallback: "ai.onnx"
         // resolves through the default domain's entry.
         assert_eq!(custom.opset, 16);
+        // Identity is canonicalized, so a hook registered for the default
+        // domain covers this node.
+        assert_eq!(custom.domain, "");
     }
 
     #[test]
     fn ml_only_model_needs_no_default_domain_import() {
-        // OnnxMLTools exports (H2O, scikit-learn) import only ai.onnx.ml when
-        // the graph uses no default-domain operators. onnx.checker accepts
-        // these, so parsing must not demand a default-domain opset.
+        // The OnnxMLTools H2O export in issue #434 imports only ai.onnx.ml,
+        // its graph using no default-domain operators. onnx.checker accepts
+        // that, so parsing must not demand a default-domain opset.
         let bytes = single_node_model("ai.onnx.ml", "TreeEnsembleRegressor", &[("ai.onnx.ml", 1)]);
         let custom = parse_single_custom(&bytes);
 

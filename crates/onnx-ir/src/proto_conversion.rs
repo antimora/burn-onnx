@@ -628,10 +628,15 @@ pub(crate) fn convert_node_proto(
     };
 
     let custom_identity = (node_type == NodeType::Custom).then(|| {
+        // Canonicalize the identity: "ai.onnx" and "" are the same domain, and
+        // hooks are matched by exact (op_type, domain), so storing the raw
+        // spelling would leave a hook registered for "" not covering a node
+        // whose model happens to spell it out.
+        let domain = crate::pipeline::normalize_domain(&node.domain);
         // Unknown op in the DEFAULT domain is the surprising case (possibly a
         // newer standard operator this crate does not implement yet), so it
         // warns; custom-domain ops are expected to be custom.
-        if node.domain.is_empty() {
+        if domain.is_empty() {
             log::warn!(
                 "Unrecognized default-domain op '{}' (node '{}'); treating as custom op",
                 node.op_type,
@@ -640,14 +645,14 @@ pub(crate) fn convert_node_proto(
         } else {
             log::info!(
                 "Custom-domain op '{}::{}' (node '{}'); treating as custom op",
-                node.domain,
+                domain,
                 node.op_type,
                 name
             );
         }
         CustomIdentity {
             op_type: node.op_type.clone(),
-            domain: node.domain.clone(),
+            domain: domain.to_string(),
             domain_opset: domain_opsets.opset_for(&node.domain),
         }
     });

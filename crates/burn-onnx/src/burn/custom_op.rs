@@ -27,6 +27,10 @@ pub trait CustomOp: Send + Sync + 'static {
     fn op_type(&self) -> &str;
 
     /// ONNX domain. Empty string = default ONNX domain.
+    ///
+    /// `""` and `"ai.onnx"` are the same domain per the ONNX spec and are
+    /// canonicalized on registration, so either spelling matches a node either
+    /// way round. Registering both for one op_type is a duplicate.
     fn domain(&self) -> &str {
         ""
     }
@@ -159,7 +163,13 @@ impl HookRegistry {
     /// registration happens in build scripts, where an immediate, attributable
     /// panic beats a silently shadowed hook.
     pub(crate) fn add_custom_op(&mut self, op: Box<dyn CustomOp>) {
-        let key = (op.op_type().to_string(), op.domain().to_string());
+        // Canonicalize the declared domain to match how onnx-ir stores a node's
+        // identity, so declaring "ai.onnx" and "" is a genuine duplicate rather
+        // than two hooks of which only one can ever match.
+        let key = (
+            op.op_type().to_string(),
+            onnx_ir::normalize_domain(op.domain()).to_string(),
+        );
         if self.customs.contains_key(&key) {
             panic!(
                 "Duplicate custom op registration for '{}'",
@@ -188,6 +198,9 @@ impl HookRegistry {
     /// cannot be borrowed as `(&str, &str)`, so a HashMap would allocate two
     /// Strings per lookup, and registries hold a handful of hooks at most.
     pub(crate) fn custom_for(&self, op_type: &str, domain: &str) -> Option<&dyn CustomOp> {
+        // Keys are canonicalized by `add_custom_op`, so canonicalize the probe
+        // too: both spellings of the default domain must reach the same hook.
+        let domain = onnx_ir::normalize_domain(domain);
         self.customs
             .iter()
             .find(|((t, d), _)| t == op_type && d == domain)
@@ -324,6 +337,67 @@ mod tests {
         let mut registry = HookRegistry::default();
         registry.add_custom_op(Box::new(DefaultDomainOp));
         registry.add_custom_op(Box::new(DefaultDomainOp));
+    }
+
+    /// Same op_type as `DefaultDomainOp`, declaring the default domain by its
+    /// other spec-legal spelling.
+    struct AiOnnxDomainOp;
+
+    impl CustomOp for AiOnnxDomainOp {
+        fn op_type(&self) -> &str {
+            "MyUnknownOp"
+        }
+
+        fn domain(&self) -> &str {
+            "ai.onnx"
+        }
+
+        fn infer_output_types(&self, _node: &CustomNode) -> Result<Vec<ArgType>, ProcessError> {
+            Ok(vec![ArgType::Tensor(TensorType::new(DType::F32, 2, None))])
+        }
+
+        fn forward(
+            &self,
+            _node: &CustomNode,
+            _ctx: &mut CodegenContext<'_, '_>,
+        ) -> Result<TokenStream, ProcessError> {
+            Ok(TokenStream::new())
+        }
+    }
+
+    #[test]
+    fn default_domain_spellings_match_each_other() {
+        // A hook declaring "" must cover a node the model spells "ai.onnx",
+        // and a hook declaring "ai.onnx" must cover a node spelled "".
+        let mut registry = HookRegistry::default();
+        registry.add_custom_op(Box::new(DefaultDomainOp));
+        assert_eq!(
+            registry.coverage("MyUnknownOp", "ai.onnx", 1),
+            HookCoverage::Covered
+        );
+
+        let mut registry = HookRegistry::default();
+        registry.add_custom_op(Box::new(AiOnnxDomainOp));
+        assert_eq!(
+            registry.coverage("MyUnknownOp", "", 1),
+            HookCoverage::Covered
+        );
+
+        // Still a distinct identity from a genuinely different domain.
+        assert_eq!(
+            registry.coverage("MyUnknownOp", "ai.onnx.ml", 1),
+            HookCoverage::Missing(MissingReason::NoHook)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Duplicate custom op registration for 'MyUnknownOp'")]
+    fn registering_both_default_domain_spellings_is_a_duplicate() {
+        // Without canonicalization these are two keys, and only whichever one
+        // matches the model's spelling would ever fire.
+        let mut registry = HookRegistry::default();
+        registry.add_custom_op(Box::new(DefaultDomainOp));
+        registry.add_custom_op(Box::new(AiOnnxDomainOp));
     }
 
     struct TestOverride(NodeType);

@@ -18,7 +18,7 @@ mod tensor_store;
 pub use ir::*;
 pub use node::custom::{CustomNode, CustomOpInference, HookCoverage, MissingReason, OpsetRange};
 pub use node::*;
-pub use pipeline::{Error, MissingHook, OnnxGraphBuilder};
+pub use pipeline::{Error, MissingHook, OnnxGraphBuilder, normalize_domain};
 pub use processor::ProcessError;
 
 /// Generated protobuf bindings for the ONNX wire format messages that

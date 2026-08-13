@@ -126,8 +126,8 @@ def gen_scaler_ml_domain_only():
     """Imports only ai.onnx.ml, with no default-domain opset entry.
 
     Legal per the ONNX spec (the graph uses no default-domain operators) and
-    accepted by onnx.checker; this is the shape OnnxMLTools exports for H2O and
-    scikit-learn models. Regression test for issue #434.
+    accepted by onnx.checker; this is the shape of the OnnxMLTools H2O export in
+    issue #434. Regression test for that issue.
     """
     input_data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
 
