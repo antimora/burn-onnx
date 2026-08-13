@@ -148,7 +148,7 @@ pub enum Error {
     /// Model graph nodes are not topologically sorted (ONNX spec violation)
     InvalidGraphStructure { reason: String },
 
-    /// Missing required opset version for default domain
+    /// Model uses default-domain operators without importing the default domain
     MissingOpsetVersion,
 
     /// Type inference failed during IR conversion
@@ -184,7 +184,8 @@ impl fmt::Display for Error {
             Error::MissingOpsetVersion => {
                 write!(
                     f,
-                    "ONNX model must specify opset version for default domain"
+                    "ONNX model uses default-domain operators but its opset_import \
+                     declares no version for the default domain (\"\" or \"ai.onnx\")"
                 )
             }
             Error::TypeInference(e) => {
@@ -632,13 +633,26 @@ fn check_custom_op_coverage(
     }
 }
 
+/// The `ai.onnx` spelling of the default ONNX operator set domain.
+///
+/// ONNX's own `onnx/common/constants.h` documents `""` and `"ai.onnx"` as
+/// "equivalent in an onnx proto representation" and folds the latter into the
+/// former via `NormalizeDomain`. Note that `ai.onnx.ml` is *not* an alias: it
+/// is the separate ONNX-ML operator set with its own opset numbering.
+const AI_ONNX_DOMAIN: &str = "ai.onnx";
+
+/// Fold `ai.onnx` onto the canonical empty-string spelling of the default domain.
+fn normalize_domain(domain: &str) -> &str {
+    if domain == AI_ONNX_DOMAIN { "" } else { domain }
+}
+
 /// Opset version for every domain listed in the model's `opset_import`.
 ///
 /// ONNX operator identity is `(domain, op_type, opset-for-that-domain)`, so
 /// custom-domain nodes must be tagged with their own domain's opset, not the
 /// default ONNX opset. Wrapped in `Arc` for cheap cloning into `DeferredGraph`
-/// (subgraphs inherit the model-level imports). The default domain ("") is
-/// always present; `extract_opset_versions` errors otherwise.
+/// (subgraphs inherit the model-level imports). Keys are normalized, so the
+/// default domain is always stored under `""`.
 #[derive(Debug, Clone)]
 pub(crate) struct DomainOpsets {
     versions: Arc<HashMap<String, usize>>,
@@ -661,6 +675,7 @@ impl DomainOpsets {
     /// Per the ONNX spec every domain a node uses must appear in
     /// `opset_import`; the fallback is robustness against malformed exporters.
     pub(crate) fn opset_for(&self, domain: &str) -> usize {
+        let domain = normalize_domain(domain);
         if let Some(version) = self.versions.get(domain) {
             return *version;
         }
@@ -673,21 +688,52 @@ impl DomainOpsets {
     }
 }
 
+/// Does any node in `graph` (or a nested subgraph) belong to the default domain?
+///
+/// Subgraphs normally hang off default-domain control flow (If/Loop/Scan), so
+/// the recursion rarely runs, but a custom-domain op is free to carry one.
+fn uses_default_domain(graph: &crate::protos::GraphProto) -> bool {
+    graph.node.iter().any(|node| {
+        normalize_domain(&node.domain).is_empty()
+            || node.attribute.iter().any(|attr| {
+                attr.g.as_ref().is_some_and(uses_default_domain)
+                    || attr.graphs.iter().any(uses_default_domain)
+            })
+    })
+}
+
 /// Extract opset versions from the model: the default ONNX domain's version
 /// plus the per-domain map for custom-domain nodes.
 fn extract_opset_versions(model: &ModelProto) -> Result<(usize, DomainOpsets), Error> {
-    let default_opset = model
-        .opset_import
-        .iter()
-        .find(|opset| opset.domain.is_empty())
-        .map(|opset| opset.version as usize)
-        .ok_or(Error::MissingOpsetVersion)?;
-
     let versions: HashMap<String, usize> = model
         .opset_import
         .iter()
-        .map(|opset| (opset.domain.clone(), opset.version as usize))
+        .map(|opset| {
+            (
+                normalize_domain(&opset.domain).to_string(),
+                opset.version as usize,
+            )
+        })
         .collect();
+
+    let default_opset = match versions.get("") {
+        Some(version) => *version,
+        // Importing the default domain is only required when the model actually
+        // uses default-domain operators, so an ai.onnx.ml-only model (e.g. a
+        // scikit-learn/H2O export via OnnxMLTools) legitimately omits it. Stand
+        // in with the highest imported version: node specs are validated against
+        // this single model-level opset regardless of domain, and for these
+        // models that version is the one their own domain declares.
+        None if !uses_default_domain(&model.graph) => {
+            let fallback = versions.values().copied().max().unwrap_or(1);
+            log::debug!(
+                "Model imports no default-domain opset and uses no default-domain \
+                 operators; validating node specs against opset {fallback}"
+            );
+            fallback
+        }
+        None => return Err(Error::MissingOpsetVersion),
+    };
 
     Ok((default_opset, DomainOpsets::new(versions, default_opset)))
 }
@@ -851,6 +897,48 @@ mod tests {
         let graph = OnnxGraphBuilder::new().parse_bytes(&bytes).unwrap();
         assert!(graph.nodes.iter().any(|n| matches!(n, Node::Relu(_))));
         assert!(!graph.nodes.iter().any(|n| matches!(n, Node::Custom(_))));
+    }
+
+    #[test]
+    fn ai_onnx_import_is_the_default_domain() {
+        // "" and "ai.onnx" name the same operator set, so an exporter that
+        // spells out "ai.onnx" still declares the default-domain opset.
+        let bytes = single_node_model("", "Relu", &[("ai.onnx", 16)]);
+        let graph = OnnxGraphBuilder::new().parse_bytes(&bytes).unwrap();
+        assert!(graph.nodes.iter().any(|n| matches!(n, Node::Relu(_))));
+    }
+
+    #[test]
+    fn ai_onnx_node_domain_gets_the_default_opset() {
+        let bytes = single_node_model("ai.onnx", "TotallyUnknownOp", &[("", 16)]);
+        let custom = parse_single_custom(&bytes);
+
+        // No spurious "domain has no opset_import entry" fallback: "ai.onnx"
+        // resolves through the default domain's entry.
+        assert_eq!(custom.opset, 16);
+    }
+
+    #[test]
+    fn ml_only_model_needs_no_default_domain_import() {
+        // OnnxMLTools exports (H2O, scikit-learn) import only ai.onnx.ml when
+        // the graph uses no default-domain operators. onnx.checker accepts
+        // these, so parsing must not demand a default-domain opset.
+        let bytes = single_node_model("ai.onnx.ml", "TreeEnsembleRegressor", &[("ai.onnx.ml", 1)]);
+        let custom = parse_single_custom(&bytes);
+
+        assert_eq!(custom.op_type, "TreeEnsembleRegressor");
+        assert_eq!(custom.domain, "ai.onnx.ml");
+        assert_eq!(custom.opset, 1);
+    }
+
+    #[test]
+    fn default_domain_node_without_import_errors() {
+        // Genuinely malformed: guessing an opset here would silently pick the
+        // wrong schema version for the operator.
+        let bytes = single_node_model("", "Relu", &[("ai.onnx.ml", 1)]);
+        let err = OnnxGraphBuilder::new().parse_bytes(&bytes).unwrap_err();
+
+        assert!(matches!(err, Error::MissingOpsetVersion), "got: {err}");
     }
 
     /// Hook that gives every custom op a fixed F64 rank-3 output type.
