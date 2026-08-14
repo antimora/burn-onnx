@@ -738,11 +738,20 @@ fn collect_domain_versions(model: &ModelProto) -> HashMap<String, usize> {
         match versions.get(domain) {
             Some(&existing) if existing != version => {
                 let kept = existing.max(version);
-                log::warn!(
-                    "Domain '{domain}' is imported at conflicting opset versions \
-                     {existing} and {version} (\"\" and \"ai.onnx\" name the same \
-                     domain); using {kept}"
-                );
+                // The default domain reaches here from two spellings as well as
+                // from a plain duplicate, so name the alias only in that case.
+                if domain.is_empty() {
+                    log::warn!(
+                        "The default domain is imported at conflicting opset \
+                         versions {existing} and {version} (\"\" and \"ai.onnx\" \
+                         name the same domain); using {kept}"
+                    );
+                } else {
+                    log::warn!(
+                        "Domain '{domain}' is imported at conflicting opset \
+                         versions {existing} and {version}; using {kept}"
+                    );
+                }
                 versions.insert(domain.to_string(), kept);
             }
             Some(_) => {}
@@ -971,6 +980,23 @@ mod tests {
             assert_eq!(
                 parse_single_custom(&bytes).opset,
                 17,
+                "import order {imports:?} changed the resolved opset"
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_non_default_domain_imports_merge_by_max() {
+        // Not an alias collision, just a model importing one domain twice.
+        // onnx.checker accepts it, and it takes the same merge path.
+        for imports in [
+            [("", 16), ("custom.domain", 2), ("custom.domain", 5)],
+            [("", 16), ("custom.domain", 5), ("custom.domain", 2)],
+        ] {
+            let bytes = single_node_model("custom.domain", "SomeOp", &imports);
+            assert_eq!(
+                parse_single_custom(&bytes).opset,
+                5,
                 "import order {imports:?} changed the resolved opset"
             );
         }
