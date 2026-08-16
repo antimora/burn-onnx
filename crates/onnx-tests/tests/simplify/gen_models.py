@@ -559,6 +559,68 @@ def sdpa_coalesce():
     )
 
 
+def sdpa_prescale_alias():
+    """Decomposed SDPA whose Q pre-scale hides behind an additive identity.
+
+    Mul(Q, 0.5) -> Add(0) -> Identity -> MatMul(K^T) -> Softmax(-1) -> MatMul(V)
+
+    Identity is dropped in post-processing and Add(0) by a later simplification
+    pass, so attention coalescing sees neither the Mul nor any other scaling.
+    The coalesced Attention must therefore use an explicit unit scale, leaving
+    the retained Mul as the only scaling. head_dim is 4 so that a wrongly
+    applied 1/sqrt(head_dim) default (0.5) is clearly visible in the output.
+    """
+    batch, heads, seq_len, head_dim = 1, 1, 2, 4
+
+    graph = helper.make_graph(
+        name="main_graph",
+        nodes=[
+            helper.make_node(
+                "Constant",
+                [],
+                ["q_scale"],
+                value=helper.make_tensor("q_scale_val", TensorProto.FLOAT, [], [0.5]),
+            ),
+            helper.make_node(
+                "Constant",
+                [],
+                ["zero"],
+                value=helper.make_tensor("zero_val", TensorProto.FLOAT, [], [0.0]),
+            ),
+            helper.make_node("Mul", ["q", "q_scale"], ["q_scaled"]),
+            helper.make_node("Add", ["q_scaled", "zero"], ["q_noop"]),
+            helper.make_node("Identity", ["q_noop"], ["q_alias"]),
+            helper.make_node("Transpose", ["k"], ["k_t"], perm=[0, 1, 3, 2]),
+            helper.make_node("MatMul", ["q_alias", "k_t"], ["qk"]),
+            helper.make_node("Softmax", ["qk"], ["attn_weights"], axis=-1),
+            helper.make_node("MatMul", ["attn_weights", "v"], ["output"]),
+        ],
+        inputs=[
+            helper.make_value_info(
+                name,
+                helper.make_tensor_type_proto(
+                    TensorProto.FLOAT,
+                    shape=[batch, heads, seq_len, head_dim],
+                ),
+            )
+            for name in ("q", "k", "v")
+        ],
+        outputs=[
+            helper.make_value_info(
+                "output",
+                helper.make_tensor_type_proto(
+                    TensorProto.FLOAT,
+                    shape=[batch, heads, seq_len, head_dim],
+                ),
+            ),
+        ],
+    )
+    save(
+        helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", OPSET)]),
+        "simplify_sdpa_prescale_alias.onnx",
+    )
+
+
 def constant_fold():
     """Mul(Shape->Gather(dim1), Shape->Gather(dim2)) -> constant product.
 
@@ -622,5 +684,6 @@ if __name__ == "__main__":
     gather_shape_chain()
     permute_via_shape_gather()
     sdpa_coalesce()
+    sdpa_prescale_alias()
     constant_fold()
     print("Done.")
