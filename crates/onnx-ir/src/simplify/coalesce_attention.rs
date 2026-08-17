@@ -63,7 +63,8 @@ pub(crate) fn coalesce_attention(mut nodes: Vec<RawNode>) -> Vec<RawNode> {
             // Report the scale: it is the one field of this rewrite that can silently
             // change numerics, and the generated code is otherwise the only record.
             let scale = match replacement.attrs.get("scale") {
-                Some(attr) => attr.clone().into_f32().to_string(),
+                Some(AttributeValue::Float32(scale)) => scale.to_string(),
+                Some(other) => format!("{other:?}"),
                 None => "default 1/sqrt(head_dim)".to_string(),
             };
             log::info!(
