@@ -15,10 +15,16 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
 
         // Check if any inputs are scalars
         let has_scalar = self.inputs.iter().any(|arg| arg.ty.is_scalar());
+        // Shape inputs are host arrays; a tensor output means they have to be
+        // moved on device before `Tensor::cat`.
+        let has_shape = self
+            .inputs
+            .iter()
+            .any(|arg| matches!(arg.ty, ArgType::Shape(_)));
 
         // Determine if this is tensor or shape concatenation based on output type
         match &self.outputs.first().unwrap().ty {
-            ArgType::Tensor(_) if has_scalar => {
+            ArgType::Tensor(_) if has_scalar || has_shape => {
                 let all_scalars = self.inputs.iter().all(|arg| arg.ty.is_scalar());
 
                 if all_scalars {
@@ -40,11 +46,28 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
                         );
                     }
                 } else {
-                    // Mixed scalar/tensor - convert individual scalars to rank-1 tensors, then cat
+                    // Mixed inputs - convert scalars and shapes to rank-1 tensors, then cat
                     let mut inits = Vec::new();
                     let mut input_exprs = Vec::new();
 
                     for (i, input_arg) in self.inputs.iter().enumerate() {
+                        if let ArgType::Shape(rank) = &input_arg.ty {
+                            // Shape is a host `[i64; N]` array: move it on device
+                            // as an i64 rank-1 tensor so it can join the cat.
+                            let shape_name = arg_to_ident(input_arg);
+                            let rank_lit = rank.to_tokens();
+                            let temp_name =
+                                Ident::new(&format!("shape_as_tensor_{}", i), Span::call_site());
+                            inits.push(quote! {
+                                let #temp_name: Tensor<1, Int> = Tensor::from_data(
+                                    burn::tensor::TensorData::new(#shape_name.to_vec(), [#rank_lit]),
+                                    (&self.device, burn::tensor::DType::I64)
+                                );
+                            });
+                            input_exprs.push(quote! { #temp_name });
+                            continue;
+                        }
+
                         let input = scope.arg(input_arg);
 
                         if input_arg.ty.is_scalar() {
@@ -65,6 +88,10 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
                             };
                             inits.push(init);
                             input_exprs.push(quote! { #temp_name });
+                        } else if has_shape && input_arg.ty.elem_type() != DType::I64 {
+                            // Shape-derived tensors are i64; align the others so
+                            // every element of the cat shares one dtype.
+                            input_exprs.push(quote! { #input.cast(burn::tensor::DType::I64) });
                         } else {
                             input_exprs.push(input);
                         }
@@ -96,22 +123,62 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
                 }
                 let output_rank = shape;
 
-                // Generate code to concatenate shape arrays
-                // Handle scalar inputs by converting them to single-element arrays
-                let mut shape_parts = Vec::new();
-                for input in &self.inputs {
-                    let input_name = arg_to_ident(input);
-                    if input.ty.is_scalar() {
-                        // Scalar: wrap in array and slice
-                        shape_parts.push(quote! { &[#input_name][..] });
-                    } else {
-                        // Shape or tensor: already an array, just slice
-                        shape_parts.push(quote! { &#input_name[..] });
-                    }
-                }
+                let has_tensor = self
+                    .inputs
+                    .iter()
+                    .any(|arg| matches!(arg.ty, ArgType::Tensor(_)));
 
-                quote! {
-                    let #output: [i64; #output_rank] = [#(#shape_parts),*].concat().try_into().unwrap();
+                if has_tensor {
+                    // A tensor input lives on device, so the fixed-size shape
+                    // array has to be assembled with a host readback instead of
+                    // by slicing arrays.
+                    let mut pushes = Vec::new();
+                    for (i, input) in self.inputs.iter().enumerate() {
+                        if matches!(input.ty, ArgType::Tensor(_)) {
+                            let tensor = scope.arg(input);
+                            let data_name =
+                                Ident::new(&format!("tensor_data_{}", i), Span::call_site());
+                            pushes.push(quote! {
+                                let #data_name = #tensor.cast(burn::tensor::DType::I64).to_data();
+                                shape_parts.extend(#data_name.iter::<i64>());
+                            });
+                        } else {
+                            let input_name = arg_to_ident(input);
+                            if input.ty.is_scalar() {
+                                pushes.push(quote! { shape_parts.push(#input_name as i64); });
+                            } else {
+                                pushes.push(
+                                    quote! { shape_parts.extend_from_slice(&#input_name[..]); },
+                                );
+                            }
+                        }
+                    }
+
+                    quote! {
+                        let #output: [i64; #output_rank] = {
+                            let mut shape_parts = alloc::vec::Vec::with_capacity(#output_rank);
+                            #(#pushes)*
+                            shape_parts.try_into().unwrap()
+                        };
+                    }
+                } else {
+                    // Generate code to concatenate shape arrays
+                    // Handle scalar inputs by converting them to single-element arrays
+                    let mut shape_parts = Vec::new();
+                    for input in &self.inputs {
+                        let input_name = arg_to_ident(input);
+                        if input.ty.is_scalar() {
+                            // Scalar: wrap in array and slice
+                            shape_parts.push(quote! { &[#input_name][..] });
+                        } else {
+                            // Shape: already an array, just slice
+                            shape_parts.push(quote! { &#input_name[..] });
+                        }
+                    }
+
+                    quote! {
+                        let #output: [i64; #output_rank] = [#(#shape_parts),*].concat().try_into().unwrap();
+                    }
                 }
             }
             _ => panic!("Concat only supports Tensor or Shape outputs"),
@@ -208,6 +275,87 @@ mod tests {
                     (&self.device, burn::tensor::DType::F32),
                 );
                 burn::tensor::Tensor::cat([scalar_as_tensor_0, t0].into(), 0)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_concat_shape_and_tensor_to_tensor() {
+        // A Shape input mixed with a runtime-length tensor: the shape array has
+        // to be moved on device so both sides can be `cat`ed (issue #438).
+        let config = ConcatConfig { axis: 0 };
+        let node = ConcatNodeBuilder::new("concat_shape_tensor")
+            .input_shape("head", 1)
+            .input_tensor("tail", 1, DType::I64)
+            .config(config)
+            .output_tensor("output", 1, DType::I64)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, head: [i64; 1], tail: Tensor<1, Int>) -> Tensor<1, Int> {
+            let output = {
+                let shape_as_tensor_0: Tensor<1, Int> = Tensor::from_data(
+                    burn::tensor::TensorData::new(head.to_vec(), [1]),
+                    (&self.device, burn::tensor::DType::I64),
+                );
+                burn::tensor::Tensor::cat([shape_as_tensor_0, tail].into(), 0)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_concat_shape_output_with_tensor_input() {
+        // A rank-1 tensor of known length joining a Shape output: the values
+        // have to be read back on host, not sliced like an array (issue #438).
+        let config = ConcatConfig { axis: 0 };
+        let node = ConcatNodeBuilder::new("concat_shape_out")
+            .input_shape("dims", 3)
+            .input_tensor("extra", 1, DType::I64)
+            .config(config)
+            .output_shape("output", 5)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, dims: [i64; 3], extra: Tensor<1, Int>) -> [i64; 5] {
+            let output: [i64; 5usize] = {
+                let mut shape_parts = alloc::vec::Vec::with_capacity(5usize);
+                shape_parts.extend_from_slice(&dims[..]);
+                let tensor_data_1 = extra.cast(burn::tensor::DType::I64).to_data();
+                shape_parts.extend(tensor_data_1.iter::<i64>());
+                shape_parts.try_into().unwrap()
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_concat_shape_and_i32_tensor_casts_to_i64() {
+        // Shape-derived tensors are i64, so a non-i64 int tensor is cast to
+        // match before the cat.
+        let config = ConcatConfig { axis: 0 };
+        let node = ConcatNodeBuilder::new("concat_shape_i32")
+            .input_shape("head", 2)
+            .input_tensor("tail", 1, DType::I32)
+            .config(config)
+            .output_tensor("output", 1, DType::I64)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, head: [i64; 2], tail: Tensor<1, Int>) -> Tensor<1, Int> {
+            let output = {
+                let shape_as_tensor_0: Tensor<1, Int> = Tensor::from_data(
+                    burn::tensor::TensorData::new(head.to_vec(), [2]),
+                    (&self.device, burn::tensor::DType::I64),
+                );
+                burn::tensor::Tensor::cat(
+                    [shape_as_tensor_0, tail.cast(burn::tensor::DType::I64)].into(),
+                    0,
+                )
             };
             output
         }
