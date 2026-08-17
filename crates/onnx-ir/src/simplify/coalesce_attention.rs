@@ -192,7 +192,7 @@ fn try_match_sdpa(
                 // runtime. Assume the ONNX convention of pre-scaling both operands by
                 // sqrt(scale) with the default scale, which is what the Attention node
                 // applies when the attribute is absent. A model pre-scaling by sqrt(s)
-                // for some other dynamic s is mis-scaled here.
+                // for some other dynamic s gets the wrong scale here.
                 log::warn!(
                     "Attention pattern '{}' pre-scales Q and K by a runtime scalar; \
                      assuming the default 1/sqrt(head_dim)",
