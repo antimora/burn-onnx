@@ -238,12 +238,28 @@ mod tests {
     /// Q is pre-scaled behind an Add(0) that only a later pass removes, so attention
     /// coalescing never sees the scale. The Attention node must not fall back to
     /// 1/sqrt(head_dim) on top of the retained pre-scale.
+    ///
+    /// Built with `from_file` rather than `new` because the result hinges on the value
+    /// of a constant: `new` leaves non-scalar constants zeroed, which would make both
+    /// models agree on garbage and pass vacuously.
     #[test]
     fn sdpa_prescale_alias() {
         use burn::tensor::Tolerance;
         let device = Default::default();
-        let s = simplified::simplify_sdpa_prescale_alias::Model::new(&device);
-        let u = unsimplified::simplify_sdpa_prescale_alias::Model::new(&device);
+        let s = simplified::simplify_sdpa_prescale_alias::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model_simplified/simplify_sdpa_prescale_alias.bpk"
+            ),
+            &device,
+        );
+        let u = unsimplified::simplify_sdpa_prescale_alias::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model_unsimplified/simplify_sdpa_prescale_alias.bpk"
+            ),
+            &device,
+        );
         let q = Tensor::<4>::from_floats([[[[1.0, 2.0, 3.0, 4.0], [0.5, 1.5, 2.5, 3.5]]]], &device);
         let k = Tensor::<4>::from_floats([[[[0.5, 1.0, 1.5, 2.0], [2.0, 1.5, 1.0, 0.5]]]], &device);
         let v = Tensor::<4>::from_floats([[[[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]]]], &device);
