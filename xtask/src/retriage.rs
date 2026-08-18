@@ -1,4 +1,4 @@
-//! `cargo xtask retriage` — re-run the `skip-codegen` and `skip-compile`
+//! `cargo xtask retriage`: re-run the `skip-codegen` and `skip-compile`
 //! rows of `expectations.toml` against the current tree and rewrite
 //! them to match reality.
 //!
@@ -8,25 +8,37 @@
 //! that put them there. The drift is one-directional and invisible: the
 //! file always claims the tree is worse than it is.
 //!
-//! `update-expectations` covers the other direction — demoting `pass`
-//! rows that started failing — and leaves promotion to manual edits, on
-//! the grounds that trying every skipped row is prohibitively expensive.
-//! It isn't: codegen over the whole skip set is a few hundred process
-//! spawns and finishes in well under a minute.
+//! `update-expectations` covers the other direction, demoting `pass`
+//! rows that started failing, and leaves promotion to manual edits on
+//! the grounds that promotion is prohibitively expensive. For codegen
+//! that is not true: ~700 process spawns finish in under a minute, and
+//! that alone catches the bulk of the drift. Compile and compare really
+//! are expensive, which is why they are staged behind it rather than
+//! run per row.
 //!
-//! The command runs in stages, each feeding the next:
+//! Two stages run here:
 //!
 //! 1. **Codegen.** Run `onnx2burn` on every selected row. Rows that
 //!    still fail keep `skip-codegen` and get a freshly captured reason
 //!    (a `skip-compile` row that fails here was mislabeled). Rows that
 //!    succeed are promoted to `pass` optimistically.
-//! 2. **Compile.** Build the test crate. Any rustc error inside a
-//!    generated model demotes that row to `skip-compile`, carrying the
-//!    rustc diagnostic as its reason. Repeated until the crate builds,
-//!    because one broken model can mask errors in later ones.
-//! 3. **Hand off.** Whatever survives is a `pass` claim about output
-//!    correctness, which `update-expectations` is already built to
-//!    check.
+//! 2. **Compile.** Build the test crate. A rustc error inside a
+//!    generated model demotes that row to `skip-compile` carrying the
+//!    diagnostic as its reason; an error inside the generated harness is
+//!    attributed to the row whose runner encloses it. Repeated until the
+//!    crate builds, because one broken model can mask errors in later
+//!    ones. If it never builds, the file is restored and the command
+//!    fails rather than leaving rows claiming a `pass` nothing verified.
+//!
+//! What survives is a `pass` claim that this row compiles. It is not yet
+//! a claim about output, which is `cargo xtask update-expectations`'s
+//! job, and for a row that build.rs cannot harness (dynamic shape,
+//! rank-0 I/O, a dtype the `.pb` loader cannot build) nothing will ever
+//! check the output at all. `report` counts those separately so the
+//! promotion list does not overstate what was proven.
+//!
+//! Rows marked `wontfix` are left alone, as are rows with no vendored
+//! `model.onnx`.
 //!
 //! `--dry-run` reports stage 1 without touching the file.
 
@@ -119,9 +131,9 @@ pub fn handle_command(args: RetriageArgs) -> anyhow::Result<()> {
             warn!("{name}: no vendored model.onnx, leaving the row alone");
             continue;
         }
-        match run_codegen(&onnx2burn, &model, &scratch.join(name)) {
-            Ok(()) => codegen_ok.push(name.clone()),
-            Err(reason) => {
+        match run_codegen(&onnx2burn, &model, &scratch.join(name))? {
+            None => codegen_ok.push(name.clone()),
+            Some(reason) => {
                 verdicts.insert(
                     name.clone(),
                     Verdict {
@@ -149,7 +161,7 @@ pub fn handle_command(args: RetriageArgs) -> anyhow::Result<()> {
     }
 
     if args.dry_run {
-        report(&parsed, &verdicts);
+        report(&parsed, &verdicts, None);
         warn!("--dry-run set; no files were modified");
         if !args.codegen_only {
             warn!("stage 2 (compile) needs the promotions on disk, so it did not run");
@@ -162,50 +174,32 @@ pub fn handle_command(args: RetriageArgs) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("write {}: {e}", expectations_path.display()))?;
 
     // --- Stage 2: compile ------------------------------------------
+    //
+    // Stage 1's promotions are on disk now, because stage 2 builds the
+    // test crate and can only see rows the file already marks `pass`.
+    // Until stage 2 agrees, that file over-claims: it asserts rows pass
+    // that nothing has compiled. Any exit from here without a clean
+    // build has to put `original` back, or a failed sweep leaves the
+    // repo unbuildable for everyone with no hint of why.
     if !args.codegen_only && !codegen_ok.is_empty() {
-        let mut remaining: BTreeSet<String> = codegen_ok.iter().cloned().collect();
-        for round in 1..=MAX_COMPILE_ROUNDS {
-            let broken = compile_and_collect_broken_models(&remaining)?;
-            if broken.is_empty() {
-                info!("Compile: clean after {round} round(s)");
-                break;
-            }
-            info!(
-                "Compile round {round}: demoting {} model(s) to skip-compile",
-                broken.len()
-            );
-
-            let round_verdicts: BTreeMap<String, Verdict> = broken
-                .into_iter()
-                .map(|(name, diag)| {
-                    (
-                        name,
-                        Verdict {
-                            status: Status::SkipCompile,
-                            reason: Some(diag),
-                        },
-                    )
-                })
-                .collect();
-            for (name, verdict) in &round_verdicts {
-                remaining.remove(name);
-                verdicts.insert(name.clone(), verdict.clone());
-            }
-
-            text = apply_verdicts(&text, &round_verdicts, args.tracking.as_deref());
-            std::fs::write(&expectations_path, &text)
-                .map_err(|e| anyhow::anyhow!("write {}: {e}", expectations_path.display()))?;
-
-            if round == MAX_COMPILE_ROUNDS {
-                warn!(
-                    "still not building after {MAX_COMPILE_ROUNDS} round(s); \
-                     re-run to keep narrowing"
-                );
-            }
+        let outcome = run_compile_rounds(
+            &expectations_path,
+            &mut text,
+            &mut verdicts,
+            &codegen_ok,
+            args.tracking.as_deref(),
+        );
+        if let Err(e) = outcome {
+            std::fs::write(&expectations_path, &original)
+                .map_err(|e| anyhow::anyhow!("restore {}: {e}", expectations_path.display()))?;
+            return Err(e.context(format!(
+                "stage 2 did not finish; restored {} to its previous contents",
+                expectations_path.display()
+            )));
         }
     }
 
-    report(&parsed, &verdicts);
+    report(&parsed, &verdicts, codegen_only_rows(&repo_root).as_ref());
     info!("Rewrote {}", expectations_path.display());
     info!(
         "Next: `cargo xtask update-expectations` to demote any promoted row whose \
@@ -214,7 +208,70 @@ pub fn handle_command(args: RetriageArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Build the test crate, demoting rows rustc rejects, until it is clean.
+///
+/// Each round removes at least one row from the candidate set, so the
+/// loop terminates; `MAX_COMPILE_ROUNDS` only bounds the pathological
+/// case where rustc surfaces one row at a time. Exhausting it is a
+/// failure, not a warning: the file would be left asserting `pass` for
+/// rows that demonstrably do not compile.
+fn run_compile_rounds(
+    expectations_path: &Path,
+    text: &mut String,
+    verdicts: &mut BTreeMap<String, Verdict>,
+    codegen_ok: &[String],
+    tracking: Option<&str>,
+) -> anyhow::Result<()> {
+    let mut remaining: BTreeSet<String> = codegen_ok.iter().cloned().collect();
+    for round in 1..=MAX_COMPILE_ROUNDS {
+        let broken = compile_and_collect_broken_models(&remaining)?;
+        if broken.is_empty() {
+            info!("Compile: clean after {round} round(s)");
+            return Ok(());
+        }
+        info!(
+            "Compile round {round}: demoting {} model(s) to skip-compile",
+            broken.len()
+        );
+
+        let round_verdicts: BTreeMap<String, Verdict> = broken
+            .into_iter()
+            .map(|(name, diag)| {
+                (
+                    name,
+                    Verdict {
+                        status: Status::SkipCompile,
+                        reason: Some(diag),
+                    },
+                )
+            })
+            .collect();
+        for (name, verdict) in &round_verdicts {
+            remaining.remove(name);
+            verdicts.insert(name.clone(), verdict.clone());
+        }
+
+        *text = apply_verdicts(text, &round_verdicts, tracking);
+        std::fs::write(expectations_path, &*text)
+            .map_err(|e| anyhow::anyhow!("write {}: {e}", expectations_path.display()))?;
+    }
+
+    Err(anyhow::anyhow!(
+        "still not building after {MAX_COMPILE_ROUNDS} round(s), with {} row(s) \
+         still unverified",
+        remaining.len()
+    ))
+}
+
 /// Build the codegen binary once and return its path.
+///
+/// The path is verified to exist. `cargo build` succeeds regardless of
+/// where the artifact lands, so with `CARGO_TARGET_DIR` set (or
+/// `build.target-dir`, or a shared target directory) the conventional
+/// path is simply wrong. Returning it unchecked would make every
+/// subsequent spawn fail, and since a spawn failure used to be recorded
+/// as that row's codegen verdict, one stray environment variable
+/// rewrote the entire table to `skip-codegen`.
 fn build_onnx2burn(repo_root: &Path) -> anyhow::Result<PathBuf> {
     info!("Building onnx2burn...");
     let status = Command::new("cargo")
@@ -232,35 +289,67 @@ fn build_onnx2burn(repo_root: &Path) -> anyhow::Result<PathBuf> {
     if !status.success() {
         return Err(anyhow::anyhow!("building onnx2burn failed"));
     }
-    Ok(repo_root.join("target/release/onnx2burn"))
+
+    let path = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root.join("target"))
+        .join("release/onnx2burn");
+    if !path.is_file() {
+        return Err(anyhow::anyhow!(
+            "onnx2burn built successfully but no binary at {}; \
+             set CARGO_TARGET_DIR to the directory cargo is actually using",
+            path.display()
+        ));
+    }
+    Ok(path)
 }
 
-/// Run codegen for one model, returning the extracted failure reason on
-/// error. A separate process per model means a codegen panic costs an
-/// exit code rather than the whole sweep.
-fn run_codegen(onnx2burn: &Path, model: &Path, out_dir: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(out_dir).map_err(|e| format!("create out dir: {e}"))?;
+/// Run codegen for one model.
+///
+/// `Ok(None)` means codegen succeeded, `Ok(Some(reason))` that this
+/// model was rejected, and `Err` that the sweep itself is broken. The
+/// split matters: a failure to spawn the child or create its output
+/// directory says nothing about the model, and recording it as that
+/// row's verdict would overwrite a real diagnosis with an environment
+/// problem. Those abort the run instead.
+///
+/// A separate process per model means a codegen panic costs an exit
+/// code rather than the whole sweep.
+fn run_codegen(onnx2burn: &Path, model: &Path, out_dir: &Path) -> anyhow::Result<Option<String>> {
+    std::fs::create_dir_all(out_dir)
+        .map_err(|e| anyhow::anyhow!("create {}: {e}", out_dir.display()))?;
     let output = Command::new(onnx2burn)
         .arg(model)
         .arg(out_dir)
         .env("RUST_LOG", "error")
         .output()
-        .map_err(|e| format!("spawn onnx2burn: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("spawn {}: {e}", onnx2burn.display()))?;
+
     if output.status.success() {
-        Ok(())
-    } else {
-        Err(extract_panic_reason(&String::from_utf8_lossy(
-            &output.stderr,
-        )))
+        return Ok(None);
     }
+
+    // A child killed by a signal (OOM, Ctrl-C) reports no exit code and
+    // usually no message. That is not a verdict about the model either.
+    if output.status.code().is_none() {
+        return Err(anyhow::anyhow!(
+            "onnx2burn was killed by a signal while processing {}",
+            model.display()
+        ));
+    }
+
+    Ok(Some(extract_panic_reason(&String::from_utf8_lossy(
+        &output.stderr,
+    ))))
 }
 
 /// Pull the operator-level complaint out of an onnx2burn panic.
 ///
 /// The message sits on the line after `panicked at <loc>:`, wrapped in
-/// framing that is identical for every failure. The framing is stripped
-/// so reasons stay comparable across rows and close in shape to the
-/// hand-written ones already in the file.
+/// framing whose shape is the same for every failure even though its
+/// text is not (it names the vendored path). Stripping it keeps reasons
+/// comparable across rows and close in shape to the hand-written ones
+/// already in the file.
 fn extract_panic_reason(stderr: &str) -> String {
     let stripped = strip_ansi(stderr);
     let lines: Vec<&str> = stripped.lines().collect();
@@ -321,14 +410,21 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
-/// Keep reasons to one readable line and escape what TOML cares about.
+/// Bound a reason's length, then escape it for a TOML basic string.
+///
+/// The order is load-bearing. Escaping first and cutting afterwards can
+/// slice between a backslash and the character it escapes, emitting a
+/// dangling `\` before the ellipsis and producing a row that TOML
+/// refuses to parse. rustc diagnostics are exactly the input that
+/// triggers it: quote-dense and routinely past the limit. Cutting the
+/// raw message first means every escape pair is written whole.
 fn truncate_reason(msg: &str) -> String {
-    let escaped = msg.replace('\\', "\\\\").replace('"', "\\\"");
-    if escaped.chars().count() > MAX_REASON_LEN {
-        escaped.chars().take(MAX_REASON_LEN - 3).collect::<String>() + "..."
+    let truncated = if msg.chars().count() > MAX_REASON_LEN {
+        msg.chars().take(MAX_REASON_LEN - 3).collect::<String>() + "..."
     } else {
-        escaped
-    }
+        msg.to_string()
+    };
+    truncated.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Build the test crate and map rustc errors back to the rows that
@@ -337,8 +433,8 @@ fn truncate_reason(msg: &str) -> String {
 /// Errors land in one of two generated files. A model that does not
 /// compile fails inside `$OUT_DIR/model/<test_name>.rs`, so the path
 /// alone names the row. A model that compiles but that the generated
-/// driver cannot call — a Shape-typed graph input arriving as
-/// `[i64; N]` where the driver built a `Tensor<1, Int>` — fails inside
+/// driver cannot call (a Shape-typed graph input arriving as
+/// `[i64; N]` where the driver built a `Tensor<1, Int>`) fails inside
 /// `$OUT_DIR/harness.rs`, where the row is the enclosing `fn`.
 ///
 /// Only names in `candidates` are reported: an error inside a row that
@@ -390,9 +486,16 @@ fn compile_and_collect_broken_models(
     }
 
     if broken.is_empty() {
+        // This is the one failure the tool cannot interpret, so hand
+        // over the evidence instead of a shrug. Typically a build.rs
+        // panic, a linker error, or a breakage in a row that was
+        // already passing.
+        let tail: Vec<&str> = stderr.lines().rev().take(30).collect();
+        let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
         return Err(anyhow::anyhow!(
             "onnx-official-tests failed to build but no error was attributed to a \
-             promoted model; fix the build manually and re-run"
+             promoted row; fix the build manually and re-run.\ncargo stderr (last \
+             30 lines):\n{tail}"
         ));
     }
     Ok(broken)
@@ -414,13 +517,20 @@ fn parse_short_diagnostic(line: &str) -> Option<(&str, usize, &str)> {
     Some((&line[..path_end], line_no, message.trim()))
 }
 
-/// Line-number-to-test-name lookup over the generated `harness.rs`.
+/// Line-number-to-row-name lookup over the generated `harness.rs`.
 ///
-/// The file is one flat list of `fn test_<name>() { ... }` bodies, so
-/// the row owning a diagnostic is the nearest `fn` header at or above
-/// it. Built once per compile round and reused for every diagnostic.
+/// The file is a flat list of function bodies in two blocks: every pass
+/// row as `fn <name>()`, then every fail-compare row as
+/// `fn fail_compare_<name>() -> bool`. The row owning a diagnostic is
+/// the nearest `fn` header at or above it.
+///
+/// Both blocks must be indexed. Indexing only the `test_` prefix leaves
+/// every fail-compare body invisible, so a diagnostic inside one
+/// resolves to the last pass row above it instead, and that row gets
+/// demoted carrying a stranger's rustc error. Built once per compile
+/// round and reused for every diagnostic.
 struct HarnessIndex {
-    /// `(line number of the fn header, test name)`, ascending.
+    /// `(line number of the fn header, row name)`, ascending.
     fns: Vec<(usize, String)>,
 }
 
@@ -438,6 +548,8 @@ impl HarnessIndex {
                     .split_once('(')?
                     .0
                     .trim();
+                // A fail-compare runner is named after the row it drives.
+                let name = name.strip_prefix("fail_compare_").unwrap_or(name);
                 name.starts_with("test_").then(|| (i + 1, name.to_string()))
             })
             .collect();
@@ -505,8 +617,64 @@ fn parse_header(line: &str) -> Option<&str> {
         .filter(|name| !name.is_empty() && !name.contains(['[', ']', '.']))
 }
 
+/// Read the rows build.rs compiled but generated no `#[test]` for.
+///
+/// A row can be promoted to `pass` on the strength of compiling and
+/// still never have its output compared: build.rs skips harness
+/// generation for dynamic shapes, rank-0 I/O, and dtypes the `.pb`
+/// loader cannot construct, and `update-expectations` can only demote
+/// rows whose test failed. A row with no test is therefore unfalsifiable
+/// once promoted, which is worth saying out loud rather than folding
+/// into a promotion count.
+///
+/// Returns `None` if the manifest cannot be located, in which case the
+/// caller reports the promotions without the breakdown.
+fn codegen_only_rows(repo_root: &Path) -> Option<BTreeSet<String>> {
+    let build_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root.join("target"))
+        .join("debug/build");
+
+    // One `onnx-official-tests-<hash>` directory per feature set; the
+    // most recently written manifest is the one stage 2 just produced.
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in std::fs::read_dir(&build_dir).ok()?.flatten() {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("onnx-official-tests-")
+        {
+            continue;
+        }
+        let manifest = entry.path().join("out/manifest.rs");
+        let Ok(modified) = manifest.metadata().and_then(|m| m.modified()) else {
+            continue;
+        };
+        if newest.as_ref().is_none_or(|(t, _)| modified > *t) {
+            newest = Some((modified, manifest));
+        }
+    }
+
+    let text = std::fs::read_to_string(newest?.1).ok()?;
+    let start = text.find("CODEGEN_ONLY_TESTS")?;
+    let open = text[start..].find('[')? + start;
+    let close = text[open..].find(']')? + open;
+    Some(
+        text[open..close]
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
 /// Summarise the sweep as a from -> to tally plus the promotion list.
-fn report(before: &Expectations, verdicts: &BTreeMap<String, Verdict>) {
+fn report(
+    before: &Expectations,
+    verdicts: &BTreeMap<String, Verdict>,
+    codegen_only: Option<&BTreeSet<String>>,
+) {
     let mut transitions: BTreeMap<(Status, Status), usize> = BTreeMap::new();
     let mut promoted: Vec<&str> = Vec::new();
     for (name, verdict) in verdicts {
@@ -532,9 +700,30 @@ fn report(before: &Expectations, verdicts: &BTreeMap<String, Verdict>) {
         );
     }
     if !promoted.is_empty() {
-        info!("Promoted to pass ({}):", promoted.len());
+        let unverifiable: Vec<&&str> = match codegen_only {
+            Some(set) => promoted.iter().filter(|n| set.contains(**n)).collect(),
+            None => Vec::new(),
+        };
+        info!(
+            "Promoted to pass ({}, of which {} compile but are never compared):",
+            promoted.len(),
+            unverifiable.len()
+        );
         for name in &promoted {
-            info!("  - {name}");
+            let mark = if unverifiable.contains(&name) {
+                "  (codegen-only)"
+            } else {
+                ""
+            };
+            info!("  - {name}{mark}");
+        }
+        if !unverifiable.is_empty() {
+            warn!(
+                "{} promoted row(s) have no generated test: build.rs cannot harness \
+                 them, so `update-expectations` can never demote them and their \
+                 output is unchecked.",
+                unverifiable.len()
+            );
         }
     }
 }
@@ -616,6 +805,53 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
         assert!(reason.ends_with("..."));
     }
 
+    /// A long, quote-dense reason must still parse. Escaping before
+    /// truncating would cut a `\"` pair in half and emit a dangling
+    /// backslash, and rustc diagnostics look exactly like this.
+    #[test]
+    fn truncated_reasons_never_split_an_escape() {
+        for pad in 210..225 {
+            let raw = format!("{}\"{}", "A".repeat(pad), "B".repeat(80));
+            let reason = truncate_reason(&raw);
+            let toml_text = format!("[t]\nstatus = \"pass\"\nreason = \"{reason}\"\n");
+            let parsed = Expectations::from_toml(PathBuf::from("t.toml"), &toml_text)
+                .unwrap_or_else(|e| panic!("pad {pad} produced unparseable TOML: {e}"));
+            // The reason must survive as a real string, not a mangled one.
+            assert!(parsed.entries["t"].reason.is_some());
+        }
+
+        // Same for a backslash, whose escape is also two characters.
+        for pad in 210..225 {
+            let raw = format!("{}\\{}", "A".repeat(pad), "B".repeat(80));
+            let reason = truncate_reason(&raw);
+            let toml_text = format!("[t]\nstatus = \"pass\"\nreason = \"{reason}\"\n");
+            Expectations::from_toml(PathBuf::from("t.toml"), &toml_text)
+                .unwrap_or_else(|e| panic!("pad {pad} produced unparseable TOML: {e}"));
+        }
+    }
+
+    /// An end-to-end guard: a real rustc diagnostic, over the limit and
+    /// full of backticks and quotes, must round-trip through the
+    /// rewriter and back out of the parser unchanged in meaning.
+    #[test]
+    fn realistic_diagnostic_round_trips() {
+        let diag = "mismatched types: expected `burn::Tensor<1, burn::prelude::Bool>`, \
+                    found `burn::Tensor<1, burn::prelude::Int>` in this expression, \
+                    note the \"expected\" type comes from the signature of \
+                    `mask_where` declared elsewhere in the generated module";
+        let verdicts = BTreeMap::from([(
+            "test_a".to_string(),
+            Verdict {
+                status: Status::SkipCompile,
+                reason: Some(truncate_reason(diag)),
+            },
+        )]);
+        let out = apply_verdicts("[test_a]\nstatus = \"pass\"\n", &verdicts, None);
+        let parsed = Expectations::from_toml(PathBuf::from("t.toml"), &out).unwrap();
+        let reason = parsed.entries["test_a"].reason.as_deref().unwrap();
+        assert!(reason.starts_with("mismatched types: expected `burn::Tensor<1"));
+    }
+
     #[test]
     fn short_diagnostics_parse() {
         let line =
@@ -644,6 +880,41 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
         assert_eq!(harness.enclosing_test(90).as_deref(), Some("test_gamma"));
         // A diagnostic above the first test belongs to the preamble.
         assert_eq!(harness.enclosing_test(3), None);
+    }
+
+    /// `HarnessIndex::load` must see both blocks build.rs emits: the
+    /// pass rows as `fn <name>()`, then the fail-compare rows as
+    /// `fn fail_compare_<name>() -> bool`. Indexing only the first
+    /// block silently blames the last pass row for any diagnostic in
+    /// the second, which is a wrong demotion carrying a stranger's
+    /// error.
+    #[test]
+    fn harness_index_sees_fail_compare_runners() {
+        let dir = std::env::temp_dir().join("retriage_harness_index_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("harness.rs");
+        std::fs::write(
+            &path,
+            "// preamble\n\
+             fn test_alpha() {\n\
+             \x20   let x = 1;\n\
+             }\n\
+             fn test_omega() {\n\
+             \x20   let y = 2;\n\
+             }\n\
+             fn fail_compare_test_beta() -> bool {\n\
+             \x20   let z = 3;\n\
+             }\n",
+        )
+        .unwrap();
+
+        let index = HarnessIndex::load(path.to_str().unwrap()).unwrap();
+        assert_eq!(index.enclosing_test(6).as_deref(), Some("test_omega"));
+        // Line 9 sits inside the fail-compare runner, so it belongs to
+        // test_beta, not to the pass row that happens to precede it.
+        assert_eq!(index.enclosing_test(9).as_deref(), Some("test_beta"));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Warnings share the line shape but must not demote anything.

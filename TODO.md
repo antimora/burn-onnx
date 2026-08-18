@@ -37,6 +37,20 @@ bug behind them, always in the pessimistic direction. Measured on `main` before 
 
 `cargo xtask retriage` now re-checks every `skip-*` row, so this cannot silently recur.
 
+### What "pass" does and does not mean
+
+811 rows are marked `pass`; 705 of them execute as harness tests. The other 106 are codegen-only:
+`build.rs` skips harness generation for dynamic shapes, rank-0 I/O, and dtypes the `.pb` loader
+cannot construct, and `update-expectations` can only demote a row whose test failed. A codegen-only
+row is therefore unfalsifiable once promoted, and its output is never compared against the
+reference tensors. `retriage` now counts them separately when reporting promotions rather than
+folding them into the total.
+
+37 of this branch's 105 promotions are codegen-only, including `test_size` and `test_size_example`
+(the Size fix is verified by the `crates/onnx-tests/tests/size/` integration tests, not by the
+official suite) and 26 `test_castlike_*` rows converting to FLOAT8/INT4 variants. Extending the
+harness to cover them is separate work; the honest reading of 811 is "811 compile, 705 match".
+
 ## Tier 1
 
 ### 1. Fix `Size` codegen
@@ -278,7 +292,9 @@ those reject the model with a clear error instead of accepting it and computing 
 Items 1 and 2 are done; 4 turned out to be already fixed on `main`. Item 3 is next.
 
 Then 5 -> 6 -> 7, each now measurable against an honest baseline. Items 5 and 9 now have issues (#459, #458); both are
-silent-wrong-answer bugs, which argues for pulling them ahead of the pure test-count work.
+silent-wrong-answer bugs, which argues for pulling them ahead of the pure test-count work. #460
+(non-deterministic attribute errors) should land early too: it is small, and until it does, every
+`retriage` run churns a couple of rows for no reason.
 
 Item 8's top three rows (34 + 22 + 22 = 78 of the 103 remaining `skip-compile` rows) are probably
 two fixes, which makes that bucket competitive with item 5 on effort-per-test.

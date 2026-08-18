@@ -9,10 +9,11 @@ use crate::tensor_store::TensorDataRef;
 
 /// Simplify shape-related patterns when input shapes are statically known.
 ///
-/// Handles three patterns:
+/// Handles three patterns. The first two match on the producing node;
+/// the third matches on the input's type, whatever produced it.
 /// 1. `Shape -> Gather(constant_index)` -> constant scalar
 /// 2. `Shape -> Slice(static starts/ends)` -> constant tensor
-/// 3. `Size(Shape(N))` -> constant N
+/// 3. `Size` on a `Shape(N)`-typed input -> constant N
 ///
 /// Orphaned nodes are cleaned up by dead node elimination.
 pub(crate) fn simplify_constant_shape(
@@ -123,7 +124,7 @@ pub(crate) fn simplify_constant_shape(
     // static_shape values match runtime shapes, type inference populates static_shape
     // from ONNX export-time values which may differ at runtime for models with dynamic
     // spatial dimensions (e.g., rf-detr). The Shape codegen already handles the dynamic
-    // case correctly via .dims(), so skipping this pass is safe.
+    // case correctly via .dims(), so omitting that fold is safe.
 
     // Update downstream inputs: nodes that reference replaced outputs need
     // ValueSource::Constant so the dead constant elimination pass in

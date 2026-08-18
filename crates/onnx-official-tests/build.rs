@@ -776,16 +776,24 @@ enum TestMode {
 /// Emit one test function into `buf`.
 ///
 /// Pass mode emits a `#[test]` that panics on mismatch. FailCompare
-/// mode emits `fn fail_compare_<name>() -> bool`: setup (model + .pb
-/// loads) runs at the top level so its panics propagate as real test
-/// failures, and only the forward call and reference comparison are
-/// wrapped in `catch_unwind`. Returning `is_err()` from that wrap
-/// means "comparison still fails as expected"; `Ok(())` means the
-/// upstream bug has been fixed and the entry should be flipped to
-/// `pass`. This split matters: without it, a regression in
-/// `pb_loader` or tensor construction would panic inside the wrap
-/// and read as "still failing" across every fail-compare entry at
-/// once, silently masking the real breakage.
+/// mode emits `fn fail_compare_<name>() -> bool`, where the `.pb`
+/// loads run at the top level so their panics propagate as real test
+/// failures, and the forward call and reference comparison are wrapped
+/// in `catch_unwind`. Returning `is_err()` from that wrap means
+/// "comparison still fails as expected"; `Ok(())` means the upstream
+/// bug has been fixed and the entry should be flipped to `pass`. This
+/// split matters: without it, a regression in `pb_loader` or tensor
+/// construction would panic inside the wrap and read as "still
+/// failing" across every fail-compare entry at once, silently masking
+/// the real breakage.
+///
+/// Model construction is the deliberate exception, guarded by its own
+/// `catch_unwind` that reports a load failure as still-failing. A model
+/// that cannot be built is the entry's own defect, and leaving it
+/// unguarded let one such row abort the whole drift check. The cost is
+/// that a systemic loader regression (every `.bpk` missing at once)
+/// would read as "all still failing" rather than failing loudly, so
+/// the guard logs each construction failure to keep it visible.
 fn emit_single_test(buf: &mut String, name: &str, meta: &TestMeta, mode: TestMode) {
     match mode {
         TestMode::Pass => {
@@ -811,8 +819,8 @@ fn emit_single_test(buf: &mut String, name: &str, meta: &TestMeta, mode: TestMod
         "    let bpk_path = concat!(env!(\"OUT_DIR\"), \"/model/{name}.bpk\");"
     )
     .unwrap();
-    // A fail-compare entry that cannot even construct its model — say a
-    // bpk missing weights the generated struct declares — is still
+    // A fail-compare entry that cannot even construct its model, say a
+    // bpk missing weights the generated struct declares, is still
     // failing, and saying so is the whole job of the entry. Left
     // unguarded, that panic escapes the per-comparison `catch_unwind`
     // below and takes down `verify_fail_compare_still_fails` for every
@@ -832,7 +840,15 @@ fn emit_single_test(buf: &mut String, name: &str, meta: &TestMeta, mode: TestMod
                  \x20       generated::{name}::Model::from_file(bpk_path, &device)\n\
                  \x20   }})) {{\n\
                  \x20       Ok(model) => model,\n\
-                 \x20       Err(_) => return true,\n\
+                 \x20       Err(payload) => {{\n\
+                 \x20           let msg = payload\n\
+                 \x20               .downcast_ref::<&'static str>()\n\
+                 \x20               .map(|s| (*s).to_string())\n\
+                 \x20               .or_else(|| payload.downcast_ref::<String>().cloned())\n\
+                 \x20               .unwrap_or_else(|| \"<opaque panic payload>\".to_string());\n\
+                 \x20           eprintln!(\"{name}: model construction failed: {{msg}}\");\n\
+                 \x20           return true;\n\
+                 \x20       }}\n\
                  \x20   }};"
             )
             .unwrap();

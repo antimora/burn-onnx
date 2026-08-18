@@ -2202,11 +2202,11 @@ status = "pass"
 
 [test_globalmaxpool]
 status = "skip-codegen"
-reason = "Unsupported node type for inputs: GlobalMaxPool(GlobalMaxPoolNode { name: \"globalmaxpool1\", inputs: [Argument { name: \"x\", ty: Tensor(TensorType { dtype: F32, rank: 4, static_shape: Some([Some(1), Some(3), Some(5)..."
+reason = "Unsupported node type for inputs: GlobalMaxPool(GlobalMaxPoolNode { name: \"globalmaxpool1\", inputs: [Argument { name: \"x\", ty: Tensor(TensorType { dtype: F32, rank: 4, static_shape: Some([Some(1), Some(3), Some(5), So..."
 
 [test_globalmaxpool_precomputed]
 status = "skip-codegen"
-reason = "Unsupported node type for inputs: GlobalMaxPool(GlobalMaxPoolNode { name: \"globalmaxpool1\", inputs: [Argument { name: \"x\", ty: Tensor(TensorType { dtype: F32, rank: 4, static_shape: Some([Some(1), Some(1), Some(3)..."
+reason = "Unsupported node type for inputs: GlobalMaxPool(GlobalMaxPoolNode { name: \"globalmaxpool1\", inputs: [Argument { name: \"x\", ty: Tensor(TensorType { dtype: F32, rank: 4, static_shape: Some([Some(1), Some(1), Some(3), So..."
 
 [test_greater]
 status = "pass"
@@ -4416,7 +4416,7 @@ reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribu
 
 [test_resize_downsample_sizes_nearest_not_smaller]
 status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'keep_aspect_ratio_policy': keep_aspect_ratio_policy other than 'stretch' is not supported"
+reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
 
 [test_resize_tf_crop_and_resize]
 status = "fail-compare"
@@ -4497,7 +4497,7 @@ tracking = "#311"
 
 [test_resize_upsample_sizes_nearest_not_larger]
 status = "skip-codegen"
-reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribute is not supported"
+reason = "Node 'resize1' (Resize): Invalid attribute 'keep_aspect_ratio_policy': keep_aspect_ratio_policy other than 'stretch' is not supported"
 
 [test_resize_upsample_sizes_nearest_not_smaller]
 status = "skip-codegen"
@@ -4787,11 +4787,11 @@ status = "pass"
 
 [test_scatter_with_axis]
 status = "skip-codegen"
-reason = "Unsupported node type for inputs: Scatter(ScatterNode { name: \"scatter1\", inputs: [Argument { name: \"data\", ty: Tensor(TensorType { dtype: F32, rank: 2, static_shape: Some([Some(1), Some(5)]) }), value_source: Dyn..."
+reason = "Unsupported node type for inputs: Scatter(ScatterNode { name: \"scatter1\", inputs: [Argument { name: \"data\", ty: Tensor(TensorType { dtype: F32, rank: 2, static_shape: Some([Some(1), Some(5)]) }), value_source: Dynamic..."
 
 [test_scatter_without_axis]
 status = "skip-codegen"
-reason = "Unsupported node type for inputs: Scatter(ScatterNode { name: \"scatter1\", inputs: [Argument { name: \"data\", ty: Tensor(TensorType { dtype: F32, rank: 2, static_shape: Some([Some(3), Some(3)]) }), value_source: Dyn..."
+reason = "Unsupported node type for inputs: Scatter(ScatterNode { name: \"scatter1\", inputs: [Argument { name: \"data\", ty: Tensor(TensorType { dtype: F32, rank: 2, static_shape: Some([Some(3), Some(3)]) }), value_source: Dynamic..."
 
 [test_scatternd]
 status = "pass"
