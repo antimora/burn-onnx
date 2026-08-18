@@ -815,7 +815,7 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
             let reason = truncate_reason(&raw);
             let toml_text = format!("[t]\nstatus = \"pass\"\nreason = \"{reason}\"\n");
             let parsed = Expectations::from_toml(PathBuf::from("t.toml"), &toml_text)
-                .unwrap_or_else(|e| panic!("pad {pad} produced unparseable TOML: {e}"));
+                .unwrap_or_else(|e| panic!("pad {pad} produced unparsable TOML: {e}"));
             // The reason must survive as a real string, not a mangled one.
             assert!(parsed.entries["t"].reason.is_some());
         }
@@ -826,7 +826,7 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
             let reason = truncate_reason(&raw);
             let toml_text = format!("[t]\nstatus = \"pass\"\nreason = \"{reason}\"\n");
             Expectations::from_toml(PathBuf::from("t.toml"), &toml_text)
-                .unwrap_or_else(|e| panic!("pad {pad} produced unparseable TOML: {e}"));
+                .unwrap_or_else(|e| panic!("pad {pad} produced unparsable TOML: {e}"));
         }
     }
 
