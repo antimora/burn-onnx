@@ -37,12 +37,13 @@ pub struct ConcatNode {
 
 pub(crate) struct ConcatProcessor;
 
-/// Element count a rank-1 tensor input contributes to a shape-like concat, or
-/// `None` when the length is only known at runtime (e.g. a Shape sliced with
-/// runtime bounds).
+/// Element count a rank-1 tensor input contributes to the concatenated output,
+/// or `None` when no length is statically known: either the length is decided at
+/// runtime (a Shape sliced with runtime bounds, say) or the input is a constant
+/// whose value the IR no longer holds.
 ///
 /// A lifted constant's own data shape wins over a declared `static_shape`.
-/// Callers must have checked `rank == 1`; the shapes are indexed directly.
+/// Callers must have checked `rank == 1`.
 fn rank1_tensor_len(input: &Argument, ty: &TensorType) -> Option<usize> {
     input
         .value()
@@ -51,10 +52,10 @@ fn rank1_tensor_len(input: &Argument, ty: &TensorType) -> Option<usize> {
         .or_else(|| ty.static_shape_known().map(|s| s[0]))
 }
 
-/// Name the inputs that forced a Shape output to degrade to a tensor. Two very
-/// different causes land here: a genuinely dynamic length, or a lifted constant
-/// whose value the IR lost. The second only shows up much later, in whatever
-/// downstream node needed a Shape, so record it while the cause is still known.
+/// Name the inputs that forced a Shape output to degrade to a tensor. Usually
+/// the length is genuinely dynamic, but a lifted constant whose value the IR
+/// lost lands here too, and that one only surfaces much later, in whatever
+/// downstream node needed a Shape. Record it while the cause is still known.
 fn log_runtime_length_fallback(node: &RawNode) {
     for input in &node.inputs {
         if let ArgType::Tensor(t) = &input.ty
@@ -62,8 +63,8 @@ fn log_runtime_length_fallback(node: &RawNode) {
             && rank1_tensor_len(input, t).is_none()
         {
             log::debug!(
-                "Concat node {}: input '{}' has a runtime-only length, so the output \
-                 is a rank-1 tensor instead of a Shape",
+                "Concat node {}: input '{}' has no statically known length, so the \
+                 output is a rank-1 tensor instead of a Shape",
                 node.name,
                 input.name
             );
@@ -71,14 +72,21 @@ fn log_runtime_length_fallback(node: &RawNode) {
     }
 }
 
-/// Shape values are i64, and ONNX requires every Concat input to share one
-/// element type, so a shape-like concat can only take integers. Reject anything
-/// else here: burn-onnx unifies these inputs to i64, which silently truncates a
-/// float and cannot type-check a bool.
-fn validate_shape_concat_dtypes(node: &RawNode) -> Result<(), ProcessError> {
+/// A Shape is a 1-D i64 array, and ONNX requires every Concat input to share
+/// one element type and rank, so the other inputs have to be integers of rank 1
+/// or less. Reject the rest here: burn-onnx unifies these inputs to i64, which
+/// silently truncates a float, cannot type-check a bool, and cannot join a
+/// higher-rank tensor to a 1-D one.
+fn validate_shape_concat_inputs(node: &RawNode) -> Result<(), ProcessError> {
     for (i, input) in node.inputs.iter().enumerate() {
         let dtype = match &input.ty {
             ArgType::Shape(_) => continue,
+            ArgType::Tensor(t) if t.rank != 1 => {
+                return Err(ProcessError::TypeMismatch {
+                    expected: "rank-1 input, since Concat mixes it with a Shape".to_string(),
+                    actual: format!("rank {} at input {} ('{}')", t.rank, i, input.name),
+                });
+            }
             ArgType::Tensor(t) => t.dtype,
             ArgType::ScalarNative(dtype) | ArgType::ScalarTensor(dtype) => *dtype,
         };
@@ -86,7 +94,7 @@ fn validate_shape_concat_dtypes(node: &RawNode) -> Result<(), ProcessError> {
         if !dtype.is_int() && !dtype.is_uint() {
             return Err(ProcessError::TypeMismatch {
                 expected: "integer input, since Concat mixes it with a Shape".to_string(),
-                actual: format!("{:?} at input {}", dtype, i),
+                actual: format!("{:?} at input {} ('{}')", dtype, i, input.name),
             });
         }
     }
@@ -161,7 +169,7 @@ impl NodeProcessor for ConcatProcessor {
         let has_scalar = node.inputs.iter().any(|i| i.ty.is_scalar());
 
         if has_shape {
-            validate_shape_concat_dtypes(node)?;
+            validate_shape_concat_inputs(node)?;
         }
 
         // Handle scalar inputs: concatenating scalars with rank-1 tensors or shapes produces a 1D output
@@ -280,16 +288,16 @@ impl NodeProcessor for ConcatProcessor {
             // A rank-1 tensor that is a lifted constant contributes its own
             // length here, and later flips to a Shape input once its producer
             // honors this node's Shape preference.
-            let mut provisional_rank: usize = 0;
+            let mut total_rank: usize = 0;
             let mut length_known = true;
 
             for input in &node.inputs {
                 match &input.ty {
                     ArgType::Shape(rank) => {
-                        provisional_rank += rank;
+                        total_rank += rank;
                     }
                     ArgType::Tensor(t) if t.rank == 1 => match rank1_tensor_len(input, t) {
-                        Some(len) => provisional_rank += len,
+                        Some(len) => total_rank += len,
                         None => length_known = false,
                     },
                     _ => {
@@ -303,7 +311,7 @@ impl NodeProcessor for ConcatProcessor {
 
             node.outputs[0].ty = if length_known {
                 // Every length is known, so the total is final
-                ArgType::Shape(provisional_rank)
+                ArgType::Shape(total_rank)
             } else {
                 // At least one tensor has a runtime-only length (e.g. a Shape
                 // sliced with runtime bounds), so the total is not known at
@@ -708,7 +716,7 @@ mod tests {
     fn test_concat_shape_with_float_tensor_is_rejected() {
         // Shape values are i64 and ONNX requires one element type across the
         // inputs, so a float alongside a Shape is a malformed graph. Catching it
-        // here keeps burn-onnx from emitting a cast that cannot work.
+        // here keeps burn-onnx from silently truncating the float to i64.
         let mut node = TestNodeBuilder::new(NodeType::Concat, "test_concat_float")
             .input_shape("shape1", 2)
             .input_tensor_f32("tensor1", 1, Some(vec![2]))
@@ -725,6 +733,57 @@ mod tests {
             "expected an integer-input error, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_concat_shape_with_rank2_tensor_is_rejected() {
+        // A Shape is 1-D, so a higher-rank tensor cannot join it. Without this
+        // the node falls through to the plain tensor path and codegen emits a
+        // `Tensor::cat` of a rank-1 and a rank-2 tensor, which cannot compile.
+        let mut node = TestNodeBuilder::new(NodeType::Concat, "test_concat_rank2")
+            .input_shape("shape1", 2)
+            .input_tensor_i64("tensor1", 2, None)
+            .output_shape("output", 0)
+            .attr_int("axis", 0)
+            .build();
+
+        let err = ConcatProcessor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .expect_err("a rank-2 input alongside a Shape must be rejected");
+
+        assert!(
+            format!("{}", err).contains("rank-1"),
+            "expected a rank error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_concat_shape_with_unsigned_tensor_is_accepted() {
+        // The dtype check rejects non-integers, not non-i64: unsigned shape
+        // arithmetic is valid and burn-onnx casts it to i64.
+        let mut node = TestNodeBuilder::new(NodeType::Concat, "test_concat_uint")
+            .input_shape("shape1", 2)
+            .add_input(
+                "tensor1",
+                ArgType::Tensor(TensorType {
+                    dtype: burn_tensor::DType::U32,
+                    rank: 1,
+                    static_shape: Some(vec![Some(2)]),
+                }),
+            )
+            .output_shape("output", 0)
+            .attr_int("axis", 0)
+            .build();
+
+        ConcatProcessor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .expect("an unsigned integer input alongside a Shape is valid");
+
+        match &node.outputs[0].ty {
+            ArgType::Shape(rank) => assert_eq!(*rank, 4),
+            other => panic!("Expected Shape output, got {:?}", other),
+        }
     }
 
     #[test]

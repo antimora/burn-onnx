@@ -70,6 +70,21 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "expected 5 shape elements")]
+    fn concat_shape_with_tensor_wrong_length_panics() {
+        // The array size comes from the length the ONNX graph declares for
+        // `extra`. A tensor carries no compile-time length, so a caller can
+        // contradict it; the generated code says so instead of dumping a vec.
+        let model: concat_shape_with_tensor::Model = concat_shape_with_tensor::Model::default();
+        let device = Default::default();
+
+        let input = Tensor::<3>::zeros([3, 16, 8], &device);
+        let extra = Tensor::<1, burn::tensor::Int>::from_data([9i64, 11, 13], &device);
+
+        let _ = model.forward(input, extra);
+    }
+
+    #[test]
     fn concat_shape_with_constant() {
         // Initialize the model
         let device = Default::default();

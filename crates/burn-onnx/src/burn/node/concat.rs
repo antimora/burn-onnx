@@ -1,8 +1,8 @@
 use super::prelude::*;
 
 /// Native `i64` expression for a scalar input, for the shape-arithmetic paths
-/// where every value is widened to i64. A `ScalarTensor` lives on device, so it
-/// is read back rather than named directly.
+/// where every value is converted to i64. A `ScalarTensor` lives on device, so
+/// it is read back rather than named directly.
 fn scalar_as_i64(arg: &Argument, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
     let value = scope.arg(arg);
 
@@ -30,8 +30,9 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
 
         // Check if any inputs are scalars
         let has_scalar = self.inputs.iter().any(|arg| arg.ty.is_scalar());
-        // Shape inputs are host arrays; a tensor output means they have to be
-        // moved on device before `Tensor::cat`.
+        // A Shape input means this concat is i64 shape arithmetic: it decides
+        // both how the host arrays reach a tensor output and what dtype the
+        // other inputs are converted to.
         let has_shape = self
             .inputs
             .iter()
@@ -85,7 +86,7 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
 
                         if input_arg.ty.is_scalar() {
                             // Alongside a Shape the concat is i64 shape
-                            // arithmetic, so scalars are widened to match the
+                            // arithmetic, so scalars are converted to match the
                             // arrays. onnx-ir has already rejected non-integer
                             // inputs in that case.
                             let (dtype, value) = match has_shape {
@@ -113,7 +114,7 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
 
                             if has_shape && input_arg.ty.elem_type() != DType::I64 {
                                 // Shape-derived tensors are i64; align the others
-                                // so every element of the cat shares one dtype.
+                                // so every tensor in the cat shares one dtype.
                                 input_exprs.push(quote! { #input.cast(burn::tensor::DType::I64) });
                             } else {
                                 input_exprs.push(input);
@@ -156,8 +157,10 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
                     // A tensor input lives on device, so the fixed-size shape
                     // array has to be assembled with a host readback instead of
                     // by slicing arrays. onnx-ir only picks a Shape output when
-                    // every tensor length is statically known, which is what
-                    // makes the fixed size sound.
+                    // every tensor length is statically known, which is why the
+                    // size can be fixed at codegen time.
+                    // The `__` prefix keeps these locals from being captured by
+                    // an ONNX value that happens to carry the same name.
                     let mut pushes = Vec::new();
                     for (i, input) in self.inputs.iter().enumerate() {
                         if matches!(input.ty, ArgType::Tensor(_)) {
@@ -201,12 +204,14 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
                     // Handle scalar inputs by converting them to single-element arrays
                     let mut shape_parts = Vec::new();
                     for input in &self.inputs {
-                        let input_name = arg_to_ident(input);
                         if input.ty.is_scalar() {
-                            // Scalar: wrap in array and slice
-                            shape_parts.push(quote! { &[#input_name][..] });
+                            // Scalar: widen to i64 and wrap in an array, so it
+                            // can be sliced alongside the i64 shape arrays
+                            let value = scalar_as_i64(input, scope);
+                            shape_parts.push(quote! { &[#value][..] });
                         } else {
                             // Shape: already an array, just slice
+                            let input_name = arg_to_ident(input);
                             shape_parts.push(quote! { &#input_name[..] });
                         }
                     }
@@ -344,9 +349,9 @@ mod tests {
 
     #[test]
     fn test_concat_shape_and_i32_scalar_widens_to_i64() {
-        // Scalars have to be widened alongside Shape inputs too: burn's `cat`
-        // asserts a single dtype across the tensors it joins, so an i32 scalar
-        // next to an i64 shape would panic at inference time.
+        // Scalars have to be converted alongside Shape inputs too: the backend
+        // panics on a dtype mismatch between the tensors `cat` joins, so an i32
+        // scalar next to an i64 shape would blow up at inference time.
         let config = ConcatConfig { axis: 0 };
         let node = ConcatNodeBuilder::new("concat_shape_scalar")
             .input_shape("head", 2)
@@ -378,9 +383,57 @@ mod tests {
     }
 
     #[test]
+    fn test_concat_shape_output_with_i32_scalar() {
+        // No tensor input, so the array-slicing path builds the output. The
+        // scalar still has to reach it as an i64 or the slices do not match.
+        let config = ConcatConfig { axis: 0 };
+        let node = ConcatNodeBuilder::new("concat_shape_scalar_out")
+            .input_shape("head", 2)
+            .input_scalar("mid", DType::I32)
+            .config(config)
+            .output_shape("output", 3)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, head: [i64; 2], mid: i32) -> [i64; 3] {
+            let output: [i64; 3usize] = [&head[..], &[mid as i64][..]]
+                .concat()
+                .try_into()
+                .unwrap();
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_concat_shape_with_scalar_tensor_reads_back() {
+        // A ScalarTensor lives on device, so it is read back with into_scalar
+        // rather than being named as if it were a host value.
+        let config = ConcatConfig { axis: 0 };
+        let node = ConcatNodeBuilder::new("concat_shape_scalar_tensor")
+            .input_shape("head", 2)
+            .input_scalar_tensor("mid", DType::I64)
+            .config(config)
+            .output_shape("output", 3)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, head: [i64; 2], mid: Tensor<1, Int>) -> [i64; 3] {
+            let output: [i64; 3usize] = [&head[..], &[(mid).into_scalar::<i64>() as i64][..]]
+                .concat()
+                .try_into()
+                .unwrap();
+            output
+        }
+        ");
+    }
+
+    #[test]
     fn test_concat_shape_output_with_tensor_input() {
         // A rank-1 tensor input on a node whose output is a Shape: the values
         // have to be read back on host, not sliced like an array (issue #438).
+        // Built directly rather than through onnx-ir, which would only pick a
+        // Shape output for a tensor whose length it already knows.
         let config = ConcatConfig { axis: 0 };
         let node = ConcatNodeBuilder::new("concat_shape_out")
             .input_shape("dims", 3)
@@ -389,6 +442,9 @@ mod tests {
             .output_shape("output", 5)
             .build();
         let code = codegen_forward_default(&node);
+        // Spelled out separately from the snapshot: regenerating it must not
+        // drop the prefix that keeps an ONNX value from capturing this local.
+        assert!(code.contains("__shape_parts"));
         assert_snapshot!(code, @r#"
         pub fn forward(&self, dims: [i64; 3], extra: Tensor<1, Int>) -> [i64; 5] {
             let output: [i64; 5usize] = {
