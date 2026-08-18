@@ -5108,9 +5108,7 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_2d_axis0_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_rms_normalization_2d_axis1]
 status = "skip-codegen"
@@ -5118,9 +5116,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_2d_axis1_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_2d_axis_negative_1]
 status = "skip-codegen"
@@ -5128,9 +5126,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_2d_axis_negative_1_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_2d_axis_negative_2]
 status = "skip-codegen"
@@ -5138,9 +5136,7 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_2d_axis_negative_2_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_rms_normalization_3d_axis0_epsilon]
 status = "skip-codegen"
@@ -5148,9 +5144,7 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_3d_axis0_epsilon_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_rms_normalization_3d_axis1_epsilon]
 status = "skip-codegen"
@@ -5158,9 +5152,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_3d_axis1_epsilon_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_3d_axis2_epsilon]
 status = "skip-codegen"
@@ -5168,9 +5162,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_3d_axis2_epsilon_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_3d_axis_negative_1_epsilon]
 status = "skip-codegen"
@@ -5178,9 +5172,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_3d_axis_negative_1_epsilon_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_3d_axis_negative_2_epsilon]
 status = "skip-codegen"
@@ -5188,9 +5182,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_3d_axis_negative_2_epsilon_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_3d_axis_negative_3_epsilon]
 status = "skip-codegen"
@@ -5198,9 +5192,7 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_3d_axis_negative_3_epsilon_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_rms_normalization_4d_axis0]
 status = "skip-codegen"
@@ -5208,9 +5200,7 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_4d_axis0_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_rms_normalization_4d_axis1]
 status = "skip-codegen"
@@ -5218,9 +5208,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_4d_axis1_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_4d_axis2]
 status = "skip-codegen"
@@ -5228,9 +5218,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_4d_axis2_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_4d_axis3]
 status = "skip-codegen"
@@ -5238,9 +5228,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_4d_axis3_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_4d_axis_negative_1]
 status = "skip-codegen"
@@ -5248,9 +5238,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_4d_axis_negative_1_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_4d_axis_negative_2]
 status = "skip-codegen"
@@ -5258,9 +5248,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_4d_axis_negative_2_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_4d_axis_negative_3]
 status = "skip-codegen"
@@ -5268,9 +5258,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_4d_axis_negative_3_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rms_normalization_4d_axis_negative_4]
 status = "skip-codegen"
@@ -5278,9 +5268,7 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_4d_axis_negative_4_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_rms_normalization_default_axis]
 status = "skip-codegen"
@@ -5288,9 +5276,9 @@ reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalizatio
 tracking = "#314"
 
 [test_rms_normalization_default_axis_expanded]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "fail-compare"
+reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
+tracking = "#311"
 
 [test_rnn_seq_length]
 status = "skip-compile"
@@ -5968,14 +5956,10 @@ status = "pass"
 status = "pass"
 
 [test_size]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_size_example]
-status = "skip-compile"
-reason = "burn-onnx emits uncompilable generated code (references alloc::* from no_std, or emits unresolved variable bindings)"
-tracking = "tracel-ai/burn-onnx"
+status = "pass"
 
 [test_slice]
 status = "pass"

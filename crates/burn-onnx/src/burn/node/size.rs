@@ -10,11 +10,28 @@ impl NodeCodegen for onnx_ir::size::SizeNode {
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
-        let input = scope.arg(self.inputs.first().unwrap());
+        let input_arg = self.inputs.first().unwrap();
         let output = arg_to_ident(self.outputs.first().unwrap());
 
+        // ONNX Size is the element count of the input. The output is always
+        // ScalarNative(I64), so every branch has to yield an i64.
+        let count = match &input_arg.ty {
+            ArgType::Tensor(_) => {
+                let input = scope.arg(input_arg);
+                quote! { #input.shape().num_elements() as i64 }
+            }
+            // A Shape(N) is a native [i64; N] array standing in for a 1-D
+            // int64 tensor, so its element count is known at codegen time.
+            ArgType::Shape(rank) => {
+                let count = *rank as i64;
+                quote! { #count }
+            }
+            // Both scalar forms hold exactly one element.
+            ArgType::ScalarTensor(_) | ArgType::ScalarNative(_) => quote! { 1i64 },
+        };
+
         quote! {
-            let #output = #input.shape.num_elements();
+            let #output = #count;
         }
     }
 }
@@ -35,7 +52,37 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<2>) -> i64 {
-            let output = input.shape.num_elements();
+            let output = input.shape().num_elements() as i64;
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_size_forward_shape_input() {
+        let node = SizeNodeBuilder::new("size1")
+            .input_shape("input", 3)
+            .output_scalar("output", DType::I64)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: [i64; 3]) -> i64 {
+            let output = 3i64;
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_size_forward_scalar_input() {
+        let node = SizeNodeBuilder::new("size1")
+            .input_scalar("input", DType::F32)
+            .output_scalar("output", DType::I64)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: f32) -> i64 {
+            let output = 1i64;
             output
         }
         ");
