@@ -175,8 +175,14 @@ let reducemean1_out1 = { mul1_out1.mean().expand([1; 2usize]) };
 
 `mean()` with no argument reduces over *all* elements, so it is only correct when `axis` names the
 first dimension and the reduction therefore covers the whole tensor. It should reduce over the axes
-from `axis` onward. Those 13 are now tracked as `fail-compare` against #311 and are the cheapest way
-into this bucket.
+from `axis` onward. Those 13 are now tracked as `fail-compare` against #311.
+
+Filed as **#459**: opset 18 moved `axes` from an attribute to an input, and a runtime `axes` input
+leaves `ReduceConfig::dims` empty (`onnx-ir/src/node/reduce.rs:275`), which burn-onnx cannot tell
+apart from "no axes given, reduce everything" (`burn-onnx/src/burn/node/reduce.rs:81`). Whether the
+rest of this 99-row bucket shares that cause is unverified, but it is the cheapest confirmed way in.
+`noop_with_empty_axes` is a third unhandled meaning for empty axes and should be settled in the same
+fix.
 
 ### 6. Runtime weight inputs: LayerNorm (#352, 19 tests) + Conv/ConvTranspose (#346, 12 tests)
 
@@ -215,7 +221,7 @@ The `half::f16` problem noted during the first sweep is not in this table: gener
 name `half::f16`, but `onnx-official-tests` happens to depend on `half` already. It still bites a
 consuming crate that does not, and is worth fixing independently of these rows.
 
-### 9. GRU weights never reach the `.bpk` (no issue yet)
+### 9. GRU/LSTM/RNN discard runtime weights (#458)
 
 Surfaced by the item 2 sweep, previously hidden behind a `skip-compile` row. `test_gru_batchwise`
 compiles, then panics in `Model::from_file`:
@@ -231,10 +237,22 @@ Validation error: Missing tensors: [
 ]
 ```
 
-The generated struct declares every `GateController` weight; the burnpack writer emits none of them.
-Any imported GRU model is therefore unloadable, not merely wrong. `test_gru_defaults`,
-`test_gru_seq_length` and `test_gru_with_initial_bias` are in the same state, and the LSTM and RNN
-rows demoted in the same sweep are worth checking for the same cause. File an issue.
+Root-caused while filing #458, and it is worse than "unloadable". Every RNN-family test in the
+upstream suite supplies `W`/`R` as runtime graph inputs rather than initializers.
+`collect_gru_snapshots` returns an empty snapshot list when the weights are not statically available
+(`gru.rs:52`, `:55`; same shape in `lstm.rs:87`/`:90` and `rnn.rs:82`/`:85`), but `field()` still
+emits the module. So the generated `forward` accepts `w` and `r` as parameters and never reads them:
+
+```rust
+pub fn forward(&self, x: Tensor<3>, w: Tensor<3>, r: Tensor<3>) -> Tensor<3> {
+    let gru_output = self.gru1.forward(x.swap_dims(0, 1), None);
+    //                    ^^^^ w and r are dropped on the floor
+```
+
+`from_file` panics on the missing tensors, but `Model::new` does not: `GruConfig::init` gives the
+module fully random weights and inference proceeds. That silent path is the reason this is a bug
+rather than a gap. Same family as items 6's Conv/LayerNorm runtime weights (#346, #352), except
+those reject the model with a clear error instead of accepting it and computing nonsense.
 
 ## Tier 3
 
@@ -259,9 +277,8 @@ rows demoted in the same sweep are worth checking for the same cause. File an is
 
 Items 1 and 2 are done; 4 turned out to be already fixed on `main`. Item 3 is next.
 
-Then 5 -> 6 -> 7, each now measurable against an honest baseline. Item 9 should be filed as an issue
-immediately regardless of when it gets fixed: an unloadable GRU is worse for a user than an
-unsupported one, because it fails at runtime rather than at build time.
+Then 5 -> 6 -> 7, each now measurable against an honest baseline. Items 5 and 9 now have issues (#459, #458); both are
+silent-wrong-answer bugs, which argues for pulling them ahead of the pure test-count work.
 
 Item 8's top three rows (34 + 22 + 22 = 78 of the 103 remaining `skip-compile` rows) are probably
 two fixes, which makes that bucket competitive with item 5 on effort-per-test.
