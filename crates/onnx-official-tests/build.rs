@@ -811,11 +811,33 @@ fn emit_single_test(buf: &mut String, name: &str, meta: &TestMeta, mode: TestMod
         "    let bpk_path = concat!(env!(\"OUT_DIR\"), \"/model/{name}.bpk\");"
     )
     .unwrap();
-    writeln!(
-        buf,
-        "    let model = generated::{name}::Model::from_file(bpk_path, &device);"
-    )
-    .unwrap();
+    // A fail-compare entry that cannot even construct its model — say a
+    // bpk missing weights the generated struct declares — is still
+    // failing, and saying so is the whole job of the entry. Left
+    // unguarded, that panic escapes the per-comparison `catch_unwind`
+    // below and takes down `verify_fail_compare_still_fails` for every
+    // other entry with it.
+    match mode {
+        TestMode::Pass => {
+            writeln!(
+                buf,
+                "    let model = generated::{name}::Model::from_file(bpk_path, &device);"
+            )
+            .unwrap();
+        }
+        TestMode::FailCompare => {
+            writeln!(
+                buf,
+                "    let model = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {{\n\
+                 \x20       generated::{name}::Model::from_file(bpk_path, &device)\n\
+                 \x20   }})) {{\n\
+                 \x20       Ok(model) => model,\n\
+                 \x20       Err(_) => return true,\n\
+                 \x20   }};"
+            )
+            .unwrap();
+        }
+    }
 
     // ---- Load inputs ----
     let mut input_bindings: Vec<String> = Vec::new();
@@ -865,9 +887,11 @@ fn emit_single_test(buf: &mut String, name: &str, meta: &TestMeta, mode: TestMod
     //
     // For FailCompare mode, wrap forward + compare in `catch_unwind` so
     // an expected comparison mismatch is captured as `Err(_)` rather
-    // than aborting the drift loop. Setup above (model + .pb loads)
-    // stays outside the wrap: a panic there is a real harness
-    // regression and must not be conflated with "still-failing".
+    // than aborting the drift loop. The `.pb` loads stay outside the
+    // wrap: a panic there is a real harness regression and must not be
+    // conflated with "still-failing". Model construction is guarded
+    // separately above, because a model that will not load is the
+    // entry's own failure rather than the harness's.
     if matches!(mode, TestMode::FailCompare) {
         writeln!(
             buf,

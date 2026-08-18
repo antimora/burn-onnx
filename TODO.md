@@ -59,12 +59,48 @@ model plus a new `size_shape` model. Scoreboard moved 21 rows off `skip-compile`
 
 ### 2. Re-triage the scoreboard
 
-Promote the 104 clean and 37 stale rows, correct the 15 wrong reason strings, and demote the 38
-mislabeled `skip-compile` rows to `skip-codegen`. Add a `cargo xtask retriage` that re-runs every
-`skip-*` row and reports promotions, so the file cannot drift again.
+Promote the clean and stale rows, correct the wrong reason strings, and demote the mislabeled
+`skip-compile` rows to `skip-codegen`. Add a `cargo xtask retriage` that re-runs every `skip-*` row,
+so the file cannot drift again.
 
-Note: "compiles clean" is not "passes". The promoted rows still need to run against the vendored
-reference tensors; some will land in `fail-compare`.
+**Status: done.** `cargo xtask retriage` runs codegen per row in its own process, promotes what
+succeeds, then builds the test crate and demotes anything rustc rejects, carrying the diagnostic as
+the row's reason. It converged on all 693 skipped rows in two compile rounds:
+
+| Transition | Rows |
+|---|---:|
+| skip-compile -> pass | 101 |
+| skip-compile -> skip-codegen (mislabeled) | 38 |
+| skip-codegen -> skip-compile | 33 |
+| skip-codegen -> pass | 4 |
+
+`cargo xtask update-expectations` then demoted the 24 promotions whose output did not match the
+reference tensors. Net against `main`:
+
+| Status | Before | After |
+|---|---:|---:|
+| pass | 722 | 811 |
+| fail-compare | 179 | 216 |
+| skip-codegen | 484 | 485 |
+| skip-compile | 230 | 103 |
+
+Harness tests actually executing and passing went from 663 to 709. The reasons are worth more than
+the counts: the single 207-row bucket reading "burn-onnx emits uncompilable generated code
+(references alloc::\* from no_std, or emits unresolved variable bindings)" is gone, replaced by
+exact rustc diagnostics. Item 8's clusters can now be read straight out of the file — the largest
+being 34 rows of `expected Tensor<1, Bool>, found Tensor<1, Int>`, 22 of `expected f32, found
+Tensor<0>`, and 22 of `expected f16, found f32`.
+
+Two supporting fixes fell out of the sweep:
+
+- retriage attributes errors in the generated `harness.rs` to the enclosing `fn`, not just errors in
+  a generated model. Three `constantofshape` rows compile fine but the driver cannot call them: a
+  Shape-typed graph input arrives as `[i64; N]` where the driver built a `Tensor<1, Int>`. Without
+  the attribution the sweep aborted with "no error attributed to a promoted model".
+- The `fail-compare` harness body in `onnx-official-tests/build.rs` now guards model construction
+  with `catch_unwind`. `test_gru_batchwise` panics in `from_file` (the bpk is missing every
+  `GateController` weight, which is its own bug worth a ticket), and that panic escaped the
+  per-comparison guard and took down `verify_fail_compare_still_fails` for every other entry.
 
 ### 3. Upsample (#415)
 
@@ -76,8 +112,24 @@ input; modes nearest/linear). Currently a placeholder in
 ### 4. Domain-aware unsupported-op error (#433)
 
 `Unknown node type: VariantNotFound` for `TreeEnsembleRegressor` gives the user nothing to act on;
-the reporter had to work out on their own that `ai.onnx.ml` is a separate domain. Name the domain in
-the message, the way #434 now does for the opset check. Then close #433 and fold it into #162.
+the reporter had to work out on their own that `ai.onnx.ml` is a separate domain.
+
+**Status: already fixed on main**, after the 0.21.0 release the issue was filed against.
+`proto_conversion.rs` now maps any unrecognised standard-domain op to `NodeType::Custom` rather
+than unwrapping a `FromStr`, and the custom-op coverage check reports it by domain. Checked with a
+hand-built `ai.onnx.ml::TreeEnsembleRegressor` model:
+
+```
+INFO onnx_ir::proto_conversion: Custom-domain op 'ai.onnx.ml::TreeEnsembleRegressor'
+  (node 'tree1'); treating as custom op
+...
+model contains 1 custom op(s) with no covering inference hook:
+  - ai.onnx.ml::TreeEnsembleRegressor used by 1 node(s)
+Register hooks via ModelGen::register_custom_op.
+```
+
+Remaining work is issue hygiene: confirm against the reporter's attached model, then close #433
+against the next release and fold the operator request into #162.
 
 ## Tier 2
 
@@ -159,4 +211,4 @@ Independent and small, from the compile sweep:
 1 -> 2 -> (3 and 4) -> 5 -> 6 -> 7. Items 1-4 are each about a day and independently shippable. Item
 2 early, so 5-7 are measurable.
 
-Item 1 is done. Item 2 is next.
+Items 1 and 2 are done, and 4 turned out to be already fixed. Item 3 is next.

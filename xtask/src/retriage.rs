@@ -331,13 +331,19 @@ fn truncate_reason(msg: &str) -> String {
     }
 }
 
-/// Build the test crate and map rustc errors back to the models that
+/// Build the test crate and map rustc errors back to the rows that
 /// produced them.
 ///
-/// Generated models live at `$OUT_DIR/model/<test_name>.rs`, so the
-/// diagnostic's file name identifies the row. Only names in
-/// `candidates` are reported: an error inside a model that was already
-/// passing is a real regression and must not be quietly reclassified.
+/// Errors land in one of two generated files. A model that does not
+/// compile fails inside `$OUT_DIR/model/<test_name>.rs`, so the path
+/// alone names the row. A model that compiles but that the generated
+/// driver cannot call — a Shape-typed graph input arriving as
+/// `[i64; N]` where the driver built a `Tensor<1, Int>` — fails inside
+/// `$OUT_DIR/harness.rs`, where the row is the enclosing `fn`.
+///
+/// Only names in `candidates` are reported: an error inside a row that
+/// was already passing is a real regression and must not be quietly
+/// reclassified.
 fn compile_and_collect_broken_models(
     candidates: &BTreeSet<String>,
 ) -> anyhow::Result<BTreeMap<String, String>> {
@@ -357,13 +363,25 @@ fn compile_and_collect_broken_models(
 
     let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
     let mut broken: BTreeMap<String, String> = BTreeMap::new();
+    let mut harness: Option<HarnessIndex> = None;
     for line in stderr.lines() {
-        let Some((path, message)) = parse_short_diagnostic(line) else {
+        let Some((path, line_no, message)) = parse_short_diagnostic(line) else {
             continue;
         };
-        let Some(name) = model_name_from_path(path) else {
-            continue;
+
+        let name = if let Some(name) = model_name_from_path(path) {
+            Some(name)
+        } else if path.ends_with("/harness.rs") {
+            let index = match &harness {
+                Some(index) => index,
+                None => harness.insert(HarnessIndex::load(path)?),
+            };
+            index.enclosing_test(line_no)
+        } else {
+            None
         };
+
+        let Some(name) = name else { continue };
         if candidates.contains(&name) {
             broken
                 .entry(name)
@@ -380,20 +398,59 @@ fn compile_and_collect_broken_models(
     Ok(broken)
 }
 
-/// Split one `--message-format=short` error line into its path and
-/// message. The format is `file:line:col: error[CODE]: message`;
-/// warnings and notes are ignored.
-fn parse_short_diagnostic(line: &str) -> Option<(&str, &str)> {
+/// Split one `--message-format=short` error line into its path, line
+/// number, and message. The format is
+/// `file:line:col: error[CODE]: message`; warnings and notes are
+/// ignored.
+fn parse_short_diagnostic(line: &str) -> Option<(&str, usize, &str)> {
     let (path, rest) = line.split_once(".rs:")?;
     let path_end = path.len() + 3;
+    let (line_no, rest) = rest.split_once(':')?;
+    let line_no = line_no.parse::<usize>().ok()?;
     let after_span = rest.split_once(": ")?.1;
     let message = after_span.strip_prefix("error")?;
     // Drop an optional `[E0433]` code and the separating colon.
-    let message = match message.split_once(": ") {
-        Some((_, tail)) => tail,
-        None => return None,
-    };
-    Some((&line[..path_end], message.trim()))
+    let (_, message) = message.split_once(": ")?;
+    Some((&line[..path_end], line_no, message.trim()))
+}
+
+/// Line-number-to-test-name lookup over the generated `harness.rs`.
+///
+/// The file is one flat list of `fn test_<name>() { ... }` bodies, so
+/// the row owning a diagnostic is the nearest `fn` header at or above
+/// it. Built once per compile round and reused for every diagnostic.
+struct HarnessIndex {
+    /// `(line number of the fn header, test name)`, ascending.
+    fns: Vec<(usize, String)>,
+}
+
+impl HarnessIndex {
+    fn load(path: &str) -> anyhow::Result<Self> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("read generated harness {path}: {e}"))?;
+        let fns = text
+            .lines()
+            .enumerate()
+            .filter_map(|(i, line)| {
+                let name = line
+                    .trim_start()
+                    .strip_prefix("fn ")?
+                    .split_once('(')?
+                    .0
+                    .trim();
+                name.starts_with("test_").then(|| (i + 1, name.to_string()))
+            })
+            .collect();
+        Ok(Self { fns })
+    }
+
+    fn enclosing_test(&self, line_no: usize) -> Option<String> {
+        self.fns
+            .iter()
+            .rev()
+            .find(|(start, _)| *start <= line_no)
+            .map(|(_, name)| name.clone())
+    }
 }
 
 /// `.../out/model/test_foo.rs` -> `test_foo`.
@@ -563,10 +620,30 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
     fn short_diagnostics_parse() {
         let line =
             "/t/out/model/test_size.rs:60:27: error[E0609]: no field `shape` on type `[i64; 4]`";
-        let (path, message) = parse_short_diagnostic(line).unwrap();
+        let (path, line_no, message) = parse_short_diagnostic(line).unwrap();
         assert_eq!(path, "/t/out/model/test_size.rs");
+        assert_eq!(line_no, 60);
         assert_eq!(message, "no field `shape` on type `[i64; 4]`");
         assert_eq!(model_name_from_path(path).unwrap(), "test_size");
+    }
+
+    /// An error in the generated driver is attributed to the row whose
+    /// `fn` encloses it, so a harness gap lands on the right entry
+    /// instead of aborting the sweep.
+    #[test]
+    fn harness_errors_attribute_to_enclosing_test() {
+        let harness = HarnessIndex {
+            fns: vec![
+                (10, "test_alpha".to_string()),
+                (40, "test_beta".to_string()),
+                (90, "test_gamma".to_string()),
+            ],
+        };
+        assert_eq!(harness.enclosing_test(41).as_deref(), Some("test_beta"));
+        assert_eq!(harness.enclosing_test(89).as_deref(), Some("test_beta"));
+        assert_eq!(harness.enclosing_test(90).as_deref(), Some("test_gamma"));
+        // A diagnostic above the first test belongs to the preamble.
+        assert_eq!(harness.enclosing_test(3), None);
     }
 
     /// Warnings share the line shape but must not demote anything.
