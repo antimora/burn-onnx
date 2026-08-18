@@ -1253,6 +1253,9 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
+        // Spelled out separately from the snapshot: accepting a regenerated
+        // snapshot must not quietly drop the binding and re-break edition 2021.
+        assert!(code.contains("let bound_value ="));
         assert_snapshot!(code, @r#"
         pub fn forward(&self, shape_data: [i64; 3], end: Tensor<1, Int>) -> Tensor<1, Int> {
             let sliced_shape: Tensor<1, Int> = {

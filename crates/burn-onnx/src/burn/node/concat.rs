@@ -1,5 +1,20 @@
 use super::prelude::*;
 
+/// Native `i64` expression for a scalar input, for the shape-arithmetic paths
+/// where every value is widened to i64. A `ScalarTensor` lives on device, so it
+/// is read back rather than named directly.
+fn scalar_as_i64(arg: &Argument, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
+    let value = scope.arg(arg);
+
+    match &arg.ty {
+        ArgType::ScalarTensor(dtype) => {
+            let native = on_device_to_native(value, dtype);
+            quote! { #native as i64 }
+        }
+        _ => quote! { #value as i64 },
+    }
+}
+
 impl NodeCodegen for onnx_ir::concat::ConcatNode {
     fn inputs(&self) -> &[Argument] {
         &self.inputs
@@ -68,10 +83,15 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
                             continue;
                         }
 
-                        let input = scope.arg(input_arg);
-
                         if input_arg.ty.is_scalar() {
-                            let dtype = input_arg.ty.elem_type();
+                            // Alongside a Shape the concat is i64 shape
+                            // arithmetic, so scalars are widened to match the
+                            // arrays. onnx-ir has already rejected non-integer
+                            // inputs in that case.
+                            let (dtype, value) = match has_shape {
+                                true => (DType::I64, scalar_as_i64(input_arg, scope)),
+                                false => (input_arg.ty.elem_type(), scope.arg(input_arg)),
+                            };
                             let dtype_tokens = dtype.to_tokens();
                             let kind = match dtype {
                                 DType::Bool(_) => quote! { , Bool },
@@ -82,18 +102,22 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
                                 Ident::new(&format!("scalar_as_tensor_{}", i), Span::call_site());
                             let init = quote! {
                                 let #temp_name: Tensor<1 #kind> = Tensor::from_data(
-                                    burn::tensor::TensorData::from([#input]),
+                                    burn::tensor::TensorData::from([#value]),
                                     (&self.device, #dtype_tokens)
                                 );
                             };
                             inits.push(init);
                             input_exprs.push(quote! { #temp_name });
-                        } else if has_shape && input_arg.ty.elem_type() != DType::I64 {
-                            // Shape-derived tensors are i64; align the others so
-                            // every element of the cat shares one dtype.
-                            input_exprs.push(quote! { #input.cast(burn::tensor::DType::I64) });
                         } else {
-                            input_exprs.push(input);
+                            let input = scope.arg(input_arg);
+
+                            if has_shape && input_arg.ty.elem_type() != DType::I64 {
+                                // Shape-derived tensors are i64; align the others
+                                // so every element of the cat shares one dtype.
+                                input_exprs.push(quote! { #input.cast(burn::tensor::DType::I64) });
+                            } else {
+                                input_exprs.push(input);
+                            }
                         }
                     }
 
@@ -131,34 +155,45 @@ impl NodeCodegen for onnx_ir::concat::ConcatNode {
                 if has_tensor {
                     // A tensor input lives on device, so the fixed-size shape
                     // array has to be assembled with a host readback instead of
-                    // by slicing arrays.
+                    // by slicing arrays. onnx-ir only picks a Shape output when
+                    // every tensor length is statically known, which is what
+                    // makes the fixed size sound.
                     let mut pushes = Vec::new();
                     for (i, input) in self.inputs.iter().enumerate() {
                         if matches!(input.ty, ArgType::Tensor(_)) {
                             let tensor = scope.arg(input);
                             let data_name =
-                                Ident::new(&format!("tensor_data_{}", i), Span::call_site());
+                                Ident::new(&format!("__tensor_data_{}", i), Span::call_site());
                             pushes.push(quote! {
                                 let #data_name = #tensor.cast(burn::tensor::DType::I64).to_data();
-                                shape_parts.extend(#data_name.iter::<i64>());
+                                __shape_parts.extend(#data_name.iter::<i64>());
                             });
+                        } else if input.ty.is_scalar() {
+                            let value = scalar_as_i64(input, scope);
+                            pushes.push(quote! { __shape_parts.push(#value); });
                         } else {
                             let input_name = arg_to_ident(input);
-                            if input.ty.is_scalar() {
-                                pushes.push(quote! { shape_parts.push(#input_name as i64); });
-                            } else {
-                                pushes.push(
-                                    quote! { shape_parts.extend_from_slice(&#input_name[..]); },
-                                );
-                            }
+                            pushes.push(
+                                quote! { __shape_parts.extend_from_slice(&#input_name[..]); },
+                            );
                         }
                     }
 
+                    // A tensor carries no compile-time length, so a model whose
+                    // declared shape does not match what it produces at runtime
+                    // would otherwise fail in `try_into` with a bare vec dump.
+                    let node_name = self.name.as_str();
+
                     quote! {
                         let #output: [i64; #output_rank] = {
-                            let mut shape_parts = alloc::vec::Vec::with_capacity(#output_rank);
+                            let mut __shape_parts = alloc::vec::Vec::with_capacity(#output_rank);
                             #(#pushes)*
-                            shape_parts.try_into().unwrap()
+                            assert_eq!(
+                                __shape_parts.len(), #output_rank,
+                                "Concat {}: expected {} shape elements, got {}",
+                                #node_name, #output_rank, __shape_parts.len()
+                            );
+                            __shape_parts.try_into().expect("length checked above")
                         };
                     }
                 } else {
@@ -308,8 +343,43 @@ mod tests {
     }
 
     #[test]
+    fn test_concat_shape_and_i32_scalar_widens_to_i64() {
+        // Scalars have to be widened alongside Shape inputs too: burn's `cat`
+        // asserts a single dtype across the tensors it joins, so an i32 scalar
+        // next to an i64 shape would panic at inference time.
+        let config = ConcatConfig { axis: 0 };
+        let node = ConcatNodeBuilder::new("concat_shape_scalar")
+            .input_shape("head", 2)
+            .input_scalar("mid", DType::I32)
+            .input_tensor("tail", 1, DType::I64)
+            .config(config)
+            .output_tensor("output", 1, DType::I64)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, head: [i64; 2], mid: i32, tail: Tensor<1, Int>) -> Tensor<1, Int> {
+            let output = {
+                let shape_as_tensor_0: Tensor<1, Int> = Tensor::from_data(
+                    burn::tensor::TensorData::new(head.to_vec(), [2]),
+                    (&self.device, burn::tensor::DType::I64),
+                );
+                let scalar_as_tensor_1: Tensor<1, Int> = Tensor::from_data(
+                    burn::tensor::TensorData::from([mid as i64]),
+                    (&self.device, burn::tensor::DType::I64),
+                );
+                burn::tensor::Tensor::cat(
+                    [shape_as_tensor_0, scalar_as_tensor_1, tail].into(),
+                    0,
+                )
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
     fn test_concat_shape_output_with_tensor_input() {
-        // A rank-1 tensor of known length joining a Shape output: the values
+        // A rank-1 tensor input on a node whose output is a Shape: the values
         // have to be read back on host, not sliced like an array (issue #438).
         let config = ConcatConfig { axis: 0 };
         let node = ConcatNodeBuilder::new("concat_shape_out")
@@ -319,18 +389,22 @@ mod tests {
             .output_shape("output", 5)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r"
+        assert_snapshot!(code, @r#"
         pub fn forward(&self, dims: [i64; 3], extra: Tensor<1, Int>) -> [i64; 5] {
             let output: [i64; 5usize] = {
-                let mut shape_parts = alloc::vec::Vec::with_capacity(5usize);
-                shape_parts.extend_from_slice(&dims[..]);
-                let tensor_data_1 = extra.cast(burn::tensor::DType::I64).to_data();
-                shape_parts.extend(tensor_data_1.iter::<i64>());
-                shape_parts.try_into().unwrap()
+                let mut __shape_parts = alloc::vec::Vec::with_capacity(5usize);
+                __shape_parts.extend_from_slice(&dims[..]);
+                let __tensor_data_1 = extra.cast(burn::tensor::DType::I64).to_data();
+                __shape_parts.extend(__tensor_data_1.iter::<i64>());
+                assert_eq!(
+                    __shape_parts.len(), 5usize, "Concat {}: expected {} shape elements, got {}",
+                    "concat_shape_out", 5usize, __shape_parts.len()
+                );
+                __shape_parts.try_into().expect("length checked above")
             };
             output
         }
-        ");
+        "#);
     }
 
     #[test]

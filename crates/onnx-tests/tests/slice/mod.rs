@@ -12,6 +12,7 @@ include_models!(
     slice_shape_runtime_bounds_negative,
     slice_shape_runtime_bounds_reshape,
     slice_shape_runtime_bounds_concat,
+    slice_shape_runtime_bounds_concat_reshape,
     slice_shape_multi,
     slice_shape_negative,
     slice_shape_negative_range,
@@ -252,9 +253,32 @@ mod tests {
         let key = Tensor::<3>::ones([4, 7, 64], &device);
         let end = Tensor::<1, burn::tensor::Int>::from_data([3i64], &device);
 
-        let output = model.forward(key, end);
+        let output = model.forward(key.clone(), end);
         let expected = TensorData::from([4i64, 7, 64]);
         output.to_data().assert_eq(&expected, true);
+
+        // A different bound yields a different length from the same model,
+        // which is the whole point of the tensor representation.
+        let end = Tensor::<1, burn::tensor::Int>::from_data([2i64], &device);
+        let output = model.forward(key, end);
+        let expected = TensorData::from([4i64, 7]);
+        output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn slice_shape_runtime_bounds_concat_reshape() {
+        // The full issue #438 pattern: the concatenated shape drives a Reshape,
+        // so the Concat output type also has to satisfy Reshape's rank
+        // inference, not just compile on its own.
+        let model: slice_shape_runtime_bounds_concat_reshape::Model =
+            slice_shape_runtime_bounds_concat_reshape::Model::default();
+        let device = Default::default();
+
+        let x = Tensor::<3>::ones([4, 7, 64], &device);
+        let end = Tensor::<1, burn::tensor::Int>::from_data([3i64], &device);
+
+        let output = model.forward(x, end);
+        assert_eq!(output.dims(), [4, 7, 64]);
     }
 
     #[test]

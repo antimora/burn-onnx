@@ -58,7 +58,7 @@ mod tests {
         // A Shape output concatenated with a runtime rank-1 tensor: the tensor
         // values are read back on host to build the shape array (issue #438).
         let device = Default::default();
-        let model: concat_shape_with_tensor::Model = concat_shape_with_tensor::Model::new(&device);
+        let model: concat_shape_with_tensor::Model = concat_shape_with_tensor::Model::default();
 
         let input = Tensor::<3>::zeros([3, 16, 8], &device);
         let extra = Tensor::<1, burn::tensor::Int>::from_data([9i64, 11], &device);
