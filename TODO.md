@@ -2,27 +2,40 @@
 
 Prioritized work queue derived from a measured sweep of the open issues and the
 `onnx-official-tests` scoreboard on 2026-08-18. Test counts come from re-running every non-passing
-entry in `crates/onnx-official-tests/expectations.toml` through `onnx2burn` on `main`, then
-compile-checking the output against `burn 0.22.0-pre.1` with the `flex` backend.
+entry in `crates/onnx-official-tests/expectations.toml` through `onnx2burn`, then compile-checking
+the output against `burn 0.22.0-pre.1` with the `flex` backend.
 
-## Scoreboard drift
+Items 1, 2 and 4 are done on this branch. Counts below are stated against the post-re-triage
+baseline unless the text says otherwise.
 
-`expectations.toml` has 1615 entries: 722 pass, 484 `skip-codegen`, 230 `skip-compile`, 179
-`fail-compare`.
+## Scoreboard baseline
+
+`expectations.toml` has 1615 entries. Current state, after the item 2 re-triage:
+
+| Status         | Rows |
+| -------------- | ---: |
+| `pass`         |  811 |
+| `fail-compare` |  216 |
+| `skip-codegen` |  485 |
+| `skip-compile` |  103 |
+
+709 of those execute as harness tests. The rest are codegen-only: build.rs skips harness generation
+for dynamic shapes, rank-0 I/O, and dtypes the `.pb` loader cannot construct.
+
+### Why it had drifted
 
 `build.rs` only verifies `pass` and `fail-compare` entries. `skip-codegen`, `skip-compile` and
-`flaky` rows are read as documentation and never exercised, so they rot silently. Measured state of
-those 714 rows on `main`:
+`flaky` rows are read as documentation and never exercised, so they rot the moment someone fixes the
+bug behind them, always in the pessimistic direction. Measured on `main` before this branch:
 
 | Claimed            | Measured                                                                                            |
 | ------------------ | --------------------------------------------------------------------------------------------------- |
-| 230 `skip-compile` | 192 codegen fine; 104 of those also compile clean                                                   |
-| 230 `skip-compile` | 38 actually fail codegen (wrong status, not just wrong reason)                                      |
-| 484 `skip-codegen` | 37 now codegen fine (33 Mod-Shape, 4 QLinearMatMul)                                                 |
+| 230 `skip-compile` | 192 codegen fine; 101 of those went on to pass                                                      |
+| 230 `skip-compile` | 38 actually failed codegen (wrong status, not just wrong reason)                                     |
+| 484 `skip-codegen` | 37 codegen fine (33 Mod-Shape, 4 QLinearMatMul)                                                     |
 | 15 `skip-codegen`  | reason string stale: they now fail on training-domain ops, not the opset-domain check fixed in #434 |
 
-Roughly 141 rows understate reality. The published pass rate is too low, and every PR that quotes a
-delta against this file is quoting a stale baseline.
+`cargo xtask retriage` now re-checks every `skip-*` row, so this cannot silently recur.
 
 ## Tier 1
 
@@ -133,19 +146,20 @@ against the next release and fold the operator request into #162.
 
 ## Tier 2
 
-### 5. Reduce family comparison failures (88 tests)
+### 5. Reduce family comparison failures (99 tests)
 
 The largest `fail-compare` bucket, and the worst failure mode to leave sitting: these compile and
-run, and produce wrong numbers.
+run, and produce wrong numbers. The re-triage grew this from 88 to 99 by promoting reduce rows that
+turned out to compile and then miscompare.
 
 | Family      | Tests |
 | ----------- | ----: |
 | reduce_sum  |    24 |
+| reduce_log  |    18 |
 | reduce_l1   |    14 |
 | reduce_l2   |    14 |
-| reduce_log  |     9 |
-| reduce_max  |     7 |
-| reduce_min  |     7 |
+| reduce_max  |     8 |
+| reduce_min  |     8 |
 | reduce_prod |     7 |
 | reduce_mean |     6 |
 
@@ -178,15 +192,49 @@ Llama, Qwen and Gemma all use it.
 
 ### 8. Remaining compile-error clusters
 
-Independent and small, from the compile sweep:
+All 103 remaining `skip-compile` rows now carry the rustc diagnostic that produced them, so this
+table is a `grep` of `expectations.toml` rather than an estimate. Sorted by blast radius:
 
-| Tests | Bug                                                                                                                                                |
-| ----: | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-|     6 | `blackman/hamming/hannwindow_expanded`: `cos`/`powf` on `Tensor<Int>` and `i64 - f32` mixing; missing cast before float math                       |
-|     3 | `dynamicquantizelinear_expanded`: `use of moved value`; clone tracking missed, `arg_to_ident` used where `scope.arg` was needed                    |
-|     2 | `maxpool_with_argmax`: `cannot find value maxpool2d1_out2`; second output never bound                                                              |
-|     2 | `pow_types_int32/int64_float32`: `powf` on Int tensor                                                                                              |
-|   ~10 | generated signatures name `half::f16`, but nothing guarantees `half` is a dependency of the consuming crate; this bites real users, not only tests |
+| Rows | Diagnostic | Example | Read |
+| ---: | --- | --- | --- |
+| 34 | `expected Tensor<1, Bool>, found Tensor<1, Int>` | `test_attention_3d_attn_mask_expanded` | the Mod/And-on-Shape chain lands an Int tensor where a mask is wanted. Biggest single win left in the bucket, and it is the attention-expanded family. |
+| 22 | `expected f32, found Tensor<0>` | `test_cast_FLOAT8E4M3FN_to_FLOAT` | rank-0 output typed as a scalar in the signature but produced as a tensor. |
+| 22 | `expected f16, found f32` | `test_cast_FLOAT8E4M3FN_to_FLOAT16` | the f16 cast result is never narrowed. Same family as the row above; likely one fix for both 44. |
+| 3 | `no method named add found for type f32` | `test_blackmanwindow_expanded` | scalar/tensor mixing in the window ops. |
+| 3 | `expected Tensor<1>, found f32` | `test_hammingwindow_symmetric_expanded` | same family. |
+| 3 | `use of moved value: div1_out1` | `test_dynamicquantizelinear_expanded` | clone tracking missed; `arg_to_ident` used where `scope.arg` was needed. |
+| 2 | `expected bool, found Tensor<0, Bool>` | `test_equal_string` | rank-0 bool, same shape as the f32 case above. |
+| 2 | `Tensor<3>: ElementConversion is not satisfied` | `test_gelu_default_2_expanded` | a tensor passed to a scalar-taking API. |
+| 2 | `cannot find value maxpool2d1_out2` | `test_maxpool_with_argmax_2d_precomputed_pads` | MaxPool's second output is never bound. |
+| 2 | `expected Tensor<1>, found Tensor<1, Int>` | `test_pow_types_float32_int32` | missing cast before a binary op. |
+| 2 | `no method named powf on Tensor<Int>` | `test_pow_types_int32_float32` | Pow with an int base needs a cast first. |
+| 3 | `expected [i64; N], found Tensor<1, Int>` | `test_constantofshape_float_ones` | not a codegen bug: the model compiles, the generated *harness* cannot call it, because a Shape-typed graph input arrives as `[i64; N]` where the driver built a `Tensor<1, Int>`. Fixing it means teaching build.rs to read the generated `forward` signature rather than inferring argument types from the ONNX proto. |
+| 1 each | `fmod` on `Tensor<Int>`, `expected Tensor<4>, found Tensor<4, Int>`, `can't compare f32 with {integer}` | `test_mod_int64_fmod` | one-offs. |
+
+The `half::f16` problem noted during the first sweep is not in this table: generated signatures do
+name `half::f16`, but `onnx-official-tests` happens to depend on `half` already. It still bites a
+consuming crate that does not, and is worth fixing independently of these rows.
+
+### 9. GRU weights never reach the `.bpk` (no issue yet)
+
+Surfaced by the item 2 sweep, previously hidden behind a `skip-compile` row. `test_gru_batchwise`
+compiles, then panics in `Model::from_file`:
+
+```
+Validation error: Missing tensors: [
+  ("gru1.new_gate.hidden_transform.weight", "Struct:Model.Struct:Gru.Struct:GateController.Struct:Linear"),
+  ("gru1.new_gate.input_transform.weight",  ...),
+  ("gru1.reset_gate.hidden_transform.weight", ...),
+  ("gru1.reset_gate.input_transform.weight",  ...),
+  ("gru1.update_gate.hidden_transform.weight", ...),
+  ("gru1.update_gate.input_transform.weight",  ...),
+]
+```
+
+The generated struct declares every `GateController` weight; the burnpack writer emits none of them.
+Any imported GRU model is therefore unloadable, not merely wrong. `test_gru_defaults`,
+`test_gru_seq_length` and `test_gru_with_initial_bias` are in the same state, and the LSTM and RNN
+rows demoted in the same sweep are worth checking for the same cause. File an issue.
 
 ## Tier 3
 
@@ -203,12 +251,17 @@ Independent and small, from the compile sweep:
 - **NegativeLogLikelihoodLoss (52) + SoftmaxCrossEntropyLoss (34) + nllloss fail-compare (12).** 98
   tests, but training-loss ops in an inference-focused importer. Large count, small user value.
 - **#433 TreeEnsembleRegressor / #162 ONNX-ML.** The reporter reached the right conclusion
-  themselves. Fix the error message (item 4), then close.
+  themselves, and the error message they hit is already fixed (item 4). Close #433 against the next
+  release; the operator request itself belongs in #162.
 - **Float8 / Float4 / INT4 cast tests (~30).** Blocked on backend dtype support, not on burn-onnx.
 
 ## Order
 
-1 -> 2 -> (3 and 4) -> 5 -> 6 -> 7. Items 1-4 are each about a day and independently shippable. Item
-2 early, so 5-7 are measurable.
+Items 1 and 2 are done; 4 turned out to be already fixed on `main`. Item 3 is next.
 
-Items 1 and 2 are done, and 4 turned out to be already fixed. Item 3 is next.
+Then 5 -> 6 -> 7, each now measurable against an honest baseline. Item 9 should be filed as an issue
+immediately regardless of when it gets fixed: an unloadable GRU is worse for a user than an
+unsupported one, because it fails at runtime rather than at build time.
+
+Item 8's top three rows (34 + 22 + 22 = 78 of the 103 remaining `skip-compile` rows) are probably
+two fixes, which makes that bucket competitive with item 5 on effort-per-test.
