@@ -141,11 +141,14 @@ fn validate_nearest_scales(
     input: &TensorType,
 ) -> Result<(), ProcessError> {
     let ResizeScales::Static(scales) = scales else {
+        // None of the static checks can run against a tensor that only exists at runtime, so name
+        // all of what goes unchecked, not just the divergence this function is about.
         log::warn!(
-            "Node '{node_name}' (Upsample): scales arrive at runtime, so they cannot be checked \
-             here. Any scale that does not divide its dimension evenly makes Burn's nearest \
-             interpolation select different source elements than the ONNX reference. \
-             Tracking: #311"
+            "Node '{node_name}' (Upsample): scales arrive at runtime and cannot be checked here. \
+             The generated code reads only the height and width entries, so a batch or channel \
+             scale is ignored rather than rejected, a scale below 1 collapses the dimension, and \
+             a scale that does not divide its dimension evenly makes Burn's nearest interpolation \
+             select different source elements than the ONNX reference. Tracking: #311"
         );
         return Ok(());
     };
@@ -164,9 +167,9 @@ fn validate_nearest_scales(
         let scaled = *dim as f64 * scale as f64;
         if scaled.fract() != 0.0 {
             return Err(ProcessError::Custom(format!(
-                "Upsample '{node_name}': scale {scale} on dim {} (size {dim}) yields {scaled}, \
-                 and Burn's nearest interpolation indexes by output size rather than by scale, \
-                 so output would differ from the ONNX reference. Tracking: #311",
+                "Upsample: scale {scale} on dim {} (size {dim}) yields {scaled}, and Burn's \
+                 nearest interpolation indexes by output size rather than by scale, so output \
+                 would differ from the ONNX reference. Tracking: #311",
                 spatial + 2
             )));
         }
@@ -344,12 +347,15 @@ impl NodeProcessor for UpsampleProcessor {
     }
 
     fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        // Constants are lifted a second time after type inference, so a scales input that was
-        // still Runtime during `infer_types` can be Static by now and reach a check for the first
-        // time here. `build_node` cannot return an error, so name the node in the panic.
+        // `lift_constants` runs a second time after identity elimination (post_processing.rs),
+        // and type inference does not run again after it. So `Constant -> Identity -> Upsample`
+        // arrives here with scales that were Runtime during `infer_types` and are Static now,
+        // reaching the scale checks for the first time at a point that cannot return an error.
+        // Rejecting late beats importing a model we would compute wrong, so this panics with the
+        // reason rather than degrading to a warning.
         let config = self
             .extract_config(&builder, opset)
-            .unwrap_or_else(|e| panic!("Upsample node '{}': {e}", builder.name));
+            .unwrap_or_else(|e| panic!("Node '{}' (Upsample): {e}", builder.name));
 
         Node::Upsample(ResizeNode {
             name: builder.name,

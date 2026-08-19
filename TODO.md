@@ -231,6 +231,14 @@ those reject the model with a clear error instead of accepting it and computing 
 
   Note `coordinate_transformation_mode` and `nearest_mode` are recorded but never read by codegen
   (only `align_corners` is derived), so pinning them documents intent without changing behavior.
+- **`build_node` cannot report an error, so late-lifted constants panic.** `lift_constants` runs
+  again after identity elimination (`post_processing.rs:265`) and type inference does not re-run
+  after it, so `Constant -> Identity -> Op` reaches `build_node` with a value that was Dynamic
+  during `infer_types`. Any validation that first becomes possible there can only panic:
+  `NodeProcessor::build_node` returns `Node`, not `Result<Node>`. Every processor in the crate has
+  this shape (`.expect("Config extraction failed")`); Upsample is just the first to have checks
+  that can realistically fire there. Reproduced with a `Constant -> Identity -> Upsample` graph
+  carrying scales of 1.75.
 - **#280 shape propagation through Where/Mul/ConstantOfShape.** Blocks RF-DETR without an `onnxsim`
   pre-pass.
 - **#371 Kokoro residual 1.3x.** Established as f32 drift through HiFi-GAN resblocks, not fixable
