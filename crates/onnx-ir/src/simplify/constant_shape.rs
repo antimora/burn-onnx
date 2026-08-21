@@ -174,7 +174,7 @@ fn make_constant_node(
             value_source: ValueSource::Constant,
             value_store: Some(value_store),
         }],
-        attrs: HashMap::new(),
+        attrs: crate::ir::Attributes::new(),
     }
 }
 
@@ -437,7 +437,7 @@ mod tests {
         node_type: NodeType,
         inputs: Vec<Argument>,
         outputs: Vec<Argument>,
-        attrs: HashMap<String, AttributeValue>,
+        attrs: crate::ir::Attributes,
     ) -> RawNode {
         RawNode {
             custom_identity: None,
@@ -464,7 +464,7 @@ mod tests {
                 NodeType::Shape,
                 vec![tensor_arg_with_shape("input", vec![2, 3, 4])],
                 vec![shape_arg("shape_out", 3)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "gather",
@@ -528,7 +528,7 @@ mod tests {
                 NodeType::Relu,
                 vec![arg("input")],
                 vec![arg("relu_out")],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "gather",
@@ -555,7 +555,7 @@ mod tests {
                 NodeType::Shape,
                 vec![arg("input")], // arg() creates tensor with static_shape: None
                 vec![shape_arg("shape_out", 2)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "gather",
@@ -586,14 +586,14 @@ mod tests {
                 NodeType::Shape,
                 vec![tensor_arg_with_shape("input", vec![2, 3, 4])],
                 vec![shape_arg("shape_out", 3)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "consumer",
                 NodeType::Add,
                 vec![shape_arg("shape_out", 3), arg("other")],
                 vec![arg("output")],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
         ];
 
@@ -610,7 +610,7 @@ mod tests {
             NodeType::Shape,
             vec![arg("input")], // no static_shape
             vec![shape_arg("shape_out", 2)],
-            HashMap::new(),
+            crate::ir::Attributes::new(),
         )];
 
         let state = test_state();
@@ -629,7 +629,7 @@ mod tests {
                 NodeType::Shape,
                 vec![tensor_arg_with_shape("input", vec![2, 3, 4, 5])],
                 vec![shape_arg("shape_out", 4)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "slice",
@@ -640,7 +640,7 @@ mod tests {
                     const_i64_vec_arg("ends", &[3]),
                 ],
                 vec![shape_arg("slice_out", 2)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
         ];
 
@@ -662,7 +662,7 @@ mod tests {
                 NodeType::Shape,
                 vec![tensor_arg_with_shape("input", vec![10, 20, 30, 40, 50])],
                 vec![shape_arg("shape_out", 5)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "slice",
@@ -675,7 +675,7 @@ mod tests {
                     const_i64_vec_arg("steps", &[2]),
                 ],
                 vec![shape_arg("slice_out", 3)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
         ];
 
@@ -696,7 +696,7 @@ mod tests {
                 NodeType::Shape,
                 vec![tensor_arg_with_shape("input", vec![2, 3, 4])],
                 vec![shape_arg("shape_out", 3)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "slice",
@@ -707,7 +707,7 @@ mod tests {
                     const_i64_vec_arg("ends", &[3]),
                 ],
                 vec![shape_arg("slice_out", 2)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
         ];
 
@@ -728,7 +728,7 @@ mod tests {
                 NodeType::Relu,
                 vec![arg("input")],
                 vec![arg("relu_out")],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "slice",
@@ -739,7 +739,7 @@ mod tests {
                     const_i64_vec_arg("ends", &[2]),
                 ],
                 vec![arg("slice_out")],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
         ];
 
@@ -757,7 +757,7 @@ mod tests {
                 NodeType::Shape,
                 vec![tensor_arg_with_shape("input", vec![2, 3, 4])],
                 vec![shape_arg("shape_out", 3)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "slice",
@@ -768,7 +768,7 @@ mod tests {
                     const_i64_vec_arg("ends", &[3]),
                 ],
                 vec![shape_arg("slice_out", 2)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
         ];
 
@@ -787,7 +787,7 @@ mod tests {
                 NodeType::Shape,
                 vec![tensor_arg_with_shape("input", vec![2, 3, 4])],
                 vec![shape_arg("shape_out", 3)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "gather",
@@ -803,7 +803,7 @@ mod tests {
                 NodeType::Add,
                 vec![scalar_arg("dim_val", DType::I64), arg("other")],
                 vec![arg("add_out")],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
         ];
 
@@ -827,7 +827,7 @@ mod tests {
                 NodeType::Shape,
                 vec![tensor_arg_with_shape("input", vec![2, 3, 4])],
                 vec![shape_arg("shape_out", 3)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "gather",
@@ -860,14 +860,14 @@ mod tests {
                 NodeType::Shape,
                 vec![tensor_arg_with_shape("input", vec![2, 6, 2, 3])],
                 vec![shape_arg("shape_out", 4)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "size",
                 NodeType::Size,
                 vec![shape_arg("shape_out", 4)],
                 vec![scalar_arg("size_out", DType::I64)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
         ];
 
@@ -900,14 +900,14 @@ mod tests {
                 NodeType::Shape,
                 vec![dynamic_input],
                 vec![shape_arg("shape_out", 3)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
             raw_node(
                 "size",
                 NodeType::Size,
                 vec![shape_arg("shape_out", 3)],
                 vec![scalar_arg("size_out", DType::I64)],
-                HashMap::new(),
+                crate::ir::Attributes::new(),
             ),
         ];
 
@@ -926,7 +926,7 @@ mod tests {
             NodeType::Size,
             vec![tensor_arg_with_shape("input", vec![2, 6, 2, 3])],
             vec![scalar_arg("size_out", DType::I64)],
-            HashMap::new(),
+            crate::ir::Attributes::new(),
         )];
 
         let state = test_state();

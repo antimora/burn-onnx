@@ -9,7 +9,7 @@ pub struct TestNodeBuilder {
     pub(crate) name: String,
     pub(crate) inputs: Vec<Argument>,
     pub(crate) outputs: Vec<Argument>,
-    pub(crate) attrs: HashMap<String, AttributeValue>,
+    pub(crate) attrs: crate::ir::Attributes,
     /// Stores constant data for inputs that should be constants (input_name -> (data, shape))
     pub(crate) constant_data: HashMap<String, TensorData>,
 }
@@ -22,7 +22,7 @@ impl TestNodeBuilder {
             name: name.to_string(),
             inputs: Vec::new(),
             outputs: Vec::new(),
-            attrs: HashMap::new(),
+            attrs: crate::ir::Attributes::new(),
             constant_data: HashMap::new(),
         }
     }

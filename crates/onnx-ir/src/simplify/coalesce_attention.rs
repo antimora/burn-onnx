@@ -376,7 +376,7 @@ fn build_attention_node(
         inputs.push(mask_arg.clone());
     }
 
-    let mut attrs = HashMap::new();
+    let mut attrs = crate::ir::Attributes::new();
     if let Some(s) = scale {
         attrs.insert("scale".to_string(), AttributeValue::Float32(s as f32));
     }

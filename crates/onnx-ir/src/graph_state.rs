@@ -539,7 +539,7 @@ fn create_constant_node(
             value_source: crate::ir::ValueSource::Constant,
             value_store: None,
         }],
-        attrs: HashMap::new(),
+        attrs: crate::ir::Attributes::new(),
     }
 }
 

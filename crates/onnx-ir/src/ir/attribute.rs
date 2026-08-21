@@ -3,7 +3,7 @@
 //! This module contains the AttributeValue enum which represents various types
 //! of attributes that can be attached to ONNX nodes.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -153,7 +153,7 @@ pub(crate) enum AttributeValue {
     Graphs(Vec<OnnxGraph>),
 }
 
-pub type Attributes = HashMap<String, AttributeValue>;
+pub type Attributes = BTreeMap<String, AttributeValue>;
 
 /// Scalar/tensor attribute values exposed to custom-op hooks.
 ///

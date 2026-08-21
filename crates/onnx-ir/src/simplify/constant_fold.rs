@@ -139,7 +139,7 @@ fn make_constant_node(
             value_source: ValueSource::Constant,
             value_store: Some(value_store),
         }],
-        attrs: std::collections::HashMap::new(),
+        attrs: crate::ir::Attributes::new(),
     }
 }
 
@@ -757,7 +757,7 @@ mod tests {
             name: name.to_string(),
             inputs,
             outputs,
-            attrs: std::collections::HashMap::new(),
+            attrs: crate::ir::Attributes::new(),
         }
     }
 
@@ -766,7 +766,7 @@ mod tests {
         node_type: NodeType,
         inputs: Vec<Argument>,
         outputs: Vec<Argument>,
-        attrs: std::collections::HashMap<String, AttributeValue>,
+        attrs: crate::ir::Attributes,
     ) -> RawNode {
         RawNode {
             custom_identity: None,

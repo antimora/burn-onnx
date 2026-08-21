@@ -243,7 +243,6 @@ mod tests {
     use crate::ir::{Argument, NodeType, OnnxGraph, TensorType};
     use crate::node::test_utils::TestNodeBuilder;
     use crate::{BoolStore, DType};
-    use std::collections::HashMap;
 
     fn create_test_branch(output_rank: usize, dtype: DType) -> OnnxGraph {
         OnnxGraph {
@@ -265,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_if_basic() {
-        let mut attrs = HashMap::new();
+        let mut attrs = crate::ir::Attributes::new();
         attrs.insert(
             "then_branch".to_string(),
             AttributeValue::Graph(create_test_branch(2, DType::F32)),
@@ -300,7 +299,7 @@ mod tests {
 
     #[test]
     fn test_if_invalid_condition() {
-        let mut attrs = HashMap::new();
+        let mut attrs = crate::ir::Attributes::new();
         attrs.insert(
             "then_branch".to_string(),
             AttributeValue::Graph(create_test_branch(2, DType::F32)),
@@ -327,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_if_branch_output_count_mismatch() {
-        let mut attrs = HashMap::new();
+        let mut attrs = crate::ir::Attributes::new();
         // then_branch has 1 output
         attrs.insert(
             "then_branch".to_string(),

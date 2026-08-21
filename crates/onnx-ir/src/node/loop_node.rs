@@ -343,7 +343,6 @@ mod tests {
     use crate::ir::AttributeValue;
     use crate::ir::{Argument, BoolStore, NodeType, OnnxGraph, TensorType};
     use crate::node::test_utils::TestNodeBuilder;
-    use std::collections::HashMap;
 
     fn create_test_body(_num_loop_vars: usize) -> OnnxGraph {
         OnnxGraph {
@@ -401,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_loop_basic() {
-        let mut attrs = HashMap::new();
+        let mut attrs = crate::ir::Attributes::new();
         attrs.insert(
             "body".to_string(),
             AttributeValue::Graph(create_test_body(1)),
@@ -428,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_loop_invalid_trip_count() {
-        let mut attrs = HashMap::new();
+        let mut attrs = crate::ir::Attributes::new();
         attrs.insert(
             "body".to_string(),
             AttributeValue::Graph(create_test_body(1)),
