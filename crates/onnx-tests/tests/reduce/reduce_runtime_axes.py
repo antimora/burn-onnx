@@ -9,14 +9,15 @@
 
 # used to generate model: reduce_runtime_axes.onnx
 #
-# Opset 18 moved `axes` from an attribute to an optional input. When that input is a
-# graph input rather than a constant, its value is unknown at build time, which is a
-# different thing from "no axes were given" (tracel-ai/burn-onnx#459). The two must not
-# collapse: an absent `axes` reduces every dimension, a runtime `axes` reduces only the
-# dimensions it names.
+# Opset 18 moved `axes` from an attribute to an optional input (opset 13 for ReduceSum).
+# When that input is a graph input rather than a constant, its value is unknown at build
+# time, which is a different thing from "no axes were given" (tracel-ai/burn-onnx#459).
+# The two must not collapse: an absent `axes` reduces every dimension, a runtime `axes`
+# reduces only the dimensions it names.
 #
 # The `noop_with_empty_axes` output covers the third meaning of an empty axes list: with
-# the attribute set, the op is an identity instead of a full reduction.
+# the attribute set the reduction is skipped, though for ops with an elementwise part
+# (ReduceSumSquare, ReduceL1, ReduceL2, ReduceLogSum) that part still applies.
 
 import numpy as np
 import onnx
@@ -97,7 +98,7 @@ if __name__ == "__main__":
 
     data = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
     # -2 exercises the negative-axis path; on a rank-3 input it names dimension 1, the
-    # same dimension `axes2` drops alongside dimension 2.
+    # one dimension `axes2` keeps.
     axes = np.array([-2], dtype=np.int64)
     axes2 = np.array([0, 2], dtype=np.int64)
     empty_axes = np.array([], dtype=np.int64)

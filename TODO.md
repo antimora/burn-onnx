@@ -21,8 +21,8 @@ runtime-`axes` reduce fix (item 2).
 | `skip-codegen` |  484 |
 | `skip-compile` |  103 |
 
-819 of those execute as harness tests. The rest are codegen-only: build.rs skips harness generation
-for dynamic shapes, rank-0 I/O, and dtypes the `.pb` loader cannot construct.
+819 of the 921 `pass` rows execute as harness tests. The other 102 are codegen-only: build.rs skips
+harness generation for dynamic shapes, rank-0 I/O, and dtypes the `.pb` loader cannot construct.
 
 ### Why skip counts rot
 
@@ -111,25 +111,27 @@ Scoreboard: `test_upsample_nearest` moved from `skip-codegen` to `pass`. Opset c
 
 ### 2. Reduce family comparison failures (99 tests)
 
-**Status: done (#459).** All 99 rows shared one root cause, and it was the one #459 named. Opset 18
+**Status: done (#459).** 96 of the 99 rows shared one root cause, and it was the one #459 named. Opset 18
 moved `axes` from an attribute to an input; when that input is a graph input rather than a constant
 its value is unknown at build time, and `ReduceConfig::dims` was a plain `Vec<usize>` that recorded
 that case as an empty vector — the same value ONNX uses for "no axes given, reduce everything".
 Codegen then emitted `.sum()` / `.mean()` with no dimension argument and dropped the axes input on
-the floor. Every one of the 99 models supplies `axes` this way; none of them was a keepdims or
-broadcasting bug.
+the floor. Every one of those models supplies `axes` this way; none of them was a keepdims or
+broadcasting bug. The other 3 are a separate bug, described at the end of this item.
 
 The fix is to make the three meanings of "empty axes" distinguishable, which they are not in a
 `Vec`:
 
-| ONNX                                  | `dims`         | Behavior             |
-| ------------------------------------- | -------------- | -------------------- |
-| `axes` absent, or an empty list       | `Some(vec![])` | reduce every axis    |
-| empty list with `noop_with_empty_axes`| `Some(vec![])` | identity             |
-| `axes` supplied at run time           | `None`         | reduce what it names |
+| ONNX                                  | `ReduceConfig::axes`  | Behavior                |
+| ------------------------------------- | --------------------- | ----------------------- |
+| `axes` absent, or an empty list       | `Static(vec![])`      | reduce every axis       |
+| empty list with `noop_with_empty_axes`| `Static(vec![])`      | skip the reduction      |
+| `axes` supplied at run time           | `Runtime(input_ref)`  | reduce what it names    |
 
-`ReduceConfig` now carries `dims: Option<Vec<usize>>` plus the `noop_with_empty_axes` attribute it
-was previously discarding.
+`ReduceConfig` now carries `axes: ReduceAxes`, the `Static(..) | Runtime(RuntimeInputRef)` enum that
+22 other node files already use, plus the `noop_with_empty_axes` attribute it was previously
+discarding. "Skip the reduction" is not quite "identity": the spec says other operations still
+happen, so `ReduceSumSquare` still squares and `ReduceL1` still takes an absolute value.
 
 Reducing over axes that are not compile-time constants sounds like it should be impossible against
 Burn's statically-ranked tensors, and it very nearly is — but only the output *rank* has to be
@@ -145,8 +147,8 @@ guessing.
 Generated code for a runtime-axes reduce reads the axes once and hands the slice to Burn:
 
 ```rust
-let reduce_axes: alloc::vec::Vec<i64> = axes.to_data().iter::<i64>().collect();
-data.abs().sum_dims(&reduce_axes).squeeze_dims::<2usize>(&reduce_axes)
+let __axes: alloc::vec::Vec<i64> = axes.into_data().iter::<i64>().collect();
+data.abs().sum_dims(&__axes).squeeze_dims::<2usize>(&__axes)
 ```
 
 Two things surfaced while doing it that were not in the original diagnosis:
@@ -162,7 +164,33 @@ Two things surfaced while doing it that were not in the original diagnosis:
 
 Scoreboard: 109 rows promoted from `fail-compare` to `pass` — 96 of the 99 reduce rows and all 13
 remaining `rms_normalization_*_expanded` rows, which used `Shape -> Size -> Range` to build their
-axes at run time. Harness tests went from 710 to 819, all green.
+axes at run time. Harness tests went from 706 to 819, all green.
+
+A multi-agent review after the fact turned up two more silent-wrong-answer cases in the first
+draft of this work, both now fixed and both worth recording because they are the same shape as the
+bug being fixed:
+
+- **`noop_with_empty_axes` was lowered to a bare identity.** The spec says the reduction is skipped
+  but "other operations will be performed", so `ReduceSumSquare` must still square, `ReduceL1` and
+  `ReduceL2` must still take an absolute value, and `ReduceLogSum` must still take a log. Only the
+  five plain reductions are genuine identities. Modelling this as "reduce over no axes" rather than
+  an early return makes each composite land on the right answer through machinery that already
+  exists - `ReduceL2` becomes `sqrt(square(x))`, `ReduceLogSumExp` becomes `x + log(exp(x - x))`.
+- **A runtime axes list that is empty at run time.** Burn's `*_dims` fold over an empty slice is the
+  identity, but ONNX reads empty axes as "every dimension" unless `noop_with_empty_axes` is set.
+  Only reachable when the axes input has no statically known length, which is exactly the case the
+  opset 18 input shape exists for. The generated code now resolves the list where its length is
+  finally known.
+
+Two structural validations were added alongside: an axis count larger than the input rank used to
+underflow `tensor_rank - axis_count` and panic with no node name, and duplicate axes built cleanly
+and then panicked inside Burn's `squeeze_dims`, which deduplicates and so disagreed with the rank
+onnx-ir had declared.
+
+Note for the `build_node` item in Tier 3: Reduce is now the second operator, after Upsample, with
+validation that can first become reachable in `build_node` (an out-of-range axis behind a
+`Constant -> Identity -> Reduce` chain). Its panic at least names the node and formats the error
+with `Display` now, but the underlying hazard is unchanged.
 
 The 3 reduce rows left are `test_reduce_max_empty_set`, `test_reduce_min_empty_set` and
 `test_reduce_log_sum_exp_empty_set`, which are a different bug: reducing over a zero-size dimension,

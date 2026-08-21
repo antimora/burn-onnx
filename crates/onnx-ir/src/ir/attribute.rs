@@ -153,6 +153,12 @@ pub(crate) enum AttributeValue {
     Graphs(Vec<OnnxGraph>),
 }
 
+/// Node attributes, keyed by ONNX attribute name.
+///
+/// Deliberately a `BTreeMap` rather than a `HashMap`: processors validate attributes by
+/// iterating this map, and Rust reseeds the default hasher per process, so a `HashMap`
+/// made the reported error depend on which attribute the loop happened to reach first.
+/// Ordered iteration is what makes those diagnostics reproducible (tracel-ai/burn-onnx#460).
 pub type Attributes = BTreeMap<String, AttributeValue>;
 
 /// Scalar/tensor attribute values exposed to custom-op hooks.

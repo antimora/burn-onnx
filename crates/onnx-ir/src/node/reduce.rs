@@ -147,10 +147,15 @@ pub struct ReduceLogSumExpNode {
 
 /// Whether codegen can read this argument's value at run time.
 ///
-/// Reading the axes back on the host needs a rank-1 integer tensor or a Shape; anything
-/// else has no meaningful element list.
+/// Reading the axes back on the host needs a rank-1 integer tensor or a Shape. A float
+/// axes input would otherwise reach `iter::<i64>()` in the generated code and truncate
+/// silently, and ONNX types this input `tensor(int64)` anyway.
 fn is_readable_axes(ty: &ArgType) -> bool {
-    matches!(ty, ArgType::Tensor(tensor) if tensor.rank == 1) || matches!(ty, ArgType::Shape(_))
+    match ty {
+        ArgType::Tensor(tensor) => tensor.rank == 1 && tensor.dtype.is_int(),
+        ArgType::Shape(_) => true,
+        _ => false,
+    }
 }
 
 /// Length of a runtime `axes` input, read from its static shape.
@@ -204,23 +209,9 @@ impl NodeProcessor for ReduceProcessor {
         opset: usize,
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
-        // TODO: Add validation for maximum input count
-        // Opset 18+ allows optional axes input (2 inputs total). Opset 11-17 only allows 1 input.
-        // Should validate: for opset < 18, max 1 input; for opset >= 18, max 2 inputs.
-        // Location: After validate_min_inputs
-
-        // TODO: Validate output count
-        // Spec requires exactly 1 output. Should add: validate_output_count(node, 1)
-        // Location: After input count validation
-
-        // TODO: Missing test coverage for ReduceSumSquare
-        // Tests cover ReduceSum, ReduceMean, ReduceMax, ReduceMin, ReduceProd, but not ReduceSumSquare
-        // which is mentioned in spec. Verify if ReduceSumSquare is implemented.
-        // Add test: reduce_sum_square (if supported)
-
-        // TODO: Missing test coverage for duplicate axes
-        // Spec doesn't explicitly forbid duplicate axes (e.g., axes=[1,1]). Behavior unclear.
-        // Add test: reduce_duplicate_axes
+        // TODO: Validate the input count per opset. `InputSpec::Range(1, 2)` already
+        // rejects 3+ inputs; what is missing is that the `axes` input only exists from
+        // opset 18 (13 for ReduceSum), so 2 inputs before that is malformed.
 
         // Validate input type and extract tensor info
         let (tensor_rank, tensor_elem_type, tensor_static_shape) = match &node.inputs[0].ty {
@@ -251,8 +242,8 @@ impl NodeProcessor for ReduceProcessor {
             }
         };
 
-        // How many dimensions the reduction removes. `None` means the axes arrive at
-        // runtime and their count is not recoverable from the axes input's shape.
+        // How many axes the reduction names. `None` means the axes arrive at runtime
+        // and their count is not recoverable from the axes input's shape.
         let axis_count = match dims {
             Some(dims) => Some(dims.len()),
             None => runtime_axes_len(node),
@@ -308,6 +299,16 @@ impl NodeProcessor for ReduceProcessor {
                 node.name
             )));
         };
+
+        if axis_count > tensor_rank {
+            return Err(ProcessError::InvalidAttribute {
+                name: "axes".to_string(),
+                reason: format!(
+                    "'{}' names {axis_count} axes but the input has rank {tensor_rank}",
+                    node.name
+                ),
+            });
+        }
 
         if axis_count == tensor_rank {
             node.outputs[0].ty = ArgType::ScalarTensor(tensor_elem_type);
@@ -385,6 +386,17 @@ impl NodeProcessor for ReduceProcessor {
         // Sort the dimensions to ensure consistent order
         dims.sort();
 
+        // The output rank is derived from the number of axes, and Burn's `squeeze_dims`
+        // deduplicates internally, so a repeated axis would make the declared rank
+        // disagree with the tensor Burn produces. ONNX's reference evaluator rejects
+        // duplicates too.
+        if dims.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(ProcessError::InvalidAttribute {
+                name: "axes".to_string(),
+                reason: format!("duplicate axis in {dims:?}"),
+            });
+        }
+
         Ok(ReduceConfig::new(
             ReduceAxes::Static(dims),
             keepdims == 1,
@@ -393,9 +405,15 @@ impl NodeProcessor for ReduceProcessor {
     }
 
     fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+        // `build_node` cannot return an error, and `lift_constants` runs again after
+        // identity elimination without re-running type inference, so a check that only
+        // becomes possible here can only panic. Name the node so the report is usable.
+        let config = self.extract_config(&builder, opset).unwrap_or_else(|e| {
+            panic!(
+                "Failed to build '{}' ({}): {e}",
+                builder.name, builder.node_type
+            )
+        });
 
         match builder.node_type {
             NodeType::ReduceMax => Node::ReduceMax(ReduceMaxNode {
@@ -865,5 +883,50 @@ mod tests {
             .expect_err("axis 3 is out of range for a rank-3 input");
 
         assert!(err.to_string().contains("out of range"), "got: {err}");
+    }
+    #[test]
+    fn test_reduce_runtime_axes_longer_than_rank_is_rejected() {
+        // The output rank is `tensor_rank - axis_count`; a longer axes list used to
+        // underflow that subtraction and panic with no node name.
+        let mut node = create_runtime_axes_node(Some(5), 0, None);
+        let prefs = OutputPreferences::new();
+
+        let err = ReduceProcessor
+            .infer_types(&mut node, 18, &prefs)
+            .expect_err("5 axes cannot apply to a rank-3 input");
+
+        assert!(err.to_string().contains("names 5 axes"), "got: {err}");
+    }
+
+    #[test]
+    fn test_reduce_duplicate_axes_are_rejected() {
+        // Burn's `squeeze_dims` deduplicates, so a repeated axis would make the declared
+        // output rank disagree with the tensor it actually produces.
+        let node = create_test_node(Some(vec![1, 1]), Some(0));
+
+        let err = ReduceProcessor
+            .extract_config(&node, 16)
+            .expect_err("duplicate axes have no well-defined output rank");
+
+        assert!(err.to_string().contains("duplicate axis"), "got: {err}");
+    }
+
+    #[test]
+    fn test_reduce_float_axes_input_is_rejected() {
+        // Codegen reads the axes with `iter::<i64>()`, which would truncate floats
+        // rather than fail. ONNX types this input `tensor(int64)`.
+        let mut node = TestNodeBuilder::new(NodeType::ReduceSum, "test_reduce_sum")
+            .input_tensor_f32("data", 3, Some(vec![2, 3, 4]))
+            .input_tensor_f32("axes", 1, Some(vec![1]))
+            .output_tensor_f32("reduced", 3, None)
+            .attr_int("keepdims", 1)
+            .build();
+        let prefs = OutputPreferences::new();
+
+        let err = ReduceProcessor
+            .infer_types(&mut node, 18, &prefs)
+            .expect_err("a float axes input is not readable as an axis list");
+
+        assert!(err.to_string().contains("rank-1 Tensor"), "got: {err}");
     }
 }

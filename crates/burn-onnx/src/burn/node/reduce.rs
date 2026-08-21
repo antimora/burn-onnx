@@ -16,6 +16,13 @@ pub enum ReductionType {
 
 /// The axes a reduction runs over, lowered for codegen.
 enum Axes {
+    /// No axes at all: ONNX `noop_with_empty_axes` with an empty axes list.
+    ///
+    /// The spec calls this "no reduction is applied, but other operations will be
+    /// performed" - so `ReduceSumSquare` still squares, `ReduceL1` still takes an
+    /// absolute value, and so on. Reducing over nothing gives each composite that
+    /// answer for free, which is why this is a variant rather than an early return.
+    Noop,
     /// Known at build time. An empty list means every dimension.
     Static(Vec<usize>),
     /// Read from a runtime input into the `__axes` local that `binding` declares.
@@ -28,13 +35,15 @@ fn runtime_axes_ident() -> TokenStream {
 }
 
 impl Axes {
-    /// Statement that has to precede any use of the axes, empty for static axes.
+    /// Statement that has to precede any use of the axes, empty when there is nothing
+    /// to declare.
     ///
-    /// Keeping it on the enum means an emission site cannot reference the axes without
-    /// also declaring them.
+    /// Keeping it next to the axes rather than in a separate local is a convention, not
+    /// an invariant the type enforces: an emission site still has to splice this in
+    /// before anything from `dims_tokens`.
     fn binding(&self) -> TokenStream {
         match self {
-            Axes::Static(_) => quote! {},
+            Axes::Noop | Axes::Static(_) => quote! {},
             Axes::Runtime { binding } => binding.clone(),
         }
     }
@@ -47,6 +56,7 @@ impl Axes {
     fn resolved_dims(&self, input_rank: usize) -> Option<Vec<usize>> {
         match self {
             Axes::Runtime { .. } => None,
+            Axes::Noop => Some(Vec::new()),
             Axes::Static(dims) if dims.is_empty() => Some((0..input_rank).collect()),
             Axes::Static(dims) => Some(dims.clone()),
         }
@@ -124,6 +134,12 @@ impl ReductionType {
         input_rank: usize,
         output_rank: usize,
     ) -> TokenStream {
+        // Reducing over no axes leaves the tensor alone. Any elementwise part of a
+        // composite reduction has already been applied to `input` by the caller.
+        if matches!(axes, Axes::Noop) {
+            return input;
+        }
+
         // Whole-tensor reductions have a dedicated kernel for most reduction types.
         if axes.reduces_everything()
             && let Some(reduced_input) = self.try_forward_reduce(input.clone())
@@ -196,17 +212,14 @@ macro_rules! impl_reduce_node {
 
                 // ONNX: with `noop_with_empty_axes` set, an empty `axes` is an identity
                 // rather than a full reduction.
-                let empty_static_axes = matches!(
-                    &self.config.axes,
-                    onnx_ir::reduce::ReduceAxes::Static(dims) if dims.is_empty()
-                );
-                if self.config.noop_with_empty_axes && empty_static_axes {
-                    return quote! { let #output = #input; };
-                }
+                let noop = self.config.noop_with_empty_axes;
 
                 // Runtime axes are read into a local once, which every use below reaches
                 // through `axes.binding()`.
                 let axes = match &self.config.axes {
+                    onnx_ir::reduce::ReduceAxes::Static(dims) if dims.is_empty() && noop => {
+                        Axes::Noop
+                    }
                     onnx_ir::reduce::ReduceAxes::Static(dims) => Axes::Static(dims.clone()),
                     onnx_ir::reduce::ReduceAxes::Runtime(axes_ref) => {
                         let axes_arg = &self.inputs[axes_ref.input_index];
@@ -216,15 +229,32 @@ macro_rules! impl_reduce_node {
                                 let axes_input = arg_to_ident(axes_arg);
                                 quote! { #axes_input.to_vec() }
                             }
-                            // onnx-ir rejects anything but a rank-1 tensor or a Shape.
+                            // onnx-ir rejects anything but a rank-1 integer tensor or a Shape.
                             _ => {
                                 let axes_input = scope.arg(axes_arg);
                                 quote! { #axes_input.into_data().iter::<i64>().collect() }
                             }
                         };
+
+                        // A runtime list that turns out empty means "every dimension"
+                        // unless `noop_with_empty_axes` is set, but Burn's `*_dims` fold
+                        // over an empty slice is the identity. Resolve it where the
+                        // length is finally known.
+                        let resolve_empty = (!noop).then(|| {
+                            let rank = input_rank as i64;
+                            quote! {
+                                let #axes_ident = if #axes_ident.is_empty() {
+                                    (0..#rank).collect()
+                                } else {
+                                    #axes_ident
+                                };
+                            }
+                        });
+
                         Axes::Runtime {
                             binding: quote! {
                                 let #axes_ident: alloc::vec::Vec<i64> = #axes_expr;
+                                #resolve_empty
                             },
                         }
                     }
@@ -242,7 +272,9 @@ macro_rules! impl_reduce_node {
                     // Burn has no `all_dims`/`any_dims`, so runtime axes fold in the
                     // generated code instead of at build time.
                     let squeeze_dims = axes.dims_tokens(input_rank);
-                    let reduced_input = if axes.reduces_everything() {
+                    let reduced_input = if matches!(axes, Axes::Noop) {
+                        input.clone()
+                    } else if axes.reduces_everything() {
                         quote! { #input.#bool_reduction_all() }
                     } else {
                         match axes.resolved_dims(input_rank) {
@@ -257,7 +289,9 @@ macro_rules! impl_reduce_node {
                         }
                     };
 
-                    let final_output = if keepdims {
+                    let final_output = if matches!(axes, Axes::Noop) {
+                        reduced_input
+                    } else if keepdims {
                         if axes.reduces_everything() {
                             quote! { #reduced_input.expand([1; #output_rank]) }
                         } else {
@@ -505,10 +539,12 @@ mod tests {
     use super::super::test_helpers::*;
     use burn::tensor::DType;
     use insta::assert_snapshot;
+    use onnx_ir::ir::BoolStore;
     use onnx_ir::ir::RuntimeInputRef;
     use onnx_ir::node::reduce::{
-        ReduceAxes, ReduceConfig, ReduceMaxNode, ReduceMaxNodeBuilder, ReduceMeanNodeBuilder,
-        ReduceSumNodeBuilder,
+        ReduceAxes, ReduceConfig, ReduceL1NodeBuilder, ReduceLogSumExpNodeBuilder, ReduceMaxNode,
+        ReduceMaxNodeBuilder, ReduceMeanNodeBuilder, ReduceSumNodeBuilder,
+        ReduceSumSquareNodeBuilder,
     };
 
     /// Axes supplied by the node's second input rather than known at build time.
@@ -618,6 +654,7 @@ mod tests {
         pub fn forward(&self, input: Tensor<3>, axes: Tensor<1, Int>) -> Tensor<3> {
             let output = {
                 let __axes: alloc::vec::Vec<i64> = axes.into_data().iter::<i64>().collect();
+                let __axes = if __axes.is_empty() { (0..3i64).collect() } else { __axes };
                 input.sum_dims(&__axes)
             };
             output
@@ -639,6 +676,7 @@ mod tests {
         pub fn forward(&self, input: Tensor<3>, axes: Tensor<1, Int>) -> Tensor<2> {
             let output = {
                 let __axes: alloc::vec::Vec<i64> = axes.into_data().iter::<i64>().collect();
+                let __axes = if __axes.is_empty() { (0..3i64).collect() } else { __axes };
                 input.mean_dims(&__axes).squeeze_dims::<2usize>(&__axes)
             };
             output
@@ -648,7 +686,8 @@ mod tests {
 
     #[test]
     fn test_reduce_sum_noop_with_empty_axes() {
-        // `noop_with_empty_axes` turns an empty axes list into an identity.
+        // For a plain reduction there is no elementwise part, so the noop really is
+        // an identity. Contrast `test_reduce_sum_square_noop_with_empty_axes`.
         let config = ReduceConfig::new(ReduceAxes::Static(vec![]), true, true);
         let node = ReduceSumNodeBuilder::new("reduce_sum1")
             .input_tensor("input", 3, DType::F32)
@@ -659,7 +698,7 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<3>, axes: Tensor<1, Int>) -> Tensor<3> {
-            let output = input;
+            let output = { input };
             output
         }
         ");
@@ -679,6 +718,168 @@ mod tests {
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<3>) -> Tensor<1> {
             let output = { input.sum_dim(0usize).sum_dim(1usize).sum_dim(2usize).reshape([1]) };
+            output
+        }
+        ");
+    }
+    #[test]
+    fn test_reduce_sum_square_noop_with_empty_axes() {
+        // ONNX: with `noop_with_empty_axes` the reduction is skipped but "other
+        // operations will be performed" - ReduceSumSquare still squares.
+        let config = ReduceConfig::new(ReduceAxes::Static(vec![]), true, true);
+        let node = ReduceSumSquareNodeBuilder::new("reduce_sum_square1")
+            .input_tensor("input", 3, DType::F32)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
+            let output = { input.square() };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_reduce_l1_noop_with_empty_axes() {
+        let config = ReduceConfig::new(ReduceAxes::Static(vec![]), true, true);
+        let node = ReduceL1NodeBuilder::new("reduce_l11")
+            .input_tensor("input", 3, DType::F32)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
+            let output = { input.abs() };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_reduce_sum_runtime_axes_resolves_empty_at_runtime() {
+        // An axes input with no static length can still be empty at run time, which ONNX
+        // reads as "every dimension" while Burn's `*_dims` fold reads it as a no-op.
+        let config = ReduceConfig::new(runtime_axes(), true, false);
+        let node = ReduceSumNodeBuilder::new("reduce_sum1")
+            .input_tensor("input", 3, DType::F32)
+            .input_tensor("axes", 1, DType::I64)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>, axes: Tensor<1, Int>) -> Tensor<3> {
+            let output = {
+                let __axes: alloc::vec::Vec<i64> = axes.into_data().iter::<i64>().collect();
+                let __axes = if __axes.is_empty() { (0..3i64).collect() } else { __axes };
+                input.sum_dims(&__axes)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_reduce_max_bool_runtime_axes_no_keepdims() {
+        // Burn has no `any_dims`, so the runtime path folds in the generated code.
+        let config = ReduceConfig::new(runtime_axes(), false, false);
+        let node = ReduceMaxNodeBuilder::new("reduce_max1")
+            .input_tensor("input", 3, DType::Bool(BoolStore::Native))
+            .input_tensor("axes", 1, DType::I64)
+            .output_tensor("output", 2, DType::Bool(BoolStore::Native))
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3, Bool>, axes: Tensor<1, Int>) -> Tensor<2, Bool> {
+            let output = {
+                let __axes: alloc::vec::Vec<i64> = axes.into_data().iter::<i64>().collect();
+                let __axes = if __axes.is_empty() { (0..3i64).collect() } else { __axes };
+                __axes
+                    .iter()
+                    .fold(input, |tensor, axis| { tensor.any_dim(*axis) })
+                    .squeeze_dims::<2usize>(&__axes)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_reduce_sum_shape_axes() {
+        // A Shape-typed axes input is a native `[i64; N]`, not a device tensor.
+        let config = ReduceConfig::new(runtime_axes(), true, false);
+        let node = ReduceSumNodeBuilder::new("reduce_sum1")
+            .input_tensor("input", 3, DType::F32)
+            .input_shape("axes", 2)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>, axes: [i64; 2]) -> Tensor<3> {
+            let output = {
+                let __axes: alloc::vec::Vec<i64> = axes.to_vec();
+                let __axes = if __axes.is_empty() { (0..3i64).collect() } else { __axes };
+                input.sum_dims(&__axes)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_reduce_log_sum_exp_keepdims() {
+        // The most intricate codegen in this file: the running max keeps its rank so it
+        // broadcasts back over the input.
+        let config = ReduceConfig::new(ReduceAxes::Static(vec![1]), true, false);
+        let node = ReduceLogSumExpNodeBuilder::new("reduce_log_sum_exp1")
+            .input_tensor("input", 3, DType::F32)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
+            let output = {
+                let input = input;
+                let input_dtype = input.dtype();
+                let input_double = input.cast(burn::tensor::DType::F32);
+                let input_max_reduced = input_double.clone().max_dim(1usize);
+                let input_exp_reduced = (input_double - input_max_reduced.clone()).exp();
+                let exp_sum_reduced = input_exp_reduced.sum_dim(1usize);
+                (input_max_reduced + exp_sum_reduced.log()).cast(input_dtype)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_reduce_log_sum_exp_no_keepdims() {
+        let config = ReduceConfig::new(ReduceAxes::Static(vec![1]), false, false);
+        let node = ReduceLogSumExpNodeBuilder::new("reduce_log_sum_exp1")
+            .input_tensor("input", 3, DType::F32)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>) -> Tensor<2> {
+            let output = {
+                let input = input;
+                let input_dtype = input.dtype();
+                let input_double = input.cast(burn::tensor::DType::F32);
+                let input_max_reduced = input_double.clone().max_dim(1usize);
+                let input_exp_reduced = (input_double - input_max_reduced.clone()).exp();
+                let exp_sum_reduced = input_exp_reduced.sum_dim(1usize);
+                (input_max_reduced + exp_sum_reduced.log())
+                    .squeeze_dims::<2usize>(&[1])
+                    .cast(input_dtype)
+            };
             output
         }
         ");
