@@ -240,7 +240,7 @@ impl NodeProcessor for IfProcessor {
 mod tests {
     use super::*;
     use crate::ir::AttributeValue;
-    use crate::ir::{Argument, NodeType, OnnxGraph, TensorType};
+    use crate::ir::{Argument, Attributes, NodeType, OnnxGraph, TensorType};
     use crate::node::test_utils::TestNodeBuilder;
     use crate::{BoolStore, DType};
 
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_if_basic() {
-        let mut attrs = crate::ir::Attributes::new();
+        let mut attrs = Attributes::new();
         attrs.insert(
             "then_branch".to_string(),
             AttributeValue::Graph(create_test_branch(2, DType::F32)),
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn test_if_invalid_condition() {
-        let mut attrs = crate::ir::Attributes::new();
+        let mut attrs = Attributes::new();
         attrs.insert(
             "then_branch".to_string(),
             AttributeValue::Graph(create_test_branch(2, DType::F32)),
@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_if_branch_output_count_mismatch() {
-        let mut attrs = crate::ir::Attributes::new();
+        let mut attrs = Attributes::new();
         // then_branch has 1 output
         attrs.insert(
             "then_branch".to_string(),

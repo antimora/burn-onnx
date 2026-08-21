@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::TensorDataExt;
 use crate::graph_state::GraphState;
-use crate::ir::{ArgType, Argument, DType, NodeType, RawNode, TensorData, ValueSource};
+use crate::ir::{ArgType, Argument, Attributes, DType, NodeType, RawNode, TensorData, ValueSource};
 use crate::tensor_store::TensorDataRef;
 
 /// Fold only Slice, Concat, Unsqueeze, Squeeze, and Reshape operations on constant inputs.
@@ -139,7 +139,7 @@ fn make_constant_node(
             value_source: ValueSource::Constant,
             value_store: Some(value_store),
         }],
-        attrs: crate::ir::Attributes::new(),
+        attrs: Attributes::new(),
     }
 }
 
@@ -757,7 +757,7 @@ mod tests {
             name: name.to_string(),
             inputs,
             outputs,
-            attrs: crate::ir::Attributes::new(),
+            attrs: Attributes::new(),
         }
     }
 
@@ -766,7 +766,7 @@ mod tests {
         node_type: NodeType,
         inputs: Vec<Argument>,
         outputs: Vec<Argument>,
-        attrs: crate::ir::Attributes,
+        attrs: Attributes,
     ) -> RawNode {
         RawNode {
             custom_identity: None,

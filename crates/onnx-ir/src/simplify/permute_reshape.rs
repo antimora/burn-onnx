@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::TensorDataExt;
-use crate::ir::{AttributeValue, NodeType, RawNode};
+use crate::ir::{AttributeValue, Attributes, NodeType, RawNode};
 
 /// Detect Shape+Gather+Unsqueeze+Concat+Reshape chains that implement a dimension
 /// permutation (e.g. from PyTorch's `tensor.permute()`) and replace the Reshape with
@@ -43,7 +43,7 @@ pub(crate) fn simplify_permute_reshape(mut nodes: Vec<RawNode>) -> Vec<RawNode> 
         );
 
         // Build Transpose node reusing the Reshape's data input and output
-        let mut attrs = crate::ir::Attributes::new();
+        let mut attrs = Attributes::new();
         attrs.insert("perm".to_string(), AttributeValue::Int64s(perm.clone()));
 
         nodes[*ri] = RawNode {
@@ -195,7 +195,7 @@ mod tests {
         node_type: NodeType,
         inputs: Vec<Argument>,
         outputs: Vec<Argument>,
-        attrs: crate::ir::Attributes,
+        attrs: Attributes,
     ) -> RawNode {
         RawNode {
             custom_identity: None,
@@ -233,7 +233,7 @@ mod tests {
             NodeType::Shape,
             vec![input.clone()],
             vec![shape_arg("shape_out", rank)],
-            crate::ir::Attributes::new(),
+            Attributes::new(),
         ));
 
         let mut concat_inputs = Vec::new();
@@ -263,7 +263,7 @@ mod tests {
                 NodeType::Unsqueeze,
                 vec![arg(&gather_out)],
                 vec![shape_arg(&unsqueeze_out, 1)],
-                crate::ir::Attributes::new(),
+                Attributes::new(),
             ));
 
             concat_inputs.push(shape_arg(&unsqueeze_out, 1));
@@ -286,7 +286,7 @@ mod tests {
             NodeType::Reshape,
             vec![input, shape_arg("new_shape", rank)],
             vec![arg("output")],
-            crate::ir::Attributes::new(),
+            Attributes::new(),
         ));
 
         nodes
