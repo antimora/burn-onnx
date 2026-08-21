@@ -176,6 +176,9 @@ bug being fixed:
   five plain reductions are genuine identities. Modelling this as "reduce over no axes" rather than
   an early return makes each composite land on the right answer through machinery that already
   exists - `ReduceL2` becomes `sqrt(square(x))`, `ReduceLogSumExp` becomes `x + log(exp(x - x))`.
+  The reductions that *are* identities now implement `NodeProcessor::is_noop`, so the framework
+  drops those nodes in post-processing instead of codegen emitting a rebinding; the codegen path
+  stays for `simplify(false)`, where only Identity is eliminated.
 - **A runtime axes list that is empty at run time.** Burn's `*_dims` fold over an empty slice is the
   identity, but ONNX reads empty axes as "every dimension" unless `noop_with_empty_axes` is set.
   Only reachable when the axes input has no statically known length, which is exactly the case the

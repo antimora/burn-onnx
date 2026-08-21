@@ -194,6 +194,35 @@ impl NodeProcessor for ReduceProcessor {
         }
     }
 
+    fn is_noop(&self, node: &RawNode) -> bool {
+        // ONNX `noop_with_empty_axes` with an empty `axes` skips the reduction. For the
+        // plain reductions that leaves the input untouched, so the node can be dropped
+        // entirely. The composite reductions still perform their elementwise part -
+        // ReduceSumSquare squares, ReduceL1 and ReduceL2 take an absolute value,
+        // ReduceLogSum takes a log - so they are not no-ops and codegen has to emit them.
+        if !matches!(
+            node.node_type,
+            NodeType::ReduceSum
+                | NodeType::ReduceMean
+                | NodeType::ReduceMax
+                | NodeType::ReduceMin
+                | NodeType::ReduceProd
+                | NodeType::ReduceLogSumExp
+        ) {
+            return false;
+        }
+
+        // `extract_config` ignores the opset, and it is what knows that a runtime axes
+        // input whose shape proves it empty is the empty-axes case.
+        match self.extract_config(node, 0) {
+            Ok(config) => {
+                config.noop_with_empty_axes
+                    && matches!(&config.axes, ReduceAxes::Static(dims) if dims.is_empty())
+            }
+            Err(_) => false,
+        }
+    }
+
     fn lift_constants(&self, node: &mut RawNode, _opset: usize) -> Result<(), ProcessError> {
         // Lift axes input (input[1]) if present
         if node.inputs.len() > 1 && node.inputs[1].is_constant() {
@@ -928,5 +957,39 @@ mod tests {
             .expect_err("a float axes input is not readable as an axis list");
 
         assert!(err.to_string().contains("rank-1 Tensor"), "got: {err}");
+    }
+    #[test]
+    fn test_reduce_sum_noop_with_empty_axes_is_eliminated() {
+        // A plain reduction that skips its reduction leaves the input untouched, so the
+        // framework can drop the node instead of codegen emitting a rebinding.
+        let node = create_runtime_axes_node(Some(0), 1, Some(1));
+        assert!(ReduceProcessor.is_noop(&node));
+    }
+
+    #[test]
+    fn test_reduce_sum_square_noop_with_empty_axes_is_not_eliminated() {
+        // "no reduction is applied, but other operations will be performed":
+        // ReduceSumSquare still squares, so the node has real work to do.
+        let node = TestNodeBuilder::new(NodeType::ReduceSumSquare, "test_reduce_sum_square")
+            .input_tensor_f32("data", 3, Some(vec![2, 3, 4]))
+            .output_tensor_f32("reduced", 3, None)
+            .attr_int("keepdims", 1)
+            .attr_int("noop_with_empty_axes", 1)
+            .build();
+        assert!(!ReduceProcessor.is_noop(&node));
+    }
+
+    #[test]
+    fn test_reduce_sum_without_noop_flag_is_not_eliminated() {
+        // Empty axes without the flag reduces every dimension, which is not a no-op.
+        let node = create_runtime_axes_node(Some(0), 1, Some(0));
+        assert!(!ReduceProcessor.is_noop(&node));
+    }
+
+    #[test]
+    fn test_reduce_sum_noop_with_named_axes_is_not_eliminated() {
+        // The flag only applies when the axes list is empty.
+        let node = create_test_node(Some(vec![1]), Some(1));
+        assert!(!ReduceProcessor.is_noop(&node));
     }
 }

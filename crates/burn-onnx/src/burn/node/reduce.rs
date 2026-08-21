@@ -686,8 +686,9 @@ mod tests {
 
     #[test]
     fn test_reduce_sum_noop_with_empty_axes() {
-        // For a plain reduction there is no elementwise part, so the noop really is
-        // an identity. Contrast `test_reduce_sum_square_noop_with_empty_axes`.
+        // For a plain reduction the noop really is an identity, so `is_noop` normally
+        // deletes the node before codegen sees it. This path is still reachable with
+        // `OnnxGraphBuilder::simplify(false)`, where only Identity is eliminated.
         let config = ReduceConfig::new(ReduceAxes::Static(vec![]), true, true);
         let node = ReduceSumNodeBuilder::new("reduce_sum1")
             .input_tensor("input", 3, DType::F32)
