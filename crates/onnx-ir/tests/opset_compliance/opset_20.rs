@@ -143,7 +143,7 @@ fn reduce_max(graph: &OnnxGraph) {
         reducemax1_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: Some(
+            axes: Static(
                 [
                     1,
                 ],
@@ -166,7 +166,7 @@ fn reduce_min(graph: &OnnxGraph) {
         reducemin1_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: Some(
+            axes: Static(
                 [
                     1,
                 ],

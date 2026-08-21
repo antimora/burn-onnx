@@ -22,19 +22,33 @@
 use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{ArgType, Argument, Node, NodeType, RawNode, TensorType};
+use crate::ir::{ArgType, Argument, Node, NodeType, RawNode, RuntimeInputRef, TensorType};
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
 };
 
+/// Axes a reduction runs over.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReduceAxes {
+    /// Axes known at build time, normalized to non-negative indices. An empty list is
+    /// ONNX's "empty axes", which reduces every dimension unless `noop_with_empty_axes`
+    /// is set.
+    Static(Vec<usize>),
+    /// Axes supplied by a runtime input. Values are unknown at build time and are *not*
+    /// normalized: negative entries reach the backend as written, and Burn's dimension
+    /// APIs wrap them.
+    Runtime(RuntimeInputRef),
+}
+
+impl Default for ReduceAxes {
+    fn default() -> Self {
+        ReduceAxes::Static(Vec::new())
+    }
+}
+
 #[derive(Debug, Clone, new)]
 pub struct ReduceConfig {
-    /// Axes to reduce over, normalized to non-negative indices.
-    ///
-    /// `Some(vec![])` is ONNX's "empty axes", which reduces every dimension unless
-    /// `noop_with_empty_axes` is set. `None` means `axes` arrives as a runtime input
-    /// whose value is not known at build time, and codegen must read it at run time.
-    pub dims: Option<Vec<usize>>,
+    pub axes: ReduceAxes,
     pub keepdims: bool,
     /// ONNX `noop_with_empty_axes`: when set, an empty `axes` makes the op an identity
     /// instead of a full reduction.
@@ -131,18 +145,34 @@ pub struct ReduceLogSumExpNode {
     pub config: ReduceConfig,
 }
 
+/// Whether codegen can read this argument's value at run time.
+///
+/// Reading the axes back on the host needs a rank-1 integer tensor or a Shape; anything
+/// else has no meaningful element list.
+fn is_readable_axes(ty: &ArgType) -> bool {
+    matches!(ty, ArgType::Tensor(tensor) if tensor.rank == 1) || matches!(ty, ArgType::Shape(_))
+}
+
 /// Length of a runtime `axes` input, read from its static shape.
 ///
 /// The values are unknown at build time but the count usually is not, and the count is
 /// what fixes the output rank when `keepdims` is off.
 fn runtime_axes_len(node: &RawNode) -> Option<usize> {
-    match &node.get_input(1)?.ty {
-        ArgType::Tensor(tensor) if tensor.rank == 1 => {
-            tensor.static_shape.as_ref()?.first().copied().flatten()
-        }
-        ArgType::Shape(rank) => Some(*rank),
-        _ => None,
+    let ty = &node.get_input(1)?.ty;
+    is_readable_axes(ty).then(|| ty.first_dim_static_len())?
+}
+
+/// Normalize an ONNX axis against the input rank, rejecting anything outside
+/// the spec's `[-r, r-1]`.
+fn normalize_axis(axis: i64, rank: usize) -> Result<usize, ProcessError> {
+    let normalized = if axis < 0 { axis + rank as i64 } else { axis };
+    if normalized < 0 || normalized >= rank as i64 {
+        return Err(ProcessError::InvalidAttribute {
+            name: "axes".to_string(),
+            reason: format!("axis {axis} is out of range for a rank-{rank} input"),
+        });
     }
+    Ok(normalized as usize)
 }
 
 pub(crate) struct ReduceProcessor;
@@ -206,26 +236,30 @@ impl NodeProcessor for ReduceProcessor {
         let config = self.extract_config(node, opset)?;
         let keepdims = config.keepdims;
 
+        // Axes known at build time, if any. `None` means they arrive at run time.
+        let dims = match &config.axes {
+            ReduceAxes::Static(dims) => Some(dims),
+            ReduceAxes::Runtime(axes) => {
+                let axes_ty = &node.inputs[axes.input_index].ty;
+                if !is_readable_axes(axes_ty) {
+                    return Err(ProcessError::TypeMismatch {
+                        expected: "rank-1 Tensor or Shape for the runtime 'axes' input".to_string(),
+                        actual: format!("{axes_ty:?}"),
+                    });
+                }
+                None
+            }
+        };
+
         // How many dimensions the reduction removes. `None` means the axes arrive at
         // runtime and their count is not recoverable from the axes input's shape.
-        let axis_count = match &config.dims {
+        let axis_count = match dims {
             Some(dims) => Some(dims.len()),
             None => runtime_axes_len(node),
         };
 
-        if config.dims.is_none() {
-            // Codegen reads the axes at run time, which it can only do from a 1-D
-            // integer tensor or a Shape.
-            let axes_ty = &node.inputs[1].ty;
-            let readable = matches!(axes_ty, ArgType::Tensor(tensor) if tensor.rank == 1)
-                || matches!(axes_ty, ArgType::Shape(_));
-            if !readable {
-                return Err(ProcessError::TypeMismatch {
-                    expected: "rank-1 Tensor or Shape for the runtime 'axes' input".to_string(),
-                    actual: format!("{axes_ty:?}"),
-                });
-            }
-        }
+        // Only usable when it describes every dimension of the input.
+        let static_shape = tensor_static_shape.filter(|shape| shape.len() == tensor_rank);
 
         // ONNX: an empty `axes` is an identity when `noop_with_empty_axes` is set,
         // and reduces every dimension otherwise.
@@ -250,15 +284,11 @@ impl NodeProcessor for ReduceProcessor {
         if keepdims {
             // Every named axis collapses to 1, so the rank is unchanged whether or not
             // the axes themselves are known.
-            let static_shape = config.dims.as_ref().and_then(|dims| {
-                let mut shape = tensor_static_shape?;
-                if shape.len() != tensor_rank {
-                    return None;
-                }
+            let static_shape = dims.zip(static_shape).map(|(dims, mut shape)| {
                 for dim in dims {
                     shape[*dim] = Some(1);
                 }
-                Some(shape)
+                shape
             });
 
             node.outputs[0].ty = ArgType::Tensor(TensorType {
@@ -284,15 +314,11 @@ impl NodeProcessor for ReduceProcessor {
             return Ok(());
         }
 
-        let static_shape = config.dims.as_ref().and_then(|dims| {
-            let mut shape = tensor_static_shape?;
-            if shape.len() != tensor_rank {
-                return None;
-            }
+        let static_shape = dims.zip(static_shape).map(|(dims, mut shape)| {
             for dim in dims.iter().rev() {
                 shape.remove(*dim);
             }
-            Some(shape)
+            shape
         });
 
         node.outputs[0].ty = ArgType::Tensor(TensorType {
@@ -332,51 +358,35 @@ impl NodeProcessor for ReduceProcessor {
         }
 
         // The axes input wins over the attribute when both are present. A value that is
-        // not statically known leaves `dims` as `None` so codegen reads it at run time,
-        // except when the input's shape already proves the list is empty.
-        let axes: Option<Vec<i64>> = match node.get_input(1) {
+        // not statically known stays `Runtime` so codegen reads it at run time, except
+        // when the input's shape already proves the list is empty.
+        let static_axes: Vec<i64> = match node.get_input(1) {
             Some(axes_arg) => match axes_arg.value() {
-                Some(value) => Some(value.to_vec::<i64>().map_err(|e| {
+                Some(value) => value.to_vec::<i64>().map_err(|e| {
                     ProcessError::Custom(format!("Failed to read 'axes' of '{}': {e}", node.name))
-                })?),
-                None if runtime_axes_len(node) == Some(0) => Some(Vec::new()),
-                None => None,
+                })?,
+                None if runtime_axes_len(node) == Some(0) => Vec::new(),
+                None => {
+                    return Ok(ReduceConfig::new(
+                        ReduceAxes::Runtime(RuntimeInputRef::new(axes_arg.name.clone(), 1)),
+                        keepdims == 1,
+                        noop_with_empty_axes == 1,
+                    ));
+                }
             },
-            None => Some(axes_attr.unwrap_or_default()),
+            None => axes_attr.unwrap_or_default(),
         };
 
-        let dims = axes
-            .map(|axes| {
-                axes.into_iter()
-                    .map(|axis| {
-                        // Accepted range is [-r, r-1] where r = rank(data), but Burn only
-                        // supports non-negative dims.
-                        let normalized = if axis < 0 {
-                            axis + tensor_rank as i64
-                        } else {
-                            axis
-                        };
-                        if normalized < 0 || normalized >= tensor_rank as i64 {
-                            return Err(ProcessError::InvalidAttribute {
-                                name: "axes".to_string(),
-                                reason: format!(
-                                    "axis {axis} is out of range for a rank-{tensor_rank} input"
-                                ),
-                            });
-                        }
-                        Ok(normalized as usize)
-                    })
-                    .collect::<Result<Vec<usize>, _>>()
-            })
-            .transpose()?
-            .map(|mut dims| {
-                // Sort the dimensions to ensure consistent order
-                dims.sort();
-                dims
-            });
+        let mut dims = static_axes
+            .into_iter()
+            .map(|axis| normalize_axis(axis, tensor_rank))
+            .collect::<Result<Vec<usize>, _>>()?;
+
+        // Sort the dimensions to ensure consistent order
+        dims.sort();
 
         Ok(ReduceConfig::new(
-            dims,
+            ReduceAxes::Static(dims),
             keepdims == 1,
             noop_with_empty_axes == 1,
         ))
@@ -486,7 +496,7 @@ mod tests {
         let config = processor.extract_config(&node, 16).unwrap();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
-        assert_eq!(config.dims, Some(vec![1]));
+        assert_eq!(config.axes, ReduceAxes::Static(vec![1]));
         assert_eq!(config.keepdims, true);
     }
 
@@ -500,7 +510,7 @@ mod tests {
         let config = processor.extract_config(&node, 16).unwrap();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
-        assert_eq!(config.dims, Some(vec![1])); // -2 + 3 = 1
+        assert_eq!(config.axes, ReduceAxes::Static(vec![1])); // -2 + 3 = 1
         assert_eq!(config.keepdims, true);
     }
 
@@ -514,7 +524,7 @@ mod tests {
         let config = processor.extract_config(&node, 16).unwrap();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
-        assert_eq!(config.dims, Some(Vec::<usize>::new()));
+        assert_eq!(config.axes, ReduceAxes::Static(Vec::new()));
         assert_eq!(config.keepdims, true);
     }
 
@@ -528,7 +538,7 @@ mod tests {
         let config = processor.extract_config(&node, 16).unwrap();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
-        assert_eq!(config.dims, Some(vec![0, 1]));
+        assert_eq!(config.axes, ReduceAxes::Static(vec![0, 1]));
         assert_eq!(config.keepdims, true);
     }
 
@@ -542,7 +552,7 @@ mod tests {
         let config = processor.extract_config(&node, 16).unwrap();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
-        assert_eq!(config.dims, Some(vec![1]));
+        assert_eq!(config.axes, ReduceAxes::Static(vec![1]));
         assert_eq!(config.keepdims, false);
     }
 
@@ -749,7 +759,11 @@ mod tests {
         let config = ReduceProcessor.extract_config(&node, 18).unwrap();
 
         // The whole point of #459: this must not collapse to "no axes given".
-        assert_eq!(config.dims, None);
+        assert!(
+            matches!(&config.axes, ReduceAxes::Runtime(axes) if axes.name == "axes"),
+            "expected runtime axes, got {:?}",
+            config.axes
+        );
         assert_eq!(config.keepdims, true);
     }
 
@@ -806,7 +820,7 @@ mod tests {
 
         let config = ReduceProcessor.extract_config(&node, 18).unwrap();
 
-        assert_eq!(config.dims, Some(Vec::new()));
+        assert_eq!(config.axes, ReduceAxes::Static(Vec::new()));
     }
 
     #[test]
