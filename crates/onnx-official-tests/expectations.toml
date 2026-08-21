@@ -3730,74 +3730,46 @@ status = "pass"
 status = "pass"
 
 [test_reduce_l1_do_not_keepdims_example]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_do_not_keepdims_example_expanded]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_do_not_keepdims_random]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_do_not_keepdims_random_expanded]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_empty_set]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_empty_set_expanded]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_keep_dims_example]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_keep_dims_example_expanded]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_keep_dims_random]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_keep_dims_random_expanded]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_negative_axes_keep_dims_example]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_negative_axes_keep_dims_example_expanded]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_negative_axes_keep_dims_random]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l1_negative_axes_keep_dims_random_expanded]
-status = "fail-compare"
-reason = "reduce_l1 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_default_axes_keepdims_example]
 status = "pass"
@@ -3812,84 +3784,52 @@ status = "pass"
 status = "pass"
 
 [test_reduce_l2_do_not_keepdims_example]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_do_not_keepdims_example_expanded]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_do_not_keepdims_random]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_do_not_keepdims_random_expanded]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_empty_set]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_empty_set_expanded]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_keep_dims_example]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_keep_dims_example_expanded]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_keep_dims_random]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_keep_dims_random_expanded]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_negative_axes_keep_dims_example]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_negative_axes_keep_dims_example_expanded]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_negative_axes_keep_dims_random]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_l2_negative_axes_keep_dims_random_expanded]
-status = "fail-compare"
-reason = "reduce_l2 op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_log_sum_asc_axes]
-status = "fail-compare"
-reason = "reduce_log op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_log_sum_asc_axes_expanded]
-status = "fail-compare"
-reason = "reduce_log op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_log_sum_default]
 status = "pass"
@@ -3898,24 +3838,16 @@ status = "pass"
 status = "pass"
 
 [test_reduce_log_sum_desc_axes]
-status = "fail-compare"
-reason = "reduce_log op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_log_sum_desc_axes_expanded]
-status = "fail-compare"
-reason = "reduce_log op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_log_sum_empty_set]
-status = "fail-compare"
-reason = "reduce_log op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_log_sum_empty_set_expanded]
-status = "fail-compare"
-reason = "reduce_log op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_log_sum_exp_default_axes_keepdims_example]
 status = "pass"
@@ -3946,56 +3878,40 @@ status = "fail-compare"
 reason = "demoted by `cargo xtask update-expectations` after test failure"
 
 [test_reduce_log_sum_exp_empty_set_expanded]
-status = "fail-compare"
-reason = "reduce_log op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_log_sum_exp_keepdims_example]
-status = "fail-compare"
-reason = "demoted by `cargo xtask update-expectations` after test failure"
+status = "pass"
 
 [test_reduce_log_sum_exp_keepdims_example_expanded]
-status = "fail-compare"
-reason = "demoted by `cargo xtask update-expectations` after test failure"
+status = "pass"
 
 [test_reduce_log_sum_exp_keepdims_random]
-status = "fail-compare"
-reason = "demoted by `cargo xtask update-expectations` after test failure"
+status = "pass"
 
 [test_reduce_log_sum_exp_keepdims_random_expanded]
-status = "fail-compare"
-reason = "demoted by `cargo xtask update-expectations` after test failure"
+status = "pass"
 
 [test_reduce_log_sum_exp_negative_axes_keepdims_example]
-status = "fail-compare"
-reason = "demoted by `cargo xtask update-expectations` after test failure"
+status = "pass"
 
 [test_reduce_log_sum_exp_negative_axes_keepdims_example_expanded]
-status = "fail-compare"
-reason = "demoted by `cargo xtask update-expectations` after test failure"
+status = "pass"
 
 [test_reduce_log_sum_exp_negative_axes_keepdims_random]
-status = "fail-compare"
-reason = "demoted by `cargo xtask update-expectations` after test failure"
+status = "pass"
 
 [test_reduce_log_sum_exp_negative_axes_keepdims_random_expanded]
-status = "fail-compare"
-reason = "demoted by `cargo xtask update-expectations` after test failure"
+status = "pass"
 
 [test_reduce_log_sum_negative_axes]
-status = "fail-compare"
-reason = "reduce_log op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_log_sum_negative_axes_expanded]
-status = "fail-compare"
-reason = "reduce_log op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_max_bool_inputs]
-status = "fail-compare"
-reason = "reduce_max op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_max_default_axes_keepdim_example]
 status = "pass"
@@ -4004,38 +3920,26 @@ status = "pass"
 status = "pass"
 
 [test_reduce_max_do_not_keepdims_example]
-status = "fail-compare"
-reason = "reduce_max op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_max_do_not_keepdims_random]
-status = "fail-compare"
-reason = "reduce_max op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_max_empty_set]
 status = "fail-compare"
 reason = "demoted by `cargo xtask update-expectations` after test failure"
 
 [test_reduce_max_keepdims_example]
-status = "fail-compare"
-reason = "reduce_max op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_max_keepdims_random]
-status = "fail-compare"
-reason = "reduce_max op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_max_negative_axes_keepdims_example]
-status = "fail-compare"
-reason = "reduce_max op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_max_negative_axes_keepdims_random]
-status = "fail-compare"
-reason = "reduce_max op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_mean_default_axes_keepdims_example]
 status = "pass"
@@ -4044,39 +3948,25 @@ status = "pass"
 status = "pass"
 
 [test_reduce_mean_do_not_keepdims_example]
-status = "fail-compare"
-reason = "reduce_mean op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_mean_do_not_keepdims_random]
-status = "fail-compare"
-reason = "reduce_mean op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_mean_keepdims_example]
-status = "fail-compare"
-reason = "reduce_mean op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_mean_keepdims_random]
-status = "fail-compare"
-reason = "reduce_mean op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_mean_negative_axes_keepdims_example]
-status = "fail-compare"
-reason = "reduce_mean op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_mean_negative_axes_keepdims_random]
-status = "fail-compare"
-reason = "reduce_mean op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_min_bool_inputs]
-status = "fail-compare"
-reason = "reduce_min op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_min_default_axes_keepdims_example]
 status = "pass"
@@ -4085,38 +3975,26 @@ status = "pass"
 status = "pass"
 
 [test_reduce_min_do_not_keepdims_example]
-status = "fail-compare"
-reason = "reduce_min op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_min_do_not_keepdims_random]
-status = "fail-compare"
-reason = "reduce_min op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_min_empty_set]
 status = "fail-compare"
 reason = "demoted by `cargo xtask update-expectations` after test failure"
 
 [test_reduce_min_keepdims_example]
-status = "fail-compare"
-reason = "reduce_min op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_min_keepdims_random]
-status = "fail-compare"
-reason = "reduce_min op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_min_negative_axes_keepdims_example]
-status = "fail-compare"
-reason = "reduce_min op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_min_negative_axes_keepdims_random]
-status = "fail-compare"
-reason = "reduce_min op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_prod_default_axes_keepdims_example]
 status = "pass"
@@ -4125,39 +4003,25 @@ status = "pass"
 status = "pass"
 
 [test_reduce_prod_do_not_keepdims_example]
-status = "fail-compare"
-reason = "reduce_prod op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_prod_do_not_keepdims_random]
-status = "fail-compare"
-reason = "reduce_prod op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_prod_empty_set]
-status = "fail-compare"
-reason = "reduce_prod op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_prod_keepdims_example]
-status = "fail-compare"
-reason = "reduce_prod op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_prod_keepdims_random]
-status = "fail-compare"
-reason = "reduce_prod op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_prod_negative_axes_keepdims_example]
-status = "fail-compare"
-reason = "reduce_prod op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_prod_negative_axes_keepdims_random]
-status = "fail-compare"
-reason = "reduce_prod op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_default_axes_keepdims_example]
 status = "pass"
@@ -4166,54 +4030,34 @@ status = "pass"
 status = "pass"
 
 [test_reduce_sum_do_not_keepdims_example]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_do_not_keepdims_random]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_empty_axes_input_noop]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_empty_axes_input_noop_example]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_empty_set]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_empty_set_non_reduced_axis_zero]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_keepdims_example]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_keepdims_random]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_negative_axes_keepdims_example]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_negative_axes_keepdims_random]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_default_axes_keepdims_example]
 status = "pass"
@@ -4228,74 +4072,46 @@ status = "pass"
 status = "pass"
 
 [test_reduce_sum_square_do_not_keepdims_example]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_do_not_keepdims_example_expanded]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_do_not_keepdims_random]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_do_not_keepdims_random_expanded]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_empty_set]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_empty_set_expanded]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_keepdims_example]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_keepdims_example_expanded]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_keepdims_random]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_keepdims_random_expanded]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_negative_axes_keepdims_example]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_negative_axes_keepdims_example_expanded]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_negative_axes_keepdims_random]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reduce_sum_square_negative_axes_keepdims_random_expanded]
-status = "fail-compare"
-reason = "reduce_sum op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_reflect_pad]
 status = "pass"
@@ -4528,18 +4344,14 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_2d_axis1_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_2d_axis_negative_1]
 status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_2d_axis_negative_1_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_2d_axis_negative_2]
 status = "skip-codegen"
@@ -4560,36 +4372,28 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_3d_axis1_epsilon_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_3d_axis2_epsilon]
 status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_3d_axis2_epsilon_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_3d_axis_negative_1_epsilon]
 status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_3d_axis_negative_1_epsilon_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_3d_axis_negative_2_epsilon]
 status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_3d_axis_negative_2_epsilon_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_3d_axis_negative_3_epsilon]
 status = "skip-codegen"
@@ -4610,54 +4414,42 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_4d_axis1_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_4d_axis2]
 status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_4d_axis2_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_4d_axis3]
 status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_4d_axis3_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_4d_axis_negative_1]
 status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_4d_axis_negative_1_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_4d_axis_negative_2]
 status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_4d_axis_negative_2_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_4d_axis_negative_3]
 status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_4d_axis_negative_3_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rms_normalization_4d_axis_negative_4]
 status = "skip-codegen"
@@ -4671,9 +4463,7 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): RMSNormalization (node 'rmsnormalization1')"
 
 [test_rms_normalization_default_axis_expanded]
-status = "fail-compare"
-reason = "ReduceMean inside the expanded RMSNorm reduces over all elements instead of the axes from `axis` onward; only the axis-0 variants happen to match"
-tracking = "#311"
+status = "pass"
 
 [test_rnn_seq_length]
 status = "fail-compare"

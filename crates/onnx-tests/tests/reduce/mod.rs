@@ -12,13 +12,14 @@ include_models!(
     reduce_l1,
     reduce_l2,
     reduce_log_sum,
-    reduce_log_sum_exp
+    reduce_log_sum_exp,
+    reduce_runtime_axes
 );
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::{Device, Tensor, TensorData};
+    use burn::tensor::{Device, Int, Tensor, TensorData};
 
     // Helper function to assert scalar values with tolerance
     fn assert_scalar_approx_eq(actual: f32, expected: f32, tolerance: f64) {
@@ -540,5 +541,60 @@ mod tests {
         // Output 4: Reduce axes [0, 2] with keepdims -> [1, 3, 1]
         let expected4 = TensorData::from([[[false], [true], [true]]]);
         output4.to_data().assert_eq(&expected4, true);
+    }
+    #[test]
+    fn reduce_runtime_axes() {
+        // Opset 18 passes `axes` as an input. Here it is a graph input, so its value is
+        // only known at run time and must not be mistaken for "no axes given" (#459).
+        let device = Default::default();
+        let model: reduce_runtime_axes::Model = reduce_runtime_axes::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/reduce_runtime_axes.bpk"),
+            &device,
+        );
+
+        let data = Tensor::<3>::from_floats(
+            [
+                [
+                    [0.0, 1.0, 2.0, 3.0],
+                    [4.0, 5.0, 6.0, 7.0],
+                    [8.0, 9.0, 10.0, 11.0],
+                ],
+                [
+                    [12.0, 13.0, 14.0, 15.0],
+                    [16.0, 17.0, 18.0, 19.0],
+                    [20.0, 21.0, 22.0, 23.0],
+                ],
+            ],
+            &device,
+        );
+        // -2 on a rank-3 input names dimension 1, so the negative-axis path is resolved
+        // at run time too.
+        let axes = Tensor::<1, Int>::from_ints([-2], &device);
+        let axes2 = Tensor::<1, Int>::from_ints([0, 2], &device);
+        let empty_axes = Tensor::<1, Int>::from_data(
+            TensorData::new(alloc::vec::Vec::<i64>::new(), [0]),
+            &device,
+        );
+
+        let (sum_keepdims, mean_no_keepdims, max_keepdims, sum_noop) =
+            model.forward(data.clone(), axes, axes2, empty_axes);
+
+        sum_keepdims.to_data().assert_eq(
+            &TensorData::from([[[12.0f32, 15.0, 18.0, 21.0]], [[48.0, 51.0, 54.0, 57.0]]]),
+            true,
+        );
+
+        // keepdims=0 drops both named dimensions: rank 3 - 2 axes = rank 1.
+        mean_no_keepdims
+            .to_data()
+            .assert_eq(&TensorData::from([7.5f32, 11.5, 15.5]), true);
+
+        max_keepdims.to_data().assert_eq(
+            &TensorData::from([[[8.0f32, 9.0, 10.0, 11.0]], [[20.0, 21.0, 22.0, 23.0]]]),
+            true,
+        );
+
+        // noop_with_empty_axes=1 makes an empty axes list an identity.
+        sum_noop.to_data().assert_eq(&data.to_data(), true);
     }
 }

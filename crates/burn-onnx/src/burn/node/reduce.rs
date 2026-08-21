@@ -14,6 +14,16 @@ pub enum ReductionType {
     SumSquare,
 }
 
+/// The axes a reduction runs over.
+#[derive(Clone)]
+enum Axes {
+    /// Known at build time. An empty list means every dimension.
+    Static(Vec<usize>),
+    /// Supplied as a runtime input; the token stream names a `Vec<i64>` binding
+    /// holding the axes read from that input.
+    Runtime(TokenStream),
+}
+
 impl ReductionType {
     /// Generate the code for a reduction operation along all dimensions.
     fn try_forward_reduce(&self, input: TokenStream) -> Option<TokenStream> {
@@ -36,6 +46,41 @@ impl ReductionType {
             ReductionType::Prod => quote! { #input.prod_dim(#dim) },
             ReductionType::Mean => quote! { #input.mean_dim(#dim) },
             _ => panic!("Unsupported reduction type {:?}", self),
+        }
+    }
+
+    /// Generate the code for a reduction over several dimensions at once, keeping the
+    /// reduced dimensions as size 1.
+    fn forward_reduce_by_dims(&self, input: TokenStream, dims: TokenStream) -> TokenStream {
+        match self {
+            ReductionType::Min => quote! { #input.min_dims(&#dims) },
+            ReductionType::Max => quote! { #input.max_dims(&#dims) },
+            ReductionType::Sum => quote! { #input.sum_dims(&#dims) },
+            ReductionType::Prod => quote! { #input.prod_dims(&#dims) },
+            ReductionType::Mean => quote! { #input.mean_dims(&#dims) },
+            _ => panic!("Unsupported reduction type {:?}", self),
+        }
+    }
+
+    /// Reduce along axes that are only known at run time.
+    ///
+    /// Burn's `*_dims` and `squeeze_dims` take the axes as a runtime slice and wrap
+    /// negative entries themselves, so only the output *rank* has to be static.
+    fn reduce_by_runtime_dims(
+        &self,
+        input: TokenStream,
+        axes: &TokenStream,
+        keepdims: bool,
+        output_rank: usize,
+    ) -> TokenStream {
+        let reduced = self.forward_reduce_by_dims(input, axes.clone());
+
+        // `output_rank == 0` means the result is a scalar, which the caller reshapes;
+        // squeezing every dimension away here would leave a rank Burn cannot express.
+        if keepdims || output_rank == 0 {
+            reduced
+        } else {
+            quote! { #reduced.squeeze_dims::<#output_rank>(&#axes) }
         }
     }
 
@@ -73,11 +118,18 @@ impl ReductionType {
     fn forward_reduce(
         &self,
         input: TokenStream,
-        mut dims: Vec<usize>,
+        axes: &Axes,
         keepdims: bool,
         input_rank: usize,
         output_rank: usize,
     ) -> TokenStream {
+        let dims = match axes {
+            Axes::Runtime(axes) => {
+                return self.reduce_by_runtime_dims(input, axes, keepdims, output_rank);
+            }
+            Axes::Static(dims) => dims,
+        };
+
         if dims.is_empty() {
             if let Some(reduced_input) = self.try_forward_reduce(input.clone()) {
                 // Reducing along all dimensions
@@ -88,12 +140,41 @@ impl ReductionType {
                 }
             } else {
                 // Reducing along all specific dimensions
-                dims = (0..input_rank).collect();
-                self.reduce_by_dims(input, dims, keepdims, output_rank)
+                self.reduce_by_dims(input, (0..input_rank).collect(), keepdims, output_rank)
             }
         } else {
             // Reducing along specific dimensions
-            self.reduce_by_dims(input, dims, keepdims, output_rank)
+            self.reduce_by_dims(input, dims.clone(), keepdims, output_rank)
+        }
+    }
+}
+
+/// Drop the reduced axes from a result that was computed with `keepdims` semantics.
+///
+/// A reduction whose intermediates have to broadcast back over the input (LogSumExp)
+/// must keep its rank while it computes, and lose the reduced dimensions exactly once
+/// at the end.
+fn squeeze_reduced_axes(
+    expr: TokenStream,
+    axes: &Axes,
+    input_rank: usize,
+    output_rank: usize,
+) -> TokenStream {
+    // `output_rank == 0` is a scalar result, which the caller reshapes.
+    if output_rank == 0 {
+        return expr;
+    }
+
+    match axes {
+        Axes::Runtime(axes) => quote! { #expr.squeeze_dims::<#output_rank>(&#axes) },
+        Axes::Static(dims) => {
+            let dims = if dims.is_empty() {
+                (0..input_rank).collect::<Vec<_>>()
+            } else {
+                dims.clone()
+            };
+            let dims = dims.to_tokens();
+            quote! { #expr.squeeze_dims::<#output_rank>(&#dims) }
         }
     }
 }
@@ -122,19 +203,55 @@ macro_rules! impl_reduce_node {
                     _ => panic!("Reduce node input must be a tensor"),
                 };
 
-                // Get output rank
+                // Get output rank. Scalar outputs reduce to rank 0 here and are given
+                // their final shape by `output_expr` below, so the reduction itself must
+                // not try to squeeze down to a rank Burn cannot express.
                 let output_rank = match &output_arg.ty {
                     onnx_ir::ir::ArgType::Tensor(tensor) => tensor.rank,
-                    onnx_ir::ir::ArgType::ScalarTensor(_) => 1,
-                    onnx_ir::ir::ArgType::ScalarNative(_) => 0,
+                    onnx_ir::ir::ArgType::ScalarTensor(_)
+                    | onnx_ir::ir::ArgType::ScalarNative(_) => 0,
                     _ => panic!("Reduce node output must be tensor or scalar"),
                 };
 
                 let input = scope.arg(input_arg);
                 let output = arg_to_ident(output_arg);
 
-                let dims = self.config.dims.clone();
                 let keepdims = self.config.keepdims;
+
+                // ONNX: with `noop_with_empty_axes` set, an empty `axes` is an identity
+                // rather than a full reduction.
+                if self.config.noop_with_empty_axes
+                    && self.config.dims.as_ref().is_some_and(|dims| dims.is_empty())
+                {
+                    return quote! { let #output = #input; };
+                }
+
+                // `dims` is `None` when `axes` arrives as a runtime input, which codegen
+                // reads into a local before handing it to Burn's `*_dims` methods.
+                let (axes, axes_binding) = match &self.config.dims {
+                    Some(dims) => (Axes::Static(dims.clone()), quote! {}),
+                    None => {
+                        let axes_arg = self
+                            .inputs
+                            .get(1)
+                            .expect("Reduce node without static axes must have an axes input");
+                        let axes_expr = match &axes_arg.ty {
+                            onnx_ir::ir::ArgType::Tensor(_) => {
+                                let axes_input = scope.arg(axes_arg);
+                                quote! { #axes_input.to_data().iter::<i64>().collect() }
+                            }
+                            onnx_ir::ir::ArgType::Shape(_) => {
+                                let axes_input = arg_to_ident(axes_arg);
+                                quote! { #axes_input.to_vec() }
+                            }
+                            ty => panic!("Reduce axes input must be a rank-1 tensor or shape, got {ty:?}"),
+                        };
+                        (
+                            Axes::Runtime(quote! { reduce_axes }),
+                            quote! { let reduce_axes: alloc::vec::Vec<i64> = #axes_expr; },
+                        )
+                    }
+                };
 
                 // For boolean tensors with Min/Max reduction, use all()/any()
                 if is_bool && matches!($reduction_type, ReductionType::Min | ReductionType::Max) {
@@ -144,18 +261,36 @@ macro_rules! impl_reduce_node {
                         _ => unreachable!(),
                     };
 
-                    let reduced_input = if dims.is_empty() {
-                        // Reduce all dimensions
-                        quote! { #input.#bool_reduction_all() }
-                    } else {
-                        // Reduce along specific dimensions
-                        dims.iter().fold(input.clone(), |tokens, dim| {
-                            quote! { #tokens.#bool_reduction_dim(#dim) }
-                        })
+                    // Burn has no `all_dims`/`any_dims`, so runtime axes fold in the
+                    // generated code instead of at build time.
+                    let (reduced_input, squeeze_dims) = match &axes {
+                        Axes::Runtime(axes) => (
+                            quote! {
+                                #axes.iter().fold(#input, |tensor, axis| {
+                                    tensor.#bool_reduction_dim(*axis)
+                                })
+                            },
+                            axes.clone(),
+                        ),
+                        Axes::Static(dims) if dims.is_empty() => (
+                            // Reduce all dimensions
+                            quote! { #input.#bool_reduction_all() },
+                            dims.to_tokens(),
+                        ),
+                        Axes::Static(dims) => (
+                            // Reduce along specific dimensions
+                            dims.iter().fold(input.clone(), |tokens, dim| {
+                                quote! { #tokens.#bool_reduction_dim(#dim) }
+                            }),
+                            dims.to_tokens(),
+                        ),
                     };
 
+                    let reduces_everything =
+                        matches!(&axes, Axes::Static(dims) if dims.is_empty());
+
                     let final_output = if keepdims {
-                        if dims.is_empty() {
+                        if reduces_everything {
                             quote! { #reduced_input.expand([1; #output_rank]) }
                         } else {
                             reduced_input
@@ -167,21 +302,21 @@ macro_rules! impl_reduce_node {
                         reduced_input
                     } else {
                         // Need to squeeze dimensions with explicit rank for type inference
-                        let dims_to_squeeze = dims.to_tokens();
-                        quote! { #reduced_input.squeeze_dims::<#output_rank>(&#dims_to_squeeze) }
+                        quote! { #reduced_input.squeeze_dims::<#output_rank>(&#squeeze_dims) }
                     };
 
                     return match &output_arg.ty {
                         onnx_ir::ir::ArgType::ScalarNative(_) => {
                             quote! {
                                 let #output = {
+                                    #axes_binding
                                     #final_output.into_scalar::<bool>()
                                 };
                             }
                         }
                         _ => {
                             quote! {
-                                let #output = #final_output;
+                                let #output = { #axes_binding #final_output };
                             }
                         }
                     };
@@ -192,7 +327,7 @@ macro_rules! impl_reduce_node {
                         let input_square = quote! { #input.square() };
                         ReductionType::Sum.forward_reduce(
                             input_square,
-                            dims.clone(),
+                            &axes,
                             keepdims,
                             input_rank,
                             output_rank,
@@ -202,7 +337,7 @@ macro_rules! impl_reduce_node {
                         let input_abs = quote! { #input.abs() };
                         ReductionType::Sum.forward_reduce(
                             input_abs,
-                            dims.clone(),
+                            &axes,
                             keepdims,
                             input_rank,
                             output_rank,
@@ -212,7 +347,7 @@ macro_rules! impl_reduce_node {
                         let input_square = quote! { #input.square() };
                         let input_square_reduced = ReductionType::Sum.forward_reduce(
                             input_square,
-                            dims.clone(),
+                            &axes,
                             keepdims,
                             input_rank,
                             output_rank,
@@ -244,7 +379,7 @@ macro_rules! impl_reduce_node {
                     ReductionType::LogSum => {
                         let input_reduced = ReductionType::Sum.forward_reduce(
                             input.clone(),
-                            dims.clone(),
+                            &axes,
                             keepdims,
                             input_rank,
                             output_rank,
@@ -289,21 +424,35 @@ macro_rules! impl_reduce_node {
                             _ => panic!("Reduce node input must be a tensor"),
                         };
 
+                        // The running max has to keep its rank so it broadcasts back
+                        // over the input, so both intermediate reductions run with
+                        // keepdims and the reduced axes are dropped once at the end.
                         let input_max_reduced = ReductionType::Max.forward_reduce(
                             quote! { input_double.clone() },
-                            dims.clone(),
-                            keepdims,
+                            &axes,
+                            true,
                             input_rank,
-                            output_rank,
+                            input_rank,
                         );
 
                         let exp_reduced = ReductionType::Sum.forward_reduce(
                             quote! { input_exp_reduced },
-                            dims.clone(),
-                            keepdims,
+                            &axes,
+                            true,
                             input_rank,
-                            output_rank,
+                            input_rank,
                         );
+
+                        let combined = if keepdims {
+                            quote! { (input_max_reduced + exp_sum_reduced.log()) }
+                        } else {
+                            squeeze_reduced_axes(
+                                quote! { (input_max_reduced + exp_sum_reduced.log()) },
+                                &axes,
+                                input_rank,
+                                output_rank,
+                            )
+                        };
 
                         let input_reduced = quote! {
                             let input_dtype = #input.dtype();
@@ -312,7 +461,7 @@ macro_rules! impl_reduce_node {
                             let input_max_reduced = #input_max_reduced;
                             let input_exp_reduced = (input_double - input_max_reduced.clone().expand(input_shape)).exp();
                             let exp_sum_reduced = #exp_reduced;
-                            (input_max_reduced + exp_sum_reduced.log())
+                            #combined
                         };
 
                         match &input_arg.ty {
@@ -335,7 +484,7 @@ macro_rules! impl_reduce_node {
                     }
                     _ => $reduction_type.forward_reduce(
                         input,
-                        dims.clone(),
+                        &axes,
                         keepdims,
                         input_rank,
                         output_rank,
@@ -355,7 +504,7 @@ macro_rules! impl_reduce_node {
                     _ => panic!("Reduce node output must be tensor or scalar"),
                 };
 
-                quote! { let #output = { #output_expr }; }
+                quote! { let #output = { #axes_binding #output_expr }; }
             }
 
             fn register_imports(&self, _imports: &mut BurnImports) {
@@ -406,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_reduce_max_keepdims() {
-        let config = ReduceConfig::new(vec![1], true);
+        let config = ReduceConfig::new(Some(vec![1]), true, false);
         let node = create_reduce_max_node("reduce_max1", config);
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
@@ -419,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_reduce_mean_keepdims() {
-        let config = ReduceConfig::new(vec![1], true);
+        let config = ReduceConfig::new(Some(vec![1]), true, false);
         let node = ReduceMeanNodeBuilder::new("reduce_mean1")
             .input_tensor("input", 3, DType::F32)
             .output_tensor("output", 3, DType::F32)
@@ -436,7 +585,7 @@ mod tests {
 
     #[test]
     fn test_reduce_sum_keepdims() {
-        let config = ReduceConfig::new(vec![1], true);
+        let config = ReduceConfig::new(Some(vec![1]), true, false);
         let node = ReduceSumNodeBuilder::new("reduce_sum1")
             .input_tensor("input", 3, DType::F32)
             .output_tensor("output", 3, DType::F32)
@@ -453,7 +602,7 @@ mod tests {
 
     #[test]
     fn test_reduce_max_multiple_dims() {
-        let config = ReduceConfig::new(vec![1, 2], true);
+        let config = ReduceConfig::new(Some(vec![1, 2]), true, false);
         let node = create_reduce_max_node("reduce_max1", config);
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
@@ -466,7 +615,7 @@ mod tests {
 
     #[test]
     fn test_reduce_sum_multiple_dims_no_keepdims() {
-        let config = ReduceConfig::new(vec![1, 2], false);
+        let config = ReduceConfig::new(Some(vec![1, 2]), false, false);
         let node = ReduceSumNodeBuilder::new("reduce_sum1")
             .input_tensor("input", 3, DType::F32)
             .output_tensor("output", 1, DType::F32)
@@ -478,6 +627,87 @@ mod tests {
             let output = {
                 input.sum_dim(1usize).sum_dim(2usize).squeeze_dims::<1usize>(&[1, 2])
             };
+            output
+        }
+        ");
+    }
+    #[test]
+    fn test_reduce_sum_runtime_axes_keepdims() {
+        // Opset 18 moved `axes` to an input; when it is not a constant the axes are only
+        // known at run time (#459).
+        let config = ReduceConfig::new(None, true, false);
+        let node = ReduceSumNodeBuilder::new("reduce_sum1")
+            .input_tensor("input", 3, DType::F32)
+            .input_tensor("axes", 1, DType::I64)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>, axes: Tensor<1, Int>) -> Tensor<3> {
+            let output = {
+                let reduce_axes: alloc::vec::Vec<i64> = axes.to_data().iter::<i64>().collect();
+                input.sum_dims(&reduce_axes)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_reduce_mean_runtime_axes_no_keepdims() {
+        let config = ReduceConfig::new(None, false, false);
+        let node = ReduceMeanNodeBuilder::new("reduce_mean1")
+            .input_tensor("input", 3, DType::F32)
+            .input_tensor("axes", 1, DType::I64)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>, axes: Tensor<1, Int>) -> Tensor<2> {
+            let output = {
+                let reduce_axes: alloc::vec::Vec<i64> = axes.to_data().iter::<i64>().collect();
+                input.mean_dims(&reduce_axes).squeeze_dims::<2usize>(&reduce_axes)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_reduce_sum_noop_with_empty_axes() {
+        // `noop_with_empty_axes` turns an empty axes list into an identity.
+        let config = ReduceConfig::new(Some(vec![]), true, true);
+        let node = ReduceSumNodeBuilder::new("reduce_sum1")
+            .input_tensor("input", 3, DType::F32)
+            .input_tensor("axes", 1, DType::I64)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>, axes: Tensor<1, Int>) -> Tensor<3> {
+            let output = input;
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_reduce_sum_all_dims_named_no_keepdims() {
+        // Naming every axis with keepdims=0 yields a scalar, which must not be reached
+        // by squeezing the tensor down to rank 0.
+        let config = ReduceConfig::new(Some(vec![0, 1, 2]), false, false);
+        let node = ReduceSumNodeBuilder::new("reduce_sum1")
+            .input_tensor("input", 3, DType::F32)
+            .output_scalar_tensor("output", DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>) -> Tensor<1> {
+            let output = { input.sum_dim(0usize).sum_dim(1usize).sum_dim(2usize).reshape([1]) };
             output
         }
         ");

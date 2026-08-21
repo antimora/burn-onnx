@@ -448,6 +448,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/reduce/reduce_l2.onnx")
         .input("tests/reduce/reduce_log_sum.onnx")
         .input("tests/reduce/reduce_log_sum_exp.onnx")
+        .input("tests/reduce/reduce_runtime_axes.onnx")
         .input("tests/relu/relu.onnx")
         .input("tests/reshape/reshape.onnx")
         .input("tests/reshape/reshape_with_1d_tensor.onnx")

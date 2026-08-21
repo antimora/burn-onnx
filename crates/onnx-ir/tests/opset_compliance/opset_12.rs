@@ -232,10 +232,13 @@ fn reduce_max(graph: &OnnxGraph) {
         reducemax1_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: [
-                1,
-            ],
+            dims: Some(
+                [
+                    1,
+                ],
+            ),
             keepdims: true,
+            noop_with_empty_axes: false,
         }
     "#);
 }
@@ -251,10 +254,13 @@ fn reduce_min(graph: &OnnxGraph) {
         reducemin1_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: [
-                1,
-            ],
+            dims: Some(
+                [
+                    1,
+                ],
+            ),
             keepdims: true,
+            noop_with_empty_axes: false,
         }
     "#);
 }

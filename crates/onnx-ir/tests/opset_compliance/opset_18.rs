@@ -139,10 +139,13 @@ fn reduce_l1(graph: &OnnxGraph) {
         reducel11_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: [
-                1,
-            ],
+            dims: Some(
+                [
+                    1,
+                ],
+            ),
             keepdims: true,
+            noop_with_empty_axes: false,
         }
     "#);
 }
@@ -159,10 +162,13 @@ fn reduce_l2(graph: &OnnxGraph) {
         reducel21_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: [
-                1,
-            ],
+            dims: Some(
+                [
+                    1,
+                ],
+            ),
             keepdims: true,
+            noop_with_empty_axes: false,
         }
     "#);
 }
@@ -179,10 +185,13 @@ fn reduce_log_sum(graph: &OnnxGraph) {
         reducelogsum1_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: [
-                1,
-            ],
+            dims: Some(
+                [
+                    1,
+                ],
+            ),
             keepdims: true,
+            noop_with_empty_axes: false,
         }
     "#);
 }
@@ -199,10 +208,13 @@ fn reduce_log_sum_exp(graph: &OnnxGraph) {
         reducelogsumexp1_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: [
-                1,
-            ],
+            dims: Some(
+                [
+                    1,
+                ],
+            ),
             keepdims: true,
+            noop_with_empty_axes: false,
         }
     "#);
 }
@@ -219,10 +231,13 @@ fn reduce_max(graph: &OnnxGraph) {
         reducemax1_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: [
-                1,
-            ],
+            dims: Some(
+                [
+                    1,
+                ],
+            ),
             keepdims: true,
+            noop_with_empty_axes: false,
         }
     "#);
 }
@@ -239,10 +254,13 @@ fn reduce_mean(graph: &OnnxGraph) {
         reducemean1_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: [
-                1,
-            ],
+            dims: Some(
+                [
+                    1,
+                ],
+            ),
             keepdims: true,
+            noop_with_empty_axes: false,
         }
     "#);
 }
@@ -259,10 +277,13 @@ fn reduce_min(graph: &OnnxGraph) {
         reducemin1_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: [
-                1,
-            ],
+            dims: Some(
+                [
+                    1,
+                ],
+            ),
             keepdims: true,
+            noop_with_empty_axes: false,
         }
     "#);
 }
@@ -279,10 +300,13 @@ fn reduce_prod(graph: &OnnxGraph) {
         reduceprod1_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: [
-                1,
-            ],
+            dims: Some(
+                [
+                    1,
+                ],
+            ),
             keepdims: true,
+            noop_with_empty_axes: false,
         }
     "#);
 }
@@ -299,10 +323,13 @@ fn reduce_sum_square(graph: &OnnxGraph) {
         reducesumsquare1_out1: F32[2, 1, 4]
       Config:
         ReduceConfig {
-            dims: [
-                1,
-            ],
+            dims: Some(
+                [
+                    1,
+                ],
+            ),
             keepdims: true,
+            noop_with_empty_axes: false,
         }
     "#);
 }
