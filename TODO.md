@@ -285,7 +285,7 @@ those reject the model with a clear error instead of accepting it and computing 
   on the backend people ship on outweighs op-count wins. Root cause probably belongs upstream in
   burn, but it surfaces here.
 - **Resize shares every gap Upsample just closed (surfaced by the item 1 review).** None of it is
-  new and none of it blocked item 1, but it is all in `crates/burn-onnx/src/burn/node/resize.rs`
+  new and none of it blocked item 1, but it is all in `crates/burn-onnx/src/import/burn/node/resize.rs`
   and its processor:
   - Accepts `asymmetric` linear and computes half-pixel values (#311 already tracks
     `test_resize_upsample_scales_cubic_asymmetric` as `fail-compare`).

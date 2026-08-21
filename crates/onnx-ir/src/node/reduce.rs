@@ -392,7 +392,7 @@ impl NodeProcessor for ReduceProcessor {
         // when the input's shape already proves the list is empty.
         let static_axes: Vec<i64> = match node.get_input(1) {
             Some(axes_arg) => match axes_arg.value() {
-                Some(value) => value.to_vec::<i64>().map_err(|e| {
+                Some(value) => value.try_into_vec::<i64>().map_err(|e| {
                     ProcessError::Custom(format!("Failed to read 'axes' of '{}': {e}", node.name))
                 })?,
                 None if runtime_axes_len(node) == Some(0) => Vec::new(),
