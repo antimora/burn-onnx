@@ -409,9 +409,7 @@ mod tests {
         let result = processor.infer_types(&mut node, 16, &prefs);
 
         match result {
-            Err(ProcessError::Custom(msg)) => {
-                assert!(msg.contains("1D tensor"), "unexpected message: {msg}");
-            }
+            Err(ProcessError::Custom(msg)) => assert_eq!(msg, SHAPE_NOT_1D),
             other => panic!("Expected ProcessError::Custom, got {other:?}"),
         }
     }
@@ -426,7 +424,10 @@ mod tests {
         let prefs = OutputPreferences::new();
         let result = processor.infer_types(&mut node, 16, &prefs);
 
-        assert!(matches!(result, Err(ProcessError::Custom(_))));
+        match result {
+            Err(ProcessError::Custom(msg)) => assert_eq!(msg, SHAPE_NOT_1D),
+            other => panic!("Expected ProcessError::Custom, got {other:?}"),
+        }
     }
 
     #[test]
