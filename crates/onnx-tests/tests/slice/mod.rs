@@ -25,7 +25,9 @@ include_models!(
     slice_shape_with_steps,
     slice_empty,
     slice_min_sentinel,
-    slice_reverse_dynamic
+    slice_reverse_dynamic,
+    slice_reverse_steps,
+    slice_shape_reverse
 );
 
 #[cfg(test)]
@@ -622,8 +624,9 @@ mod tests {
     #[test]
     fn slice_reverse_dynamic() {
         // Reverse on an axis with no static size: the bounds are resolved from
-        // the tensor's own dims at runtime. Same model run at two lengths to
-        // make sure nothing was baked in at codegen time.
+        // the tensor's own dims at runtime. Same model run at three lengths to
+        // make sure nothing was baked in at codegen time. The second output
+        // pins the bounded-`ends` branch and a step of -2.
         let model: slice_reverse_dynamic::Model = slice_reverse_dynamic::Model::default();
         let device = Default::default();
 
@@ -631,14 +634,103 @@ mod tests {
             [[0., 1., 2.], [3., 4., 5.], [6., 7., 8.], [9., 10., 11.]],
             &device,
         );
-        let output = model.forward(input);
+        let (output, strided) = model.forward(input);
         let expected =
             TensorData::from([[9f32, 10., 11.], [6., 7., 8.], [3., 4., 5.], [0., 1., 2.]]);
         output.to_data().assert_eq(&expected, true);
+        // x[-1:1:-2] over 4 rows -> row 3 only
+        strided
+            .to_data()
+            .assert_eq(&TensorData::from([[9f32, 10., 11.]]), true);
 
         let shorter = Tensor::<2>::from_floats([[0., 1., 2.], [3., 4., 5.]], &device);
-        let output = model.forward(shorter);
+        let (output, strided) = model.forward(shorter);
         let expected = TensorData::from([[3f32, 4., 5.], [0., 1., 2.]]);
         output.to_data().assert_eq(&expected, true);
+        assert_eq!(strided.dims(), [0, 3]);
+
+        // A third size, where the stride does not divide the axis evenly.
+        let longer = Tensor::<1>::from_data(
+            TensorData::from(
+                (0..21)
+                    .map(|v| v as f32)
+                    .collect::<vec::Vec<f32>>()
+                    .as_slice(),
+            ),
+            &device,
+        )
+        .reshape([7, 3]);
+        let (_, strided) = model.forward(longer);
+        // rows 6, 4, 2
+        strided.to_data().assert_eq(
+            &TensorData::from([[18f32, 19., 20.], [12., 13., 14.], [6., 7., 8.]]),
+            true,
+        );
+    }
+
+    #[test]
+    fn slice_reverse_steps() {
+        // Reverse slicing with |step| > 1. Burn anchors a reverse traversal at
+        // the top of the range and walks down, so a range length that is not a
+        // multiple of the step is what would expose a mis-aligned stride.
+        let model: slice_reverse_steps::Model = slice_reverse_steps::Model::default();
+        let device = Default::default();
+
+        let input = Tensor::<1>::from_data(
+            TensorData::from(
+                (0..48)
+                    .map(|v| v as f32)
+                    .collect::<vec::Vec<f32>>()
+                    .as_slice(),
+            ),
+            &device,
+        )
+        .reshape([8, 6]);
+
+        let (step3, step2, empty) = model.forward(input);
+
+        // x[6::-3] -> rows 6, 3, 0
+        step3.to_data().assert_eq(
+            &TensorData::from([
+                [36f32, 37., 38., 39., 40., 41.],
+                [18., 19., 20., 21., 22., 23.],
+                [0., 1., 2., 3., 4., 5.],
+            ]),
+            true,
+        );
+
+        // x[:, 5:1:-2] -> cols 5, 3
+        step2.to_data().assert_eq(
+            &TensorData::from([
+                [5f32, 3.],
+                [11., 9.],
+                [17., 15.],
+                [23., 21.],
+                [29., 27.],
+                [35., 33.],
+                [41., 39.],
+                [47., 45.],
+            ]),
+            true,
+        );
+
+        // x[0:8:-1] selects nothing under ONNX
+        assert_eq!(empty.dims(), [0, 6]);
+    }
+
+    #[test]
+    fn slice_shape_reverse() {
+        // Reverse slicing a Shape value. The generated code builds a
+        // fixed-size array whose length comes from onnx-ir, so a bounds
+        // disagreement shows up as a panic rather than a wrong value.
+        let model: slice_shape_reverse::Model = slice_shape_reverse::Model::default();
+        let device = Default::default();
+
+        let input = Tensor::<6>::ones([2, 3, 4, 5, 6, 7], &device);
+        let (reversed, strided) = model.forward(input);
+
+        assert_eq!(reversed, [7i64, 6, 5, 4, 3, 2]);
+        // shape[5::-2] -> entries 5, 3, 1
+        assert_eq!(strided, [7i64, 5, 3]);
     }
 }

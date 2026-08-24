@@ -69,8 +69,9 @@ fn generate_tensor_slice(
             };
 
             // (axis, index into starts/ends/steps), in ONNX order. Axes are
-            // already normalized to positive values by onnx-ir; with no `axes`
-            // input ONNX slices the leading dimensions.
+            // already normalized to positive values by onnx-ir. Falling back to
+            // the leading dimensions is the ONNX default for an absent `axes`
+            // input; a runtime `axes` lands here too and is not yet supported.
             let axis_params = (0..starts.len().min(ends.len()))
                 .filter_map(|i| match axes {
                     Some(axes) => axes.get(i).map(|&axis| (axis as usize, i)),
@@ -490,8 +491,10 @@ fn generate_tensor_slice(
 /// codegen time; those bounds have to be resolved from the tensor's own dims at
 /// runtime (see `runtime_reverse_range`).
 ///
-/// Forward steps carry over unchanged: both ONNX and Burn read `start..end` as a
-/// half-open range, resolve negative bounds against the dimension size, and clamp.
+/// Forward steps mostly carry over as written: both ONNX and Burn read
+/// `start..end` as a half-open range, resolve negative bounds against the
+/// dimension size, and clamp the same way, so the bounds can stay symbolic and
+/// work on an axis of unknown size. Only the sentinels need translating.
 ///
 /// Reverse steps do not. ONNX walks backwards from `start` and stops before
 /// `end`, whereas Burn always takes a forward `lo..hi` range and lets the sign of
@@ -508,13 +511,17 @@ fn axis_range(start: i64, end: i64, step: i64, dim: Option<usize>) -> Option<Tok
         return Some(quote! { #lo..#hi;#step });
     }
 
-    // i64::MIN clamps to 0, so a forward step can never select anything.
+    // i64::MIN clamps to 0, so a forward step can never select anything. This
+    // has to be intercepted rather than passed through: Burn resolves a negative
+    // bound as `size as isize + index`, which overflows on i64::MIN.
     if end == i64::MIN {
         return Some(quote! { 0..0 });
     }
 
     let start = start.to_tokens();
-    // i64::MAX means "to the end"; any other bound is a slice index, so i32.
+    // i64::MAX means "to the end". The bound below it is emitted as a bare
+    // literal, so an absurd `end` is rejected here rather than becoming
+    // generated code that does not compile.
     let end = if end == i64::MAX {
         quote! {}
     } else if end > i32::MAX as i64 {
@@ -532,8 +539,17 @@ fn axis_range(start: i64, end: i64, step: i64, dim: Option<usize>) -> Option<Tok
 }
 
 /// Burn `lo..hi` bounds for one ONNX `(start, end, step)` triple over a
-/// dimension of `dim`. Clamping absorbs both sentinels: `i64::MAX` lands on
-/// `dim` and `i64::MIN` on the low bound.
+/// dimension of `dim`.
+///
+/// Clamping absorbs each sentinel in its ONNX-blessed position: `i64::MAX` is
+/// the forward `end` and lands on `dim`; `i64::MIN` is the reverse `end` and
+/// lands on `-1`, becoming `lo = 0` after the shift. The `.min(hi)` / `.max(lo)`
+/// guards collapse the opposite pairings to an empty range.
+///
+/// Callers with a static `dim` only. `axis_range` routes just its reverse case
+/// here on purpose: a forward slice can hand Burn the raw ONNX bounds and let it
+/// clamp at runtime, so making it resolve `dim` too would push every forward
+/// slice on a dynamic axis into the runtime path for nothing.
 ///
 /// `generate_runtime_dim_slice` emits the reverse half of this arithmetic as a
 /// closure for axes sized only at runtime; keep the two in sync.
@@ -543,7 +559,7 @@ fn slice_bounds(start: i64, end: i64, step: i64, dim: i64) -> (usize, usize) {
     }
     let resolve = |v: i64| if v < 0 { v.saturating_add(dim) } else { v };
     let (lo, hi) = if step < 0 {
-        let hi = resolve(start).clamp(0, dim - 1) + 1;
+        let hi = resolve(start).clamp(-1, dim - 1) + 1;
         ((resolve(end).clamp(-1, dim - 1) + 1).min(hi), hi)
     } else {
         let lo = resolve(start).clamp(0, dim);
@@ -583,7 +599,7 @@ fn generate_runtime_dim_slice(
                 let dim = dim as i64;
                 let start = if start < 0 { start.saturating_add(dim) } else { start };
                 let end = if end < 0 { end.saturating_add(dim) } else { end };
-                let hi = start.clamp(0, dim - 1) + 1;
+                let hi = start.clamp(-1, dim - 1) + 1;
                 let lo = (end.clamp(-1, dim - 1) + 1).min(hi);
                 (lo as usize)..(hi as usize)
             };
@@ -592,8 +608,10 @@ fn generate_runtime_dim_slice(
     }
 }
 
-/// `to_tokens` emits an unsuffixed literal, which Rust will not accept for
-/// `i64::MIN`; name the constant instead.
+/// Spell the sentinel as `i64::MIN` rather than the 19-digit literal
+/// `to_tokens` would emit, so the generated code names it. (The literal does
+/// compile here, because the closure pins the parameter to `i64`; inside an
+/// `s![..]` range it would infer `i32` and be rejected.)
 fn i64_tokens(value: i64) -> TokenStream {
     if value == i64::MIN {
         quote! { i64::MIN }
@@ -1001,6 +1019,11 @@ mod tests {
         assert_eq!(slice_bounds(-2, -4, -1, 5), (2, 4));
         // Out-of-range bounds clamp instead of wrapping.
         assert_eq!(slice_bounds(99, i64::MIN, -1, 5), (0, 5));
+        // But a start below -dim begins before the first element, selecting
+        // nothing, rather than clamping up to index 0.
+        assert_eq!(slice_bounds(-100, i64::MIN, -1, 5), (0, 0));
+        assert_eq!(slice_bounds(-6, i64::MIN, -1, 5), (0, 0));
+        assert_eq!(slice_bounds(-5, i64::MIN, -1, 5), (0, 1));
         // ONNX stops before `ends`, so this selects nothing.
         assert_eq!(slice_bounds(0, 5, -1, 5), (1, 1));
 
@@ -1164,7 +1187,7 @@ mod tests {
                     let dim = dim as i64;
                     let start = if start < 0 { start.saturating_add(dim) } else { start };
                     let end = if end < 0 { end.saturating_add(dim) } else { end };
-                    let hi = start.clamp(0, dim - 1) + 1;
+                    let hi = start.clamp(-1, dim - 1) + 1;
                     let lo = (end.clamp(-1, dim - 1) + 1).min(hi);
                     (lo as usize)..(hi as usize)
                 };

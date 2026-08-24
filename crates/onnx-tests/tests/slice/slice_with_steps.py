@@ -123,9 +123,20 @@ def main() -> None:
     # Save the model to a file
     onnx.save(model_def, "slice_with_steps.onnx")
 
-    test_input = np.arange(10 * 10 * 12, dtype=np.float32).reshape(10, 10, 12)
+    # Match the input the Rust test builds, so the printed values are the
+    # ground truth its assertions are checked against.
+    test_input = np.array(
+        [
+            [[i * 100 + j * 10 + k for k in range(12)] for j in range(10)]
+            for i in range(10)
+        ],
+        dtype=np.float32,
+    )
     result = ReferenceEvaluator(model_def).run(None, {"input_tensor": test_input})[0]
     print(f"Output shape: {result.shape}")
+    print(f"result[0, 0] = {result[0, 0]}")
+    print(f"result[0, 1, 0] = {result[0, 1, 0]}")
+    print(f"result[1, 0, 0] = {result[1, 0, 0]}")
 
 
 if __name__ == "__main__":

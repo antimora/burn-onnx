@@ -88,9 +88,10 @@ fn calculate_dim_slice_output_len(start: i64, end: i64, step: i64, dim_size: usi
 
     // For step > 0, valid endpoints are [0, dim_len]: start at dim_len means
     // empty slice; end at dim_len means slice to the last element.
-    // For step < 0, start must reference a real index [0, dim_len-1] (we cannot
-    // begin iterating from past the end), and end ranges over [-1, dim_len-1]
-    // where -1 represents the conceptual position before the first element.
+    // For step < 0, both endpoints range over [-1, dim_len-1], where -1 is the
+    // conceptual position before the first element. A start that resolves below
+    // -1 begins there and so selects nothing, matching numpy and the ONNX
+    // reference evaluator.
     let (norm_start, norm_end) = if step > 0 {
         (
             normalize_index(start, 0, dim_len, dim_len),
@@ -98,7 +99,7 @@ fn calculate_dim_slice_output_len(start: i64, end: i64, step: i64, dim_size: usi
         )
     } else {
         (
-            normalize_index(start, 0, dim_len - 1, dim_len),
+            normalize_index(start, -1, dim_len - 1, dim_len),
             normalize_index(end, -1, dim_len - 1, dim_len),
         )
     };
@@ -1045,7 +1046,7 @@ mod tests {
     fn test_dim_slice_output_len_sentinels_and_extreme_steps() {
         // i64::MIN for `ends` with step < 0 means "past the first element":
         // adding dim_len keeps it far below zero, so it clamps to -1 and the
-        // whole axis is selected.
+        // whole axis is in range, with `step` then thinning it.
         assert_eq!(calculate_dim_slice_output_len(7, i64::MIN, -1, 8), 8);
         assert_eq!(calculate_dim_slice_output_len(-1, i64::MIN, -1, 8), 8);
         assert_eq!(calculate_dim_slice_output_len(7, i64::MIN, -3, 8), 3);
@@ -1056,6 +1057,14 @@ mod tests {
         // The opposite sentinel on each path selects nothing.
         assert_eq!(calculate_dim_slice_output_len(3, i64::MIN, 1, 8), 0);
         assert_eq!(calculate_dim_slice_output_len(3, i64::MAX, -1, 8), 0);
+
+        // A reverse start below -dim begins before the first element, so it
+        // selects nothing (numpy and the ONNX reference agree; the spec prose
+        // saying starts clamp into [0, dim-1] is misleading here).
+        assert_eq!(calculate_dim_slice_output_len(-100, i64::MIN, -1, 5), 0);
+        assert_eq!(calculate_dim_slice_output_len(-6, i64::MIN, -1, 5), 0);
+        assert_eq!(calculate_dim_slice_output_len(-5, i64::MIN, -1, 5), 1);
+        assert_eq!(calculate_dim_slice_output_len(99, i64::MIN, -1, 5), 5);
 
         // Steps come from the model unchecked, so the extremes must not
         // overflow while rounding the range length up.
