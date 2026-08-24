@@ -23,7 +23,9 @@ include_models!(
     slice_axes,
     slice_with_steps,
     slice_shape_with_steps,
-    slice_empty
+    slice_empty,
+    slice_min_sentinel,
+    slice_reverse_dynamic
 );
 
 #[cfg(test)]
@@ -582,5 +584,61 @@ mod tests {
 
         output_0.to_data().assert_eq(&expected_0, true);
         output_1.to_data().assert_eq(&expected_1, true);
+    }
+
+    #[test]
+    fn slice_min_sentinel() {
+        // Regression test for the ONNX INT64_MIN sentinel on `ends`.
+        //
+        // For step < 0, `ends = i64::MIN` means "past the first element", i.e.
+        // reverse all the way to index 0. Codegen used to emit the sentinel
+        // verbatim into the generated slice range.
+        //
+        // axis 0: starts=4, ends=i64::MIN, step=-1 -> full reverse (5 rows)
+        // axis 1: starts=2, ends=0,        step=-1 -> columns 2, 1
+        let model: slice_min_sentinel::Model = slice_min_sentinel::Model::default();
+        let device = Default::default();
+
+        let input = Tensor::<2>::from_floats(
+            [
+                [0., 1., 2.],
+                [3., 4., 5.],
+                [6., 7., 8.],
+                [9., 10., 11.],
+                [12., 13., 14.],
+            ],
+            &device,
+        );
+
+        let output = model.forward(input);
+
+        assert_eq!(output.dims(), [5, 2]);
+
+        let expected = TensorData::from([[14f32, 13.], [11., 10.], [8., 7.], [5., 4.], [2., 1.]]);
+
+        output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn slice_reverse_dynamic() {
+        // Reverse on an axis with no static size: the bounds are resolved from
+        // the tensor's own dims at runtime. Same model run at two lengths to
+        // make sure nothing was baked in at codegen time.
+        let model: slice_reverse_dynamic::Model = slice_reverse_dynamic::Model::default();
+        let device = Default::default();
+
+        let input = Tensor::<2>::from_floats(
+            [[0., 1., 2.], [3., 4., 5.], [6., 7., 8.], [9., 10., 11.]],
+            &device,
+        );
+        let output = model.forward(input);
+        let expected =
+            TensorData::from([[9f32, 10., 11.], [6., 7., 8.], [3., 4., 5.], [0., 1., 2.]]);
+        output.to_data().assert_eq(&expected, true);
+
+        let shorter = Tensor::<2>::from_floats([[0., 1., 2.], [3., 4., 5.]], &device);
+        let output = model.forward(shorter);
+        let expected = TensorData::from([[3f32, 4., 5.], [0., 1., 2.]]);
+        output.to_data().assert_eq(&expected, true);
     }
 }

@@ -3,18 +3,25 @@
 # /// script
 # dependencies = [
 #   "onnx==1.19.0",
+#   "numpy",
 # ]
 # ///
 
 # used to generate model: onnx-tests/tests/slice/slice_with_steps.onnx
 
+import numpy as np
 import onnx
 from onnx import helper, TensorProto
+from onnx.reference import ReferenceEvaluator
+
+# ONNX sentinel meaning "past the first element" for a reverse slice.
+INT64_MIN = -9223372036854775808
 
 
 def main() -> None:
     # Starts
-    starts_val = [0, 1, 0]
+    # dim2 walks backwards from the last index, so it starts at 11, not 0.
+    starts_val = [0, 1, 11]
     starts_tensor = helper.make_tensor(
         name="starts",
         data_type=TensorProto.INT64,
@@ -30,7 +37,9 @@ def main() -> None:
     )
 
     # Ends
-    ends_val = [10, 8, 12]
+    # For step < 0 ONNX stops *before* `ends`, so reaching index 0 needs the
+    # INT64_MIN sentinel; an ends of 12 would select nothing at all.
+    ends_val = [10, 8, INT64_MIN]
     ends_tensor = helper.make_tensor(
         name="ends",
         data_type=TensorProto.INT64,
@@ -109,8 +118,14 @@ def main() -> None:
     # Create the model
     model_def = helper.make_model(graph_def, producer_name="slice_with_steps")
 
+    onnx.checker.check_model(model_def)
+
     # Save the model to a file
     onnx.save(model_def, "slice_with_steps.onnx")
+
+    test_input = np.arange(10 * 10 * 12, dtype=np.float32).reshape(10, 10, 12)
+    result = ReferenceEvaluator(model_def).run(None, {"input_tensor": test_input})[0]
+    print(f"Output shape: {result.shape}")
 
 
 if __name__ == "__main__":
