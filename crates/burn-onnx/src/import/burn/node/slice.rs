@@ -62,43 +62,39 @@ fn generate_tensor_slice(
                 _ => panic!("Steps must be Static for static slice"),
             };
 
-            let static_shape = match &input_arg.ty {
-                ArgType::Tensor(t) => t.static_shape.clone(),
+            let static_shape = input_arg.ty.static_shape();
+            let axes = match &node.config.axes {
+                Some(onnx_ir::slice::SliceInput::Static(axes)) => Some(axes.as_slice()),
                 _ => None,
-            };
-            let dim_of = |axis: usize| -> Option<usize> {
-                static_shape
-                    .as_ref()
-                    .and_then(|shape| shape.get(axis).copied().flatten())
             };
 
             // (axis, index into starts/ends/steps), in ONNX order. Axes are
-            // already normalized to positive values by onnx-ir.
-            let limit = starts.len().min(ends.len());
-            let axis_params: Vec<(usize, usize)> =
-                if let Some(onnx_ir::slice::SliceInput::Static(ref axes)) = node.config.axes {
-                    (0..limit)
-                        .filter_map(|i| axes.get(i).map(|&axis| (axis as usize, i)))
-                        .filter(|&(axis, _)| axis < rank)
-                        .collect()
-                } else {
-                    // No axes provided - slice the leading dimensions
-                    (0..limit.min(rank)).map(|i| (i, i)).collect()
-                };
+            // already normalized to positive values by onnx-ir; with no `axes`
+            // input ONNX slices the leading dimensions.
+            let axis_params = (0..starts.len().min(ends.len()))
+                .filter_map(|i| match axes {
+                    Some(axes) => axes.get(i).map(|&axis| (axis as usize, i)),
+                    None => Some((i, i)),
+                })
+                .filter(|&(axis, _)| axis < rank);
 
-            let mut runtime_axes = Vec::new();
-            for &(axis, i) in &axis_params {
+            let mut needs_runtime_dims = false;
+            for (axis, i) in axis_params {
                 let step = *steps.get(i).expect("Step value missing for axis");
-                match axis_range(starts[i], ends[i], step, dim_of(axis)) {
-                    AxisRange::Resolved(tokens) => ranges[axis] = tokens,
-                    AxisRange::NeedsDim { start, end, step } => {
-                        runtime_axes.push((axis, start, end, step));
+                let dim = static_shape.and_then(|shape| shape.get(axis).copied().flatten());
+                match axis_range(starts[i], ends[i], step, dim) {
+                    Some(tokens) => ranges[axis] = tokens,
+                    // Reverse slice on an axis whose size is only known at
+                    // runtime: read the bounds off the tensor instead.
+                    None => {
+                        ranges[axis] = runtime_reverse_range(axis, starts[i], ends[i], step);
+                        needs_runtime_dims = true;
                     }
                 }
             }
 
-            if !runtime_axes.is_empty() {
-                return generate_runtime_dim_slice(&input, output, ranges, &runtime_axes);
+            if needs_runtime_dims {
+                return generate_runtime_dim_slice(&input, output, &ranges);
             }
         }
 
@@ -488,15 +484,11 @@ fn generate_tensor_slice(
     }
 }
 
-/// How a single axis of a static Slice maps onto a Burn `s!` range.
-enum AxisRange {
-    /// Fully determined at codegen time.
-    Resolved(TokenStream),
-    /// Reverse slice on an axis whose size is only known at runtime.
-    NeedsDim { start: i64, end: i64, step: i64 },
-}
-
 /// Translate one ONNX `(start, end, step)` triple into a Burn `s!` range.
+///
+/// Returns `None` for a reverse slice on an axis whose size is unknown at
+/// codegen time; those bounds have to be resolved from the tensor's own dims at
+/// runtime (see `runtime_reverse_range`).
 ///
 /// Forward steps carry over unchanged: both ONNX and Burn read `start..end` as a
 /// half-open range, resolve negative bounds against the dimension size, and clamp.
@@ -507,89 +499,77 @@ enum AxisRange {
 /// Lining them up needs `lo = end + 1` and `hi = start + 1` once both bounds are
 /// resolved against the dimension size, which is also what turns the ONNX
 /// `i64::MIN` "past the first element" sentinel into `lo = 0`.
-fn axis_range(start: i64, end: i64, step: i64, dim: Option<usize>) -> AxisRange {
+fn axis_range(start: i64, end: i64, step: i64, dim: Option<usize>) -> Option<TokenStream> {
     if step < 0 {
-        return match dim {
-            Some(dim) => {
-                let (lo, hi) = reverse_slice_bounds(start, end, dim as i64);
-                let lo = Literal::usize_unsuffixed(lo);
-                let hi = Literal::usize_unsuffixed(hi);
-                let step = step.to_tokens();
-                AxisRange::Resolved(quote! { #lo..#hi;#step })
-            }
-            None => AxisRange::NeedsDim { start, end, step },
-        };
-    }
-
-    let start = start.to_tokens();
-
-    // i64::MAX means "to the end"
-    if end == i64::MAX {
-        return AxisRange::Resolved(if step == 1 {
-            quote! { #start.. }
-        } else {
-            let step = step.to_tokens();
-            quote! { #start..;#step }
-        });
+        let (lo, hi) = slice_bounds(start, end, step, dim? as i64);
+        let lo = Literal::usize_unsuffixed(lo);
+        let hi = Literal::usize_unsuffixed(hi);
+        let step = step.to_tokens();
+        return Some(quote! { #lo..#hi;#step });
     }
 
     // i64::MIN clamps to 0, so a forward step can never select anything.
     if end == i64::MIN {
-        return AxisRange::Resolved(quote! { 0..0 });
+        return Some(quote! { 0..0 });
     }
 
-    // Slice indices are i32
-    if end > i32::MAX as i64 {
+    let start = start.to_tokens();
+    // i64::MAX means "to the end"; any other bound is a slice index, so i32.
+    let end = if end == i64::MAX {
+        quote! {}
+    } else if end > i32::MAX as i64 {
         panic!("Slice end index {} exceeds i32::MAX", end);
-    }
-
-    let end = end.to_tokens();
-    AxisRange::Resolved(if step == 1 {
-        quote! { #start..#end }
+    } else {
+        end.to_tokens()
+    };
+    let step = if step == 1 {
+        quote! {}
     } else {
         let step = step.to_tokens();
-        quote! { #start..#end;#step }
-    })
+        quote! { ;#step }
+    };
+    Some(quote! { #start..#end #step })
 }
 
-/// Burn `lo..hi` bounds for an ONNX reverse slice over a dimension of `dim`.
-fn reverse_slice_bounds(start: i64, end: i64, dim: i64) -> (usize, usize) {
+/// Burn `lo..hi` bounds for one ONNX `(start, end, step)` triple over a
+/// dimension of `dim`. Clamping absorbs both sentinels: `i64::MAX` lands on
+/// `dim` and `i64::MIN` on the low bound.
+///
+/// `generate_runtime_dim_slice` emits the reverse half of this arithmetic as a
+/// closure for axes sized only at runtime; keep the two in sync.
+fn slice_bounds(start: i64, end: i64, step: i64, dim: i64) -> (usize, usize) {
     if dim == 0 {
         return (0, 0);
     }
-    let start = if start < 0 {
-        start.saturating_add(dim)
+    let resolve = |v: i64| if v < 0 { v.saturating_add(dim) } else { v };
+    let (lo, hi) = if step < 0 {
+        let hi = resolve(start).clamp(0, dim - 1) + 1;
+        ((resolve(end).clamp(-1, dim - 1) + 1).min(hi), hi)
     } else {
-        start
+        let lo = resolve(start).clamp(0, dim);
+        // Rust panics on an inverted range; ONNX just selects nothing.
+        (lo, resolve(end).clamp(0, dim).max(lo))
     };
-    let end = if end < 0 {
-        end.saturating_add(dim)
-    } else {
-        end
-    };
-    let hi = start.clamp(0, dim - 1) + 1;
-    let lo = (end.clamp(-1, dim - 1) + 1).min(hi);
     (lo as usize, hi as usize)
 }
 
-/// Emit a slice whose reverse-step bounds are read from the tensor's own shape,
-/// for axes whose size is not known at codegen time.
+/// The `s!` range for a reverse slice whose bounds are only known at runtime.
+/// Only valid inside the block `generate_runtime_dim_slice` emits.
+fn runtime_reverse_range(axis: usize, start: i64, end: i64, step: i64) -> TokenStream {
+    let axis_lit = Literal::usize_unsuffixed(axis);
+    let start = i64_tokens(start);
+    let end = i64_tokens(end);
+    let step = step.to_tokens();
+    quote! { reverse_bounds(slice_dims[#axis_lit], #start, #end);#step }
+}
+
+/// Wrap the slice in the block that defines `slice_dims` and `reverse_bounds`,
+/// the helpers `runtime_reverse_range` emits calls to.
 fn generate_runtime_dim_slice(
     input: &TokenStream,
     output: &proc_macro2::Ident,
-    mut ranges: Vec<TokenStream>,
-    runtime_axes: &[(usize, i64, i64, i64)],
+    ranges: &[TokenStream],
 ) -> TokenStream {
-    for &(axis, start, end, step) in runtime_axes {
-        let axis_lit = Literal::usize_unsuffixed(axis);
-        let start = i64_tokens(start);
-        let end = i64_tokens(end);
-        let step = step.to_tokens();
-        ranges[axis] = quote! {
-            reverse_bounds(slice_dims[#axis_lit], #start, #end);#step
-        };
-    }
-
     quote! {
         let #output = {
             let slice_input = #input;
@@ -654,31 +634,12 @@ fn generate_shape_slice(
                 _ => panic!("Steps must be Static for shape slice"),
             };
 
-            // Always clamp start/end values
-            let shape_len = shape_rank as i64;
-
-            // Handle negative indices and clamp. A reverse step needs the same
-            // bound shift as a tensor slice (see `axis_range`), otherwise the
-            // element count disagrees with the output rank onnx-ir inferred and
-            // the generated `try_into` fails at runtime.
-            let (actual_start, actual_end) = if step_val < 0 {
-                reverse_slice_bounds(start_val, end_val, shape_len)
-            } else {
-                let start = if start_val < 0 {
-                    (shape_len + start_val).max(0) as usize
-                } else {
-                    start_val.min(shape_len) as usize
-                };
-                let end = if end_val == i64::MAX {
-                    shape_rank
-                } else if end_val < 0 {
-                    (shape_len + end_val).max(0) as usize
-                } else {
-                    end_val.min(shape_len) as usize
-                };
-                // Rust panics on an inverted range; ONNX just selects nothing.
-                (start, end.max(start))
-            };
+            // A reverse step needs the same bound shift as a tensor slice,
+            // otherwise the element count disagrees with the output rank
+            // onnx-ir inferred and the generated `try_into` fails at runtime.
+            // The rank is always static here, so both signs resolve now.
+            let (actual_start, actual_end) =
+                slice_bounds(start_val, end_val, step_val, shape_rank as i64);
 
             let start_lit = Literal::usize_unsuffixed(actual_start);
             let end_lit = Literal::usize_unsuffixed(actual_end);
@@ -1027,23 +988,32 @@ mod tests {
     // ===== Reverse (negative step) slicing =====
 
     #[test]
-    fn test_reverse_slice_bounds() {
-        use super::reverse_slice_bounds;
+    fn test_slice_bounds() {
+        use super::slice_bounds;
 
-        // ONNX x[4:MIN:-1] over dim 5 -> indices 4..0, Burn range 0..5.
-        assert_eq!(reverse_slice_bounds(4, i64::MIN, 5), (0, 5));
+        // Reverse. ONNX x[4:MIN:-1] over dim 5 -> indices 4..0, Burn range 0..5.
+        assert_eq!(slice_bounds(4, i64::MIN, -1, 5), (0, 5));
         // x[-1::-1] is the same slice spelled with a negative start.
-        assert_eq!(reverse_slice_bounds(-1, i64::MIN, 5), (0, 5));
+        assert_eq!(slice_bounds(-1, i64::MIN, -1, 5), (0, 5));
         // x[3:0:-1] -> indices 3, 2, 1.
-        assert_eq!(reverse_slice_bounds(3, 0, 5), (1, 4));
+        assert_eq!(slice_bounds(3, 0, -1, 5), (1, 4));
         // x[-2:-4:-1] -> indices 3, 2.
-        assert_eq!(reverse_slice_bounds(-2, -4, 5), (2, 4));
+        assert_eq!(slice_bounds(-2, -4, -1, 5), (2, 4));
         // Out-of-range bounds clamp instead of wrapping.
-        assert_eq!(reverse_slice_bounds(99, i64::MIN, 5), (0, 5));
+        assert_eq!(slice_bounds(99, i64::MIN, -1, 5), (0, 5));
         // ONNX stops before `ends`, so this selects nothing.
-        assert_eq!(reverse_slice_bounds(0, 5, 5), (1, 1));
+        assert_eq!(slice_bounds(0, 5, -1, 5), (1, 1));
+
+        // Forward. Both sentinels fall out of the same clamp.
+        assert_eq!(slice_bounds(1, 4, 1, 5), (1, 4));
+        assert_eq!(slice_bounds(1, i64::MAX, 1, 5), (1, 5));
+        assert_eq!(slice_bounds(1, i64::MIN, 1, 5), (1, 1));
+        assert_eq!(slice_bounds(-3, -1, 1, 5), (2, 4));
+        // An inverted range would panic in Rust; ONNX just selects nothing.
+        assert_eq!(slice_bounds(4, 1, 1, 5), (4, 4));
+
         // A zero-sized dimension has no valid index to clamp against.
-        assert_eq!(reverse_slice_bounds(0, i64::MIN, 0), (0, 0));
+        assert_eq!(slice_bounds(0, i64::MIN, -1, 0), (0, 0));
     }
 
     #[test]
