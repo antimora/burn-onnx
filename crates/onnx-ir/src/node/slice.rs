@@ -107,7 +107,9 @@ fn calculate_dim_slice_output_len(start: i64, end: i64, step: i64, dim_size: usi
     if range_len <= 0 {
         0
     } else {
-        ((range_len + step.abs() - 1) / step.abs()) as usize
+        // `step` comes straight from the model: `abs()` would overflow on
+        // i64::MIN, and rounding up in i64 would overflow on a huge step.
+        (range_len as u64).div_ceil(step.unsigned_abs()) as usize
     }
 }
 
@@ -1037,6 +1039,28 @@ mod tests {
             },
             other => panic!("Expected tensor, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_dim_slice_output_len_sentinels_and_extreme_steps() {
+        // i64::MIN for `ends` with step < 0 means "past the first element":
+        // adding dim_len keeps it far below zero, so it clamps to -1 and the
+        // whole axis is selected.
+        assert_eq!(calculate_dim_slice_output_len(7, i64::MIN, -1, 8), 8);
+        assert_eq!(calculate_dim_slice_output_len(-1, i64::MIN, -1, 8), 8);
+        assert_eq!(calculate_dim_slice_output_len(7, i64::MIN, -3, 8), 3);
+
+        // i64::MAX for `ends` with step > 0 clamps to dim_len.
+        assert_eq!(calculate_dim_slice_output_len(3, i64::MAX, 1, 8), 5);
+
+        // The opposite sentinel on each path selects nothing.
+        assert_eq!(calculate_dim_slice_output_len(3, i64::MIN, 1, 8), 0);
+        assert_eq!(calculate_dim_slice_output_len(3, i64::MAX, -1, 8), 0);
+
+        // Steps come from the model unchecked, so the extremes must not
+        // overflow while rounding the range length up.
+        assert_eq!(calculate_dim_slice_output_len(0, 10, i64::MAX, 10), 1);
+        assert_eq!(calculate_dim_slice_output_len(9, 0, i64::MIN, 10), 1);
     }
 
     #[test]
