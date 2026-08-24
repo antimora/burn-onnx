@@ -185,6 +185,31 @@ impl NodeProcessor for SliceProcessor {
 
         match input_ty {
             ArgType::Tensor(tensor_type) => {
+                // Codegen only honours `steps` when both bounds are static. The
+                // runtime-bound paths emit a plain forward range, so a non-unit
+                // step there would silently slice the wrong elements. Reject the
+                // combination rather than ignoring the step, mirroring the guard
+                // the Shape input path already applies below.
+                let runtime_bounds = matches!(config.starts, SliceInput::Runtime(_))
+                    || matches!(config.ends, SliceInput::Runtime(_));
+                match &config.steps {
+                    Some(SliceInput::Runtime(_)) => {
+                        return Err(ProcessError::Custom(format!(
+                            "Slice with runtime steps is not supported (node {})",
+                            node.name
+                        )));
+                    }
+                    Some(SliceInput::Static(steps))
+                        if runtime_bounds && steps.iter().any(|&s| s != 1) =>
+                    {
+                        return Err(ProcessError::Custom(format!(
+                            "Slice with runtime bounds only supports step=1; node {} has steps={:?}",
+                            node.name, steps
+                        )));
+                    }
+                    _ => {}
+                }
+
                 // Slice changes dimension sizes along sliced axes. Initialize all dimensions
                 // with sizes from input, then overwrite the axes we can compute statically.
                 let mut static_shape = tensor_type
@@ -701,10 +726,8 @@ mod tests {
 
     #[test]
     fn test_slice_config_runtime() {
-        // Test with runtime inputs (no static values)
-        let node = create_runtime_slice_node().build();
-
-        let mut node = node;
+        // Test with runtime bounds (starts/ends have no static values)
+        let mut node = create_runtime_slice_node().build_with_graph_data(16);
 
         let processor = SliceProcessor;
 
@@ -718,13 +741,17 @@ mod tests {
             (SliceInput::Runtime(starts), SliceInput::Runtime(ends)) => {
                 assert_eq!(starts.name, "starts");
                 assert_eq!(ends.name, "ends");
-                // Check axes and steps
-                if let Some(SliceInput::Static(axes)) = &result.axes {
-                    assert_eq!(axes, &vec![0]);
-                }
-                if let Some(SliceInput::Static(steps)) = &result.steps {
-                    assert_eq!(steps, &vec![1]);
-                }
+                // Constant axes/steps must lift, not degrade to runtime.
+                assert!(
+                    matches!(&result.axes, Some(SliceInput::Static(axes)) if axes == &vec![0]),
+                    "expected static axes, got {:?}",
+                    result.axes
+                );
+                assert!(
+                    matches!(&result.steps, Some(SliceInput::Static(steps)) if steps == &vec![1]),
+                    "expected static steps, got {:?}",
+                    result.steps
+                );
             }
             _ => panic!("Expected runtime config"),
         }
@@ -809,6 +836,68 @@ mod tests {
         let prefs = OutputPreferences::new();
         let result = processor.infer_types(&mut node, 16, &prefs);
         assert!(matches!(result, Err(ProcessError::Custom(ref m)) if m.contains("single-axis")));
+    }
+
+    #[test]
+    fn test_slice_tensor_runtime_bounds_non_unit_step_rejected() {
+        // The runtime-bound tensor codegen emits a plain forward range and
+        // drops `steps` entirely, so a non-1 step would slice the wrong
+        // elements with no diagnostic anywhere.
+        for step in [-1, 2] {
+            let mut node = TestNodeBuilder::new(NodeType::Slice, "tensor_runtime_step")
+                .input_tensor_f32("data", 2, None)
+                .input_tensor_i64("starts", 1, None)
+                .input_tensor_i64("ends", 1, None)
+                .input_tensor_i64_data("axes", vec![0], vec![1])
+                .input_tensor_i64_data("steps", vec![step], vec![1])
+                .output_default("output")
+                .build_with_graph_data(16);
+
+            let processor = SliceProcessor;
+            let result = processor.infer_types(&mut node, 16, &OutputPreferences::new());
+            assert!(
+                matches!(result, Err(ProcessError::Custom(ref m)) if m.contains("step=1")),
+                "step {step} should be rejected, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_slice_tensor_runtime_steps_rejected() {
+        // Codegen requires a static `steps` even when both bounds are static.
+        let mut node = TestNodeBuilder::new(NodeType::Slice, "tensor_runtime_steps")
+            .input_tensor_f32("data", 2, None)
+            .input_tensor_i64_data("starts", vec![0], vec![1])
+            .input_tensor_i64_data("ends", vec![2], vec![1])
+            .input_tensor_i64_data("axes", vec![0], vec![1])
+            .input_tensor_i64("steps", 1, None)
+            .output_default("output")
+            .build_with_graph_data(16);
+
+        let processor = SliceProcessor;
+        let result = processor.infer_types(&mut node, 16, &OutputPreferences::new());
+        assert!(
+            matches!(result, Err(ProcessError::Custom(ref m)) if m.contains("runtime steps")),
+            "runtime steps should be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_slice_tensor_runtime_bounds_unit_step_allowed() {
+        // The supported combination must keep working.
+        let mut node = TestNodeBuilder::new(NodeType::Slice, "tensor_runtime_step1")
+            .input_tensor_f32("data", 2, None)
+            .input_tensor_i64("starts", 1, None)
+            .input_tensor_i64("ends", 1, None)
+            .input_tensor_i64_data("axes", vec![0], vec![1])
+            .input_tensor_i64_data("steps", vec![1], vec![1])
+            .output_default("output")
+            .build_with_graph_data(16);
+
+        let processor = SliceProcessor;
+        processor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .expect("runtime bounds with step=1 are supported");
     }
 
     #[test]
@@ -1023,7 +1112,7 @@ mod tests {
     #[test]
     fn test_tensor_static_shape_runtime_inputs_all_none() {
         // Slice axis 0: size=None, start=None, end=None, step=1
-        let mut node = create_runtime_slice_node().build();
+        let mut node = create_runtime_slice_node().build_with_graph_data(16);
 
         let processor = SliceProcessor;
         processor
