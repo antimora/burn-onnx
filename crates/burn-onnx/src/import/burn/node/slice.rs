@@ -18,7 +18,9 @@ impl NodeCodegen for onnx_ir::slice::SliceNode {
 
         match &input_arg.ty {
             ArgType::Tensor(tensor) => {
-                generate_tensor_slice(self, input_arg, tensor.rank, scope, &output)
+                let steps_guard = runtime_steps_assertion(self, scope);
+                let body = generate_tensor_slice(self, input_arg, tensor.rank, scope, &output);
+                quote! { #steps_guard #body }
             }
             ArgType::Shape(shape_rank) => {
                 let output_arg = self.outputs.first().unwrap();
@@ -511,23 +513,23 @@ fn axis_range(start: i64, end: i64, step: i64, dim: Option<usize>) -> Option<Tok
         return Some(quote! { #lo..#hi;#step });
     }
 
-    // i64::MIN clamps to 0, so a forward step can never select anything. This
-    // has to be intercepted rather than passed through: Burn resolves a negative
-    // bound as `size as isize + index`, which overflows on i64::MIN.
+    // Neither sentinel can be passed through to Burn, which resolves a negative
+    // bound as `size as isize + index` and so overflows on i64::MIN.
     if end == i64::MIN {
+        // Clamps to 0, so a forward step can never select anything.
         return Some(quote! { 0..0 });
     }
-
-    let start = start.to_tokens();
-    // i64::MAX means "to the end". The bound below it is emitted as a bare
-    // literal, so an absurd `end` is rejected here rather than becoming
-    // generated code that does not compile.
+    let start = if start == i64::MIN {
+        // Clamps to 0 whatever the dimension size turns out to be.
+        quote! { 0 }
+    } else {
+        bound_tokens(start)
+    };
+    // i64::MAX means "to the end".
     let end = if end == i64::MAX {
         quote! {}
-    } else if end > i32::MAX as i64 {
-        panic!("Slice end index {} exceeds i32::MAX", end);
     } else {
-        end.to_tokens()
+        bound_tokens(end)
     };
     let step = if step == 1 {
         quote! {}
@@ -605,6 +607,61 @@ fn generate_runtime_dim_slice(
             };
             slice_input.slice(s![#(#ranges),*])
         };
+    }
+}
+
+/// Assert at model-run time that a runtime `steps` really is 1.
+///
+/// The runtime-bound slice paths emit a plain forward range and never read
+/// `steps`, so a non-unit value would silently select the wrong elements. The
+/// value cannot be checked here, and rejecting the model is not an option: the
+/// ONNX backend test suite passes every Slice parameter as a graph input, so a
+/// runtime `steps` is normal and virtually always 1. Check it where the value
+/// exists instead. onnx-ir rejects a runtime `steps` alongside static bounds,
+/// so only the runtime-bound paths reach this.
+fn runtime_steps_assertion(
+    node: &onnx_ir::slice::SliceNode,
+    scope: &mut ScopeAtPosition<'_>,
+) -> TokenStream {
+    let Some(onnx_ir::slice::SliceInput::Runtime(steps_ref)) = &node.config.steps else {
+        return quote! {};
+    };
+    let steps_arg = &node.inputs[steps_ref.input_index];
+    let name = node.name.as_str();
+    let all_unit = match &steps_arg.ty {
+        ArgType::Shape(_) => {
+            let steps = arg_to_ident(steps_arg);
+            quote! { #steps.iter().all(|&s| s == 1) }
+        }
+        ArgType::ScalarNative(_) => {
+            let steps = arg_to_ident(steps_arg);
+            quote! { #steps == 1 }
+        }
+        _ => {
+            let steps = scope.arg(steps_arg);
+            quote! { #steps.to_data().iter::<i64>().all(|s| s == 1) }
+        }
+    };
+    quote! {
+        assert!(
+            #all_unit,
+            "Slice node {}: only step=1 is supported when `steps` is a runtime input",
+            #name
+        );
+    }
+}
+
+/// A forward slice bound, as a literal Burn will accept.
+///
+/// Bare literals in an `s![..]` range infer as `i32`, so a bound outside that
+/// range has to carry a suffix or the generated code will not compile. The value
+/// itself needs no clamping: ONNX clamps out-of-range bounds and so does Burn.
+fn bound_tokens(value: i64) -> TokenStream {
+    if (i32::MIN as i64..=i32::MAX as i64).contains(&value) {
+        value.to_tokens()
+    } else {
+        let lit = Literal::i64_suffixed(value);
+        quote! { #lit }
     }
 }
 
@@ -1199,6 +1256,50 @@ mod tests {
     }
 
     #[test]
+    fn test_slice_forward_start_min_sentinel() {
+        let config = SliceConfig {
+            starts: SliceInput::Static(vec![i64::MIN]),
+            ends: SliceInput::Static(vec![3]),
+            axes: Some(SliceInput::Static(vec![0])),
+            steps: Some(SliceInput::Static(vec![1])),
+        };
+        let node = SliceNodeBuilder::new("slice1")
+            .input_tensor_shape("x", vec![5], DType::F32)
+            .output_tensor("y", 1, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, x: Tensor<1>) -> Tensor<1> {
+            let y = x.slice(s![0..3]);
+            y
+        }
+        ");
+    }
+
+    #[test]
+    fn test_slice_forward_bound_beyond_i32() {
+        let config = SliceConfig {
+            starts: SliceInput::Static(vec![0]),
+            ends: SliceInput::Static(vec![3_000_000_000]),
+            axes: Some(SliceInput::Static(vec![0])),
+            steps: Some(SliceInput::Static(vec![1])),
+        };
+        let node = SliceNodeBuilder::new("slice1")
+            .input_tensor_shape("x", vec![5], DType::F32)
+            .output_tensor("y", 1, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, x: Tensor<1>) -> Tensor<1> {
+            let y = x.slice(s![0..3000000000i64]);
+            y
+        }
+        ");
+    }
+
+    #[test]
     fn test_slice_forward_step_min_sentinel() {
         // i64::MIN clamps to 0, so a forward step can never select anything.
         let config = SliceConfig {
@@ -1256,6 +1357,53 @@ mod tests {
             sliced
         }
         ");
+    }
+
+    #[test]
+    fn test_slice_runtime_steps_asserted() {
+        // A runtime `steps` cannot be inspected at codegen time, so the
+        // assumption that it is 1 is checked where the value exists.
+        let config = SliceConfig {
+            starts: SliceInput::Runtime(RuntimeInputRef {
+                name: "start_idx".to_string(),
+                input_index: 1,
+            }),
+            ends: SliceInput::Runtime(RuntimeInputRef {
+                name: "end_idx".to_string(),
+                input_index: 2,
+            }),
+            axes: Some(SliceInput::Static(vec![0])),
+            steps: Some(SliceInput::Runtime(RuntimeInputRef {
+                name: "step_vals".to_string(),
+                input_index: 3,
+            })),
+        };
+        let node = SliceNodeBuilder::new("slice1")
+            .input_tensor("data", 2, DType::F32)
+            .input_shape("start_idx", 1)
+            .input_shape("end_idx", 1)
+            .input_shape("step_vals", 1)
+            .output_tensor("sliced", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(
+            &self,
+            data: Tensor<2>,
+            start_idx: [i64; 1],
+            end_idx: [i64; 1],
+            step_vals: [i64; 1],
+        ) -> Tensor<2> {
+            assert!(
+                step_vals.iter().all(| & s | s == 1),
+                "Slice node {}: only step=1 is supported when `steps` is a runtime input",
+                "slice1"
+            );
+            let sliced = data.slice(s![start_idx[0]..end_idx[0], ..]);
+            sliced
+        }
+        "#);
     }
 
     #[test]
