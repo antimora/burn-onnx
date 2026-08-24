@@ -190,12 +190,17 @@ impl NodeProcessor for SliceProcessor {
                 // step there would silently slice the wrong elements. Reject the
                 // combination rather than ignoring the step, mirroring the guard
                 // the Shape input path already applies below.
+                //
+                // A runtime `steps` alongside runtime bounds stays allowed: the
+                // ONNX backend test suite passes all four as graph inputs, and
+                // the value cannot be checked here. Those models are assumed to
+                // step by 1, which is what every exporter emits.
                 let runtime_bounds = matches!(config.starts, SliceInput::Runtime(_))
                     || matches!(config.ends, SliceInput::Runtime(_));
                 match &config.steps {
-                    Some(SliceInput::Runtime(_)) => {
+                    Some(SliceInput::Runtime(_)) if !runtime_bounds => {
                         return Err(ProcessError::Custom(format!(
-                            "Slice with runtime steps is not supported (node {})",
+                            "Slice with static bounds needs static steps; node {} has a runtime steps input",
                             node.name
                         )));
                     }
@@ -863,8 +868,9 @@ mod tests {
     }
 
     #[test]
-    fn test_slice_tensor_runtime_steps_rejected() {
-        // Codegen requires a static `steps` even when both bounds are static.
+    fn test_slice_tensor_runtime_steps_with_static_bounds_rejected() {
+        // The static-bounds codegen path requires a static `steps`; without
+        // this guard it panics instead.
         let mut node = TestNodeBuilder::new(NodeType::Slice, "tensor_runtime_steps")
             .input_tensor_f32("data", 2, None)
             .input_tensor_i64_data("starts", vec![0], vec![1])
@@ -877,9 +883,29 @@ mod tests {
         let processor = SliceProcessor;
         let result = processor.infer_types(&mut node, 16, &OutputPreferences::new());
         assert!(
-            matches!(result, Err(ProcessError::Custom(ref m)) if m.contains("runtime steps")),
-            "runtime steps should be rejected, got {result:?}"
+            matches!(result, Err(ProcessError::Custom(ref m)) if m.contains("static steps")),
+            "runtime steps with static bounds should be rejected, got {result:?}"
         );
+    }
+
+    #[test]
+    fn test_slice_tensor_all_runtime_allowed() {
+        // The ONNX backend test suite's `test_slice` passes starts, ends, axes
+        // and steps all as graph inputs. Nothing can be checked statically
+        // there, so it must still import.
+        let mut node = TestNodeBuilder::new(NodeType::Slice, "tensor_all_runtime")
+            .input_tensor_f32("data", 2, None)
+            .input_tensor_i64("starts", 1, None)
+            .input_tensor_i64("ends", 1, None)
+            .input_tensor_i64("axes", 1, None)
+            .input_tensor_i64("steps", 1, None)
+            .output_default("output")
+            .build_with_graph_data(16);
+
+        let processor = SliceProcessor;
+        processor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .expect("fully runtime Slice params must still import");
     }
 
     #[test]

@@ -672,7 +672,7 @@ mod tests {
     fn slice_reverse_steps() {
         // Reverse slicing with |step| > 1. Burn anchors a reverse traversal at
         // the top of the range and walks down, so a range length that is not a
-        // multiple of the step is what would expose a mis-aligned stride.
+        // multiple of the step is what would expose a misaligned stride.
         let model: slice_reverse_steps::Model = slice_reverse_steps::Model::default();
         let device = Default::default();
 

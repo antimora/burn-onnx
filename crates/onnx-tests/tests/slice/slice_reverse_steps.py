@@ -12,7 +12,7 @@
 # Reverse slicing with |step| > 1, and the reverse slice ONNX evaluates to
 # nothing. Burn anchors a reverse traversal at the top of the range and walks
 # down, so a range whose length is not a multiple of the step is the case that
-# would expose a mis-aligned stride.
+# would expose a misaligned stride.
 
 import numpy as np
 import onnx
