@@ -48,6 +48,10 @@ jobs:
           OLD="${{ steps.current.outputs.sha }}"
           NEW="${{ steps.latest.outputs.sha }}"
           sed -i "s/$OLD/$NEW/g" Cargo.toml
+          # scoreboard/runner is a separate workspace carrying its own pin, so it
+          # never matches the root rev. Rewrite whatever sha it currently holds,
+          # otherwise it silently drifts away from the workspace.
+          sed -i -E "s/rev = \"[0-9a-f]{40}\"/rev = \"$NEW\"/g" scoreboard/runner/Cargo.toml
 
       - name: Install Rust
         if: steps.check.outputs.skip == 'false'
@@ -58,7 +62,9 @@ jobs:
 
       - name: Update lockfile
         if: steps.check.outputs.skip == 'false'
-        run: cargo update -p burn -p burn-flex -p burn-store -p burn-tensor
+        run: |
+          cargo update -p burn -p burn-flex -p burn-store -p burn-tensor
+          cargo update --manifest-path scoreboard/runner/Cargo.toml -p burn -p burn-store
 
       - name: Create pull request
         if: steps.check.outputs.skip == 'false'
