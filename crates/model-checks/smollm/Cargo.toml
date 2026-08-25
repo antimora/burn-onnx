@@ -14,7 +14,7 @@ metal = ["burn/metal", "burn/autotune", "burn/fusion"]
 
 [dependencies]
 burn = { workspace = true }
-burn-store = { workspace = true, features = ["std", "burnpack", "pytorch"] }
+burn-store = { workspace = true, features = ["std", "pytorch"] }
 model-checks-common = { workspace = true }
 
 [build-dependencies]

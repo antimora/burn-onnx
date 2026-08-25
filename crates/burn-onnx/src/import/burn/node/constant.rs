@@ -1,5 +1,5 @@
 use super::prelude::*;
-use burn_store::TensorSnapshot;
+use burn_pack::Tensor as PackTensor;
 use onnx_ir::ir::TensorDataExt;
 
 impl NodeCodegen for onnx_ir::node::constant::ConstantNode {
@@ -186,7 +186,7 @@ impl NodeCodegen for onnx_ir::node::constant::ConstantNode {
         Some(Field::new(self.name.clone(), ty, init))
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<TensorSnapshot> {
+    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
         use crate::burn::node_traits::create_lazy_snapshot;
 
         let output = self.outputs.first().unwrap();
@@ -198,7 +198,7 @@ impl NodeCodegen for onnx_ir::node::constant::ConstantNode {
             ArgType::Tensor(_) | ArgType::ScalarTensor(_) => {
                 if let Some(input) = self.inputs.first() {
                     // Use the field name as the path since constants are stored as single params
-                    if let Some(snapshot) = create_lazy_snapshot(input, field_name, "Constant") {
+                    if let Some(snapshot) = create_lazy_snapshot(input, field_name) {
                         vec![snapshot]
                     } else {
                         vec![]

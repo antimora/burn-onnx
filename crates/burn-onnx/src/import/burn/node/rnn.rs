@@ -20,7 +20,8 @@ use super::rnn_common::{
     y_direction_axis,
 };
 use burn::nn::activation::ActivationConfig;
-use burn_store::TensorSnapshot;
+use burn_pack::Tensor as PackTensor;
+use burn_store::bridge;
 use onnx_ir::rnn::{RnnActivationFunction, RnnDirection};
 
 /// Convert ONNX activation function to Burn ActivationConfig.
@@ -70,7 +71,7 @@ fn collect_rnn_snapshots(
     field_name: &str,
     inputs: &[Argument],
     config: &onnx_ir::rnn::RnnConfig,
-) -> Vec<TensorSnapshot> {
+) -> Vec<PackTensor> {
     use crate::burn::node_traits::extract_node_data;
     use burn::tensor::Tensor;
 
@@ -168,12 +169,7 @@ fn collect_rnn_snapshots(
             "{}.{}{}.input_transform.weight",
             field_name, dir_prefix, gate_name
         );
-        snapshots.push(create_snapshot_from_data(
-            w_gate_data,
-            &path,
-            "Linear",
-            dtype,
-        ));
+        snapshots.push(create_snapshot_from_data(w_gate_data, &path, dtype));
 
         // Input transform bias: Wb + Rb for this gate
         if let Some(ref b) = b_dir {
@@ -191,7 +187,7 @@ fn collect_rnn_snapshots(
                 "{}.{}{}.input_transform.bias",
                 field_name, dir_prefix, gate_name
             );
-            snapshots.push(create_snapshot_from_data(bias_data, &path, "Linear", dtype));
+            snapshots.push(create_snapshot_from_data(bias_data, &path, dtype));
         }
 
         // Hidden transform weight: slice from R and transpose
@@ -206,12 +202,7 @@ fn collect_rnn_snapshots(
             "{}.{}{}.hidden_transform.weight",
             field_name, dir_prefix, gate_name
         );
-        snapshots.push(create_snapshot_from_data(
-            r_gate_data,
-            &path,
-            "Linear",
-            dtype,
-        ));
+        snapshots.push(create_snapshot_from_data(r_gate_data, &path, dtype));
 
         // Hidden transform bias: zeros (combined bias is in input_transform)
         if b_dir.is_some() {
@@ -222,16 +213,14 @@ fn collect_rnn_snapshots(
                 "{}.{}{}.hidden_transform.bias",
                 field_name, dir_prefix, gate_name
             );
-            snapshots.push(create_snapshot_from_data(
-                zeros_data, &path, "Linear", dtype,
-            ));
+            snapshots.push(create_snapshot_from_data(zeros_data, &path, dtype));
         }
     }
 
     snapshots
 }
 
-/// Create a TensorSnapshot from TensorData.
+/// Create a burnpack tensor from TensorData already in hand.
 ///
 /// Normalizes the data back to the target dtype as a safety net. The upstream
 /// weight-slicing pipeline already pins the dtype when building the intermediate
@@ -242,31 +231,14 @@ fn collect_rnn_snapshots(
 fn create_snapshot_from_data(
     data: burn::tensor::TensorData,
     path: &str,
-    container_type: &str,
     dtype: burn::tensor::DType,
-) -> TensorSnapshot {
+) -> PackTensor {
     use burn::module::ParamId;
-    use burn_store::TensorSnapshotError;
 
     // No-op when `data` already has the declared dtype; defensive otherwise.
     let data = data.convert_dtype(dtype);
 
-    let shape = data.shape.clone();
-    let path_stack: Vec<String> = path.split('.').map(String::from).collect();
-    let container_stack = vec![format!("Struct:{}", container_type)];
-
-    let data_fn = TensorSnapshot::data_fn(
-        move || -> Result<burn::tensor::TensorData, TensorSnapshotError> { Ok(data.clone()) },
-    );
-
-    TensorSnapshot::from_closure(
-        data_fn,
-        dtype,
-        shape,
-        path_stack,
-        container_stack,
-        ParamId::new(),
-    )
+    bridge::from_data(data, path.to_string(), Some(ParamId::new().val()))
 }
 
 /// Convert ActivationConfig to tokens for code generation
@@ -371,7 +343,7 @@ impl NodeCodegen for onnx_ir::rnn::RnnNode {
         rnn_common::field(&self.name, &self.inputs, ty, init)
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<TensorSnapshot> {
+    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
         collect_rnn_snapshots(field_name, &self.inputs, &self.config)
     }
 

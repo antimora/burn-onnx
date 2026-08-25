@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 burn = { workspace = true, features = ["flex"] }
-burn-store = { workspace = true, features = ["std", "burnpack"] }
+burn-store = { workspace = true, features = ["std"] }
 
 [build-dependencies]
 burn-onnx = { workspace = true, features = ["default"] }

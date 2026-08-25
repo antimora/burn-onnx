@@ -1,6 +1,6 @@
 use super::broadcast_helpers::channel_broadcast_shape;
 use super::prelude::*;
-use burn_store::TensorSnapshot;
+use burn_pack::Tensor as PackTensor;
 use onnx_ir::node::instance_norm::InstanceNormalizationNode;
 
 /// True when both scale (input[1]) and bias (input[2]) were lifted to static
@@ -43,21 +43,21 @@ impl NodeCodegen for InstanceNormalizationNode {
         ))
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<TensorSnapshot> {
+    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
         use crate::burn::node_traits::create_lazy_snapshot;
 
         let mut snapshots = vec![];
 
         if let Some(gamma_input) = self.inputs.get(1) {
             let gamma_path = format!("{}.gamma", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(gamma_input, &gamma_path, "InstanceNorm") {
+            if let Some(snapshot) = create_lazy_snapshot(gamma_input, &gamma_path) {
                 snapshots.push(snapshot);
             }
         }
 
         if let Some(beta_input) = self.inputs.get(2) {
             let beta_path = format!("{}.beta", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(beta_input, &beta_path, "InstanceNorm") {
+            if let Some(snapshot) = create_lazy_snapshot(beta_input, &beta_path) {
                 snapshots.push(snapshot);
             }
         }

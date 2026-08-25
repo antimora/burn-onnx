@@ -26,11 +26,11 @@ https://huggingface.co/datasets/ylecun/mnist/viewer/mnist/test?row=15
 
 ## How to import
 
-1. Add `burn-store` with the `burnpack` feature to your `Cargo.toml` dependencies:
+1. Add `burn-store` to your `Cargo.toml` dependencies:
    ```toml
    [dependencies]
    burn = { version = "0.21", features = ["flex"] }
-   burn-store = { version = "0.21", features = ["burnpack"] }
+   burn-store = { version = "0.21" }
 
    [build-dependencies]
    burn-onnx = { version = "0.21" }

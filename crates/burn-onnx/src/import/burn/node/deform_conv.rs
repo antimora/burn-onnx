@@ -1,5 +1,5 @@
 use super::prelude::*;
-use burn_store::TensorSnapshot;
+use burn_pack::Tensor as PackTensor;
 use onnx_ir::deform_conv::DeformConvNode;
 use onnx_ir::padding::PaddingConfig2d;
 
@@ -83,14 +83,14 @@ impl NodeCodegen for DeformConvNode {
         ))
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<TensorSnapshot> {
+    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
         use crate::burn::node_traits::create_lazy_snapshot;
 
         let mut snapshots = vec![];
 
         if let Some(weight_input) = self.inputs.get(1) {
             let weight_path = format!("{}.weight", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(weight_input, &weight_path, "DeformConv") {
+            if let Some(snapshot) = create_lazy_snapshot(weight_input, &weight_path) {
                 snapshots.push(snapshot);
             }
         }
@@ -99,7 +99,7 @@ impl NodeCodegen for DeformConvNode {
             && !bias_input.is_optional()
         {
             let bias_path = format!("{}.bias", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(bias_input, &bias_path, "DeformConv") {
+            if let Some(snapshot) = create_lazy_snapshot(bias_input, &bias_path) {
                 snapshots.push(snapshot);
             }
         }

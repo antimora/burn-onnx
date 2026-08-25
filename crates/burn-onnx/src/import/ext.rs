@@ -25,7 +25,8 @@ pub use onnx_ir::{
     TensorData, TensorType,
 };
 
-pub use burn_store::TensorSnapshot;
+pub use burn_pack::{Error as PackError, Tensor as PackTensor};
+pub use burn_store::bridge;
 
 pub use proc_macro2;
 pub use quote;

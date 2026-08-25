@@ -1,4 +1,4 @@
-use burn_store::TensorSnapshot;
+use burn_pack::Tensor as PackTensor;
 
 use super::prelude::*;
 
@@ -35,7 +35,7 @@ impl NodeCodegen for onnx_ir::node::layer_norm::LayerNormalizationNode {
         ))
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<TensorSnapshot> {
+    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
         use crate::burn::node_traits::create_lazy_snapshot;
 
         let mut snapshots = vec![];
@@ -43,7 +43,7 @@ impl NodeCodegen for onnx_ir::node::layer_norm::LayerNormalizationNode {
         // Gamma (scale) tensor at input index 1
         if let Some(gamma_input) = self.inputs.get(1) {
             let gamma_path = format!("{}.gamma", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(gamma_input, &gamma_path, "LayerNorm") {
+            if let Some(snapshot) = create_lazy_snapshot(gamma_input, &gamma_path) {
                 snapshots.push(snapshot);
             }
         }
@@ -53,7 +53,7 @@ impl NodeCodegen for onnx_ir::node::layer_norm::LayerNormalizationNode {
             && let Some(beta_input) = self.inputs.get(2)
         {
             let beta_path = format!("{}.beta", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(beta_input, &beta_path, "LayerNorm") {
+            if let Some(snapshot) = create_lazy_snapshot(beta_input, &beta_path) {
                 snapshots.push(snapshot);
             }
         }

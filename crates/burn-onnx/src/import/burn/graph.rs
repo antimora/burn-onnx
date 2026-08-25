@@ -8,8 +8,7 @@ use crate::burn::node_codegen::{
 use crate::burn::partition::{
     MIN_GRAPH_SIZE, Partition, reorder_constants_to_consumers, try_partition,
 };
-use burn_pack::{Tensor, Writer};
-use burn_store::TensorSnapshot;
+use burn_pack::{Tensor as PackTensor, Writer};
 use onnx_ir::{Node, ir::ArgType};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -79,29 +78,10 @@ impl BurnGraph {
         // run before it (codegen() re-checks for direct codegen users).
         self.validate_hooks_in_subgraphs();
 
-        // Collect all tensor snapshots from nodes
-        let snapshots = self.collect_all_snapshots();
-
-        // Materialize snapshots into the tensor-agnostic burnpack representation.
-        // This is currently eager because burn-pack doesn't accept lazy tensor providers.
-        // See https://github.com/tracel-ai/burn/issues/5219.
-        // FIXME: this is a regression that should be fixed for the official release
-        let tensors = snapshots
-            .iter()
-            .map(|snapshot| {
-                let data = snapshot.to_data().map_err(|e| (snapshot.full_path(), e))?;
-                Ok(Tensor::new(
-                    snapshot.full_path(),
-                    snapshot.dtype,
-                    snapshot.shape.clone(),
-                    snapshot.tensor_id.map(|id| id.val()),
-                    data.bytes,
-                ))
-            })
-            .collect::<Result<Vec<_>, (String, burn_store::TensorSnapshotError)>>()
-            .unwrap_or_else(|(path, e)| {
-                panic!("Failed to materialize tensor snapshot {path}: {e}")
-            });
+        // Collect all tensor snapshots from nodes. Each one stays deferred: the writer
+        // draws its bytes one at a time, so peak memory is bounded by the largest single
+        // tensor rather than by the whole model.
+        let tensors = self.collect_all_snapshots();
 
         // Write burnpack file
         let burnpack_file = out_file.with_extension("bpk");
@@ -128,7 +108,7 @@ impl BurnGraph {
     /// When partitioned into submodules, snapshot paths are prefixed with the submodule
     /// field name (e.g. "submodule1.linear1.weight") so that `load_from` routes weights
     /// to the correct nested module.
-    fn collect_all_snapshots(&mut self) -> Vec<TensorSnapshot> {
+    fn collect_all_snapshots(&mut self) -> Vec<PackTensor> {
         let partition = self.compute_partition();
 
         if let Some(partition) = partition {
@@ -159,7 +139,7 @@ impl BurnGraph {
         result
     }
 
-    fn collect_snapshots_flat(&self) -> Vec<TensorSnapshot> {
+    fn collect_snapshots_flat(&self) -> Vec<PackTensor> {
         let mut snapshots = Vec::new();
         let mut field_name_counts: HashMap<String, usize> = HashMap::new();
         collect_snapshots_from_nodes(
@@ -172,7 +152,7 @@ impl BurnGraph {
         snapshots
     }
 
-    fn collect_snapshots_partitioned(&self, partition: &Partition) -> Vec<TensorSnapshot> {
+    fn collect_snapshots_partitioned(&self, partition: &Partition) -> Vec<PackTensor> {
         let mut snapshots = Vec::new();
 
         for (chunk_idx, range) in partition.chunks.iter().enumerate() {
@@ -1110,7 +1090,7 @@ fn collect_snapshots_from_nodes(
     nodes: &[Node],
     prefix: &str,
     field_name_counts: &mut HashMap<String, usize>,
-    snapshots: &mut Vec<TensorSnapshot>,
+    snapshots: &mut Vec<PackTensor>,
     hooks: &HookRegistry,
 ) {
     // Hook-free for the same reason as collect_subgraph_fields_recursive:
@@ -1120,7 +1100,7 @@ fn collect_snapshots_from_nodes(
         subgraph: &onnx_ir::OnnxGraph,
         prefix: &str,
         field_name_counts: &mut HashMap<String, usize>,
-        snapshots: &mut Vec<TensorSnapshot>,
+        snapshots: &mut Vec<PackTensor>,
     ) {
         for node in &subgraph.nodes {
             if let Some(field) = NodeCodegen::field(node) {
@@ -1368,19 +1348,15 @@ mod tests {
             &self,
             _node: &onnx_ir::CustomNode,
             field_name: &str,
-        ) -> Result<Vec<TensorSnapshot>, onnx_ir::ProcessError> {
+        ) -> Result<Vec<PackTensor>, onnx_ir::ProcessError> {
             use burn::module::ParamId;
             use burn::tensor::TensorData;
-            let data_fn = TensorSnapshot::data_fn(|| {
-                Ok(TensorData::new(vec![0.5f32, 1.0, 1.5, 2.0], [4usize]))
-            });
-            Ok(vec![TensorSnapshot::from_closure(
-                data_fn,
+            Ok(vec![burn_store::bridge::deferred(
+                format!("{field_name}.state"),
                 burn::tensor::DType::F32,
                 [4usize].into(),
-                vec![field_name.to_string(), "state".to_string()],
-                vec!["Struct:StatefulFft".to_string()],
-                ParamId::new(),
+                Some(ParamId::new().val()),
+                || Ok(TensorData::new(vec![0.5f32, 1.0, 1.5, 2.0], [4usize])),
             )])
         }
     }
@@ -1400,7 +1376,7 @@ mod tests {
         let snapshots =
             crate::burn::node_codegen::node_collect_snapshots(node, "fft_state", &registry);
         assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].full_path(), "fft_state.state");
+        assert_eq!(snapshots[0].name, "fft_state.state");
 
         // The generated struct and forward reference the hook's field
         let code = format_tokens(graph.codegen());

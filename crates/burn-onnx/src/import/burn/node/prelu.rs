@@ -1,7 +1,7 @@
 use super::broadcast_helpers;
 use super::prelude::*;
 use burn::tensor::Shape;
-use burn_store::TensorSnapshot;
+use burn_pack::Tensor as PackTensor;
 use onnx_ir::ir::ArgType;
 use onnx_ir::prelu::PReluNode;
 
@@ -49,14 +49,14 @@ impl NodeCodegen for PReluNode {
         ))
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<TensorSnapshot> {
+    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
         use crate::burn::node_traits::create_lazy_snapshot;
 
         let mut snapshots = vec![];
 
         if let Some(alpha_input) = self.inputs.get(1) {
             let alpha_path = format!("{}.alpha", field_name);
-            if let Some(mut snapshot) = create_lazy_snapshot(alpha_input, &alpha_path, "PRelu") {
+            if let Some(mut snapshot) = create_lazy_snapshot(alpha_input, &alpha_path) {
                 snapshot.shape = Shape::from([num_parameters(self)]);
                 snapshots.push(snapshot);
             }

@@ -625,8 +625,9 @@ pub use onnx_ir::{
     TensorData, TensorType,
 };
 
-// Snapshot type used by collect_snapshots (from burn-store).
-pub use burn_store::TensorSnapshot;
+// Burnpack tensor type used by collect_snapshots, plus the constructors for it.
+pub use burn_pack::{Error as PackError, Tensor as PackTensor};
+pub use burn_store::bridge;
 
 // Token-stream crates. TokenStream values must come from the same proc-macro2
 // build burn-onnx links; cargo unifies 1.x in practice, but re-exporting
@@ -665,7 +666,7 @@ impl<'a> Imports<'a> {
 Corrections to v1 in this list: `arg_to_ident` lives in `node_traits.rs:168`
 (not `argument_helpers.rs`) and is currently not re-exported anywhere, so the
 `ext` re-export is its promotion point. `create_lazy_snapshot`
-(`node_traits.rs:197`) is what built-in nodes use to build `TensorSnapshot`s
+(`node_traits.rs:197`) is what built-in nodes use to build `PackTensor`s
 from constant inputs; custom ops with weights need it for `collect_snapshots`,
 so it is part of the curated surface.
 
@@ -696,7 +697,7 @@ All trait inputs and outputs come from the public `ext` surface (4.6, 5.0).
 ```rust
 // crates/burn-onnx/src/import/burn/custom_op.rs (new)
 use crate::ext::{
-    ArgType, CodegenContext, CustomNode, Field, Imports, ProcessError, TensorSnapshot,
+    ArgType, CodegenContext, CustomNode, Field, Imports, PackTensor, ProcessError,
 };
 use proc_macro2::TokenStream;
 
@@ -732,7 +733,7 @@ pub trait CustomOp: Send + Sync + 'static {
 
     /// Optional: weights/snapshot collection (parallels NodeCodegen).
     fn collect_snapshots(&self, _node: &CustomNode, _field_name: &str)
-        -> Result<Vec<TensorSnapshot>, ProcessError> { Ok(vec![]) }
+        -> Result<Vec<PackTensor>, ProcessError> { Ok(vec![]) }
 }
 ```
 
@@ -755,7 +756,7 @@ pub trait OpOverride: Send + Sync + 'static {
     fn register_imports(&self, _imports: &mut Imports<'_>) {}
     fn field(&self, _node: &Node) -> Result<Option<Field>, ProcessError> { Ok(None) }
     fn collect_snapshots(&self, _node: &Node, _field_name: &str)
-        -> Result<Vec<TensorSnapshot>, ProcessError> { Ok(vec![]) }
+        -> Result<Vec<PackTensor>, ProcessError> { Ok(vec![]) }
 }
 ```
 
