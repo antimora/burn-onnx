@@ -318,4 +318,38 @@ mod tests {
 
         assert!(create_lazy_snapshot(&arg, "deform_conv1.bias").is_none());
     }
+
+    /// An unlifted constant fails when the writer draws its bytes, and that failure has to
+    /// name both ends: the burnpack path to locate it in the model, and the ONNX argument to
+    /// locate it in the graph. The path comes from burn-pack, whose writer annotates every
+    /// provider error with the tensor it was drawing; the argument name comes from the
+    /// closure here. Neither alone is enough to act on.
+    #[test]
+    fn unlifted_constant_write_failure_names_path_and_argument() {
+        use onnx_ir::ir::{ArgType, Argument, TensorType, ValueSource};
+
+        let mut arg = Argument::new(
+            "onnx_initializer_7",
+            ArgType::Tensor(TensorType {
+                dtype: DType::F32,
+                rank: 1,
+                static_shape: Some(vec![Some(3)]),
+            }),
+        );
+        // Claims to be a constant, but nothing ever lifted a value into the store.
+        arg.value_source = ValueSource::Constant;
+
+        let tensor = create_lazy_snapshot(&arg, "conv1.weight").expect("a constant is snapshotted");
+
+        let err = burn_pack::Writer::new(vec![tensor])
+            .into_bytes()
+            .expect_err("an unlifted constant must fail the write");
+
+        let msg = err.to_string();
+        assert!(msg.contains("conv1.weight"), "missing burnpack path: {msg}");
+        assert!(
+            msg.contains("onnx_initializer_7"),
+            "missing ONNX argument name: {msg}"
+        );
+    }
 }
