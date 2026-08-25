@@ -103,45 +103,45 @@ impl NodeCodegen for BatchNormalizationNode {
         }
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
+    fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
         match &self.config {
             BatchNormConfig::Static(_) => {
-                use crate::burn::node_traits::create_lazy_snapshot;
-                let mut snapshots = vec![];
+                use crate::burn::node_traits::create_deferred_tensor;
+                let mut tensors = vec![];
 
                 if let Some(gamma_input) = self.inputs.get(1) {
                     let gamma_path = format!("{}.gamma", field_name);
-                    if let Some(snapshot) = create_lazy_snapshot(gamma_input, &gamma_path) {
-                        snapshots.push(snapshot);
+                    if let Some(tensor) = create_deferred_tensor(gamma_input, &gamma_path) {
+                        tensors.push(tensor);
                     }
                 }
 
                 if let Some(beta_input) = self.inputs.get(2) {
                     let beta_path = format!("{}.beta", field_name);
-                    if let Some(snapshot) = create_lazy_snapshot(beta_input, &beta_path) {
-                        snapshots.push(snapshot);
+                    if let Some(tensor) = create_deferred_tensor(beta_input, &beta_path) {
+                        tensors.push(tensor);
                     }
                 }
 
                 if let Some(running_mean_input) = self.inputs.get(3) {
                     let running_mean_path = format!("{}.running_mean", field_name);
-                    if let Some(snapshot) =
-                        create_lazy_snapshot(running_mean_input, &running_mean_path)
+                    if let Some(tensor) =
+                        create_deferred_tensor(running_mean_input, &running_mean_path)
                     {
-                        snapshots.push(snapshot);
+                        tensors.push(tensor);
                     }
                 }
 
                 if let Some(running_var_input) = self.inputs.get(4) {
                     let running_var_path = format!("{}.running_var", field_name);
-                    if let Some(snapshot) =
-                        create_lazy_snapshot(running_var_input, &running_var_path)
+                    if let Some(tensor) =
+                        create_deferred_tensor(running_var_input, &running_var_path)
                     {
-                        snapshots.push(snapshot);
+                        tensors.push(tensor);
                     }
                 }
 
-                snapshots
+                tensors
             }
             BatchNormConfig::Runtime(_) => vec![],
         }

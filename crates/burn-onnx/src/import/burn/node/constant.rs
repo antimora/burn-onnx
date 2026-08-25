@@ -186,20 +186,20 @@ impl NodeCodegen for onnx_ir::node::constant::ConstantNode {
         Some(Field::new(self.name.clone(), ty, init))
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
-        use crate::burn::node_traits::create_lazy_snapshot;
+    fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
+        use crate::burn::node_traits::create_deferred_tensor;
 
         let output = self.outputs.first().unwrap();
 
-        // Collect snapshots for tensor and ScalarTensor constants.
+        // Collect deferred tensors for tensor and ScalarTensor constants.
         // ScalarTensor values are also embedded in the field initializer for Model::new(),
         // but burnpack needs them too for Model::from_file() / from_bytes() / from_embedded().
         match &output.ty {
             ArgType::Tensor(_) | ArgType::ScalarTensor(_) => {
                 if let Some(input) = self.inputs.first() {
                     // Use the field name as the path since constants are stored as single params
-                    if let Some(snapshot) = create_lazy_snapshot(input, field_name) {
-                        vec![snapshot]
+                    if let Some(tensor) = create_deferred_tensor(input, field_name) {
+                        vec![tensor]
                     } else {
                         vec![]
                     }

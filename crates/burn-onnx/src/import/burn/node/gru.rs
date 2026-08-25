@@ -25,7 +25,7 @@ use burn_pack::Tensor as PackTensor;
 use burn_store::bridge;
 use onnx_ir::gru::{GruActivationFunction, GruDirection};
 
-/// Collect tensor snapshots for GRU burnpack serialization.
+/// Collect deferred tensors for GRU burnpack serialization.
 ///
 /// ONNX GRU weight layout:
 /// - W: `[num_directions, 3*hidden_size, input_size]` - gates ordered as [z, r, h]
@@ -37,7 +37,7 @@ use onnx_ir::gru::{GruActivationFunction, GruDirection};
 /// - update_gate.hidden_transform: weight `[hidden_size, hidden_size]`, bias `[hidden_size]`
 /// - reset_gate, new_gate: same structure
 #[allow(clippy::single_range_in_vec_init)]
-fn collect_gru_snapshots(
+fn collect_gru_tensors(
     field_name: &str,
     inputs: &[Argument],
     config: &onnx_ir::gru::GruConfig,
@@ -57,7 +57,7 @@ fn collect_gru_snapshots(
     // missing W/R, or a group split across initializers and graph inputs), so reaching
     // here means the tensor store lost a value we were promised. Returning an empty list
     // instead would rebuild the bug this path exists to fix: a struct full of gate
-    // `Param`s that no snapshot fills, which `from_file` reports as missing tensors and
+    // `Param`s that no tensor fills, which `from_file` reports as missing tensors and
     // `Model::new` silently fills with random values.
     let (Some(data_w), Some(data_r)) = (data_w, data_r) else {
         panic!(
@@ -83,12 +83,12 @@ fn collect_gru_snapshots(
         GruDirection::Bidirectional => vec!["forward.", "reverse."],
     };
 
-    let mut snapshots = Vec::new();
+    let mut tensors = Vec::new();
 
     // Create tensors from data, pinning the runtime dtype to the ONNX weight
     // dtype via `(device, dtype)`. A bare `&device` would let
     // `Tensor::from_data` resolve the dtype from the device default and
-    // silently truncate f64 weights before they enter the snapshot pipeline.
+    // silently truncate f64 weights before they enter the tensor pipeline.
     let w_tensor: Tensor<3> = Tensor::from_data(data_w.clone(), (&device, dtype));
     let r_tensor: Tensor<3> = Tensor::from_data(data_r.clone(), (&device, dtype));
     let b_tensor: Option<Tensor<2>> = data_b
@@ -135,7 +135,7 @@ fn collect_gru_snapshots(
                 "{}.{}{}.input_transform.weight",
                 field_name, dir_prefix, gate_name
             );
-            snapshots.push(create_snapshot_from_data(w_gate_data, &path, dtype));
+            tensors.push(create_tensor_from_data(w_gate_data, &path, dtype));
 
             // Input transform bias: Wb for this gate
             if let Some(ref b) = b_dir {
@@ -149,7 +149,7 @@ fn collect_gru_snapshots(
                     "{}.{}{}.input_transform.bias",
                     field_name, dir_prefix, gate_name
                 );
-                snapshots.push(create_snapshot_from_data(bias_data, &path, dtype));
+                tensors.push(create_tensor_from_data(bias_data, &path, dtype));
             }
 
             // Hidden transform weight: ONNX [hidden_size, hidden_size] -> Burn [hidden_size, hidden_size]
@@ -163,7 +163,7 @@ fn collect_gru_snapshots(
                 "{}.{}{}.hidden_transform.weight",
                 field_name, dir_prefix, gate_name
             );
-            snapshots.push(create_snapshot_from_data(r_gate_data, &path, dtype));
+            tensors.push(create_tensor_from_data(r_gate_data, &path, dtype));
 
             // Hidden transform bias: Rb for this gate
             if let Some(b) = &b_dir {
@@ -177,16 +177,16 @@ fn collect_gru_snapshots(
                     "{}.{}{}.hidden_transform.bias",
                     field_name, dir_prefix, gate_name
                 );
-                snapshots.push(create_snapshot_from_data(bias_data, &path, dtype));
+                tensors.push(create_tensor_from_data(bias_data, &path, dtype));
             }
         }
     }
 
-    snapshots
+    tensors
 }
 
 /// Create a burnpack tensor from TensorData already in hand.
-fn create_snapshot_from_data(
+fn create_tensor_from_data(
     data: burn::tensor::TensorData,
     path: &str,
     dtype: burn::tensor::DType,
@@ -488,8 +488,8 @@ impl NodeCodegen for onnx_ir::gru::GruNode {
         rnn_common::field(&self.name, &self.inputs, ty, init)
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
-        collect_gru_snapshots(field_name, &self.inputs, &self.config)
+    fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
+        collect_gru_tensors(field_name, &self.inputs, &self.config)
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
@@ -870,7 +870,7 @@ mod tests {
         assert!(
             NodeCodegen::field(&node).is_none(),
             "runtime weights must not declare a struct field, or `from_file` fails on \
-             tensors no snapshot can supply"
+             tensors no tensor can supply"
         );
     }
 

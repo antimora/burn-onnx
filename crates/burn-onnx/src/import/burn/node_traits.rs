@@ -117,10 +117,11 @@ pub trait NodeCodegen: std::fmt::Debug {
         None
     }
 
-    /// (Optional) Collect tensor snapshots for burnpack serialization.
+    /// (Optional) Collect deferred tensors for burnpack serialization.
     ///
-    /// Returns tensor snapshots with paths like "{field_name}.weight", "{field_name}.bias".
-    /// The snapshots must be lazy - data should only be loaded when `to_data()` is called.
+    /// Returns deferred tensors with paths like "{field_name}.weight", "{field_name}.bias".
+    /// The tensors must stay deferred - bytes should only be produced when the writer
+    /// requests them.
     ///
     /// # Arguments
     ///
@@ -129,7 +130,7 @@ pub trait NodeCodegen: std::fmt::Debug {
     /// # Notes
     ///
     /// For nodes without learnable parameters, the default implementation returns an empty vec.
-    fn collect_snapshots(&self, _field_name: &str) -> Vec<PackTensor> {
+    fn collect_tensors(&self, _field_name: &str) -> Vec<PackTensor> {
         vec![]
     }
 }
@@ -176,17 +177,17 @@ pub fn arg_to_ident(arg: &Argument) -> proc_macro2::Ident {
 }
 
 // ============================================================================
-// Tensor snapshot helpers
+// Deferred tensor helpers
 // ============================================================================
 //
 // Tensors created during ONNX import (e.g., for slicing weight blobs in the
-// rnn/lstm/gru snapshot helpers) MUST pin the runtime dtype via
+// rnn/lstm/gru tensor helpers) MUST pin the runtime dtype via
 // `Tensor::from_data(data, (&device, dtype))` rather than the bare `&device`
 // overload. The bare form lets `Tensor::from_data` resolve the dtype from the
 // device's default `FloatDType`, which can silently truncate f64 weights to
-// f32 before they enter the snapshot pipeline.
+// f32 before they enter the tensor pipeline.
 
-/// Create a lazy burnpack tensor from an ONNX argument.
+/// Create a deferred burnpack tensor from an ONNX argument.
 ///
 /// The returned tensor carries only metadata until its bytes are drawn: the closure
 /// captures the argument and calls `value()` only when the writer asks for the data.
@@ -200,12 +201,12 @@ pub fn arg_to_ident(arg: &Argument) -> proc_macro2::Ident {
 /// # Returns
 ///
 /// A deferred [`PackTensor`], or `None` when the input carries no static data
-pub fn create_lazy_snapshot(input: &Argument, path: &str) -> Option<PackTensor> {
+pub fn create_deferred_tensor(input: &Argument, path: &str) -> Option<PackTensor> {
     use burn::module::ParamId;
     use burn::tensor::TensorData;
     use onnx_ir::ir::ArgType;
 
-    // Skip Dynamic and Optional inputs: there is no static data to snapshot.
+    // Skip Dynamic and Optional inputs: there is no static data to capture.
     // Constant inputs are intentionally let through so an unlifted constant
     // fails loudly here rather than being silently dropped (which would
     // produce a model with zero-initialized weights at load time).
@@ -287,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn create_lazy_snapshot_skips_dynamic_input() {
+    fn create_deferred_tensor_skips_dynamic_input() {
         use onnx_ir::ir::{ArgType, Argument, TensorType, ValueSource};
 
         let arg = Argument::new(
@@ -299,11 +300,11 @@ mod tests {
             }),
         );
         assert_eq!(arg.value_source, ValueSource::Dynamic);
-        assert!(create_lazy_snapshot(&arg, "prelu1.alpha").is_none());
+        assert!(create_deferred_tensor(&arg, "prelu1.alpha").is_none());
     }
 
     #[test]
-    fn create_lazy_snapshot_skips_optional_input() {
+    fn create_deferred_tensor_skips_optional_input() {
         use onnx_ir::ir::{ArgType, Argument, TensorType, ValueSource};
 
         let arg = Argument::new(
@@ -316,7 +317,7 @@ mod tests {
         );
         assert_eq!(arg.value_source, ValueSource::Optional);
 
-        assert!(create_lazy_snapshot(&arg, "deform_conv1.bias").is_none());
+        assert!(create_deferred_tensor(&arg, "deform_conv1.bias").is_none());
     }
 
     /// An unlifted constant fails when the writer draws its bytes, and that failure has to
@@ -339,7 +340,7 @@ mod tests {
         // Claims to be a constant, but nothing ever lifted a value into the store.
         arg.value_source = ValueSource::Constant;
 
-        let tensor = create_lazy_snapshot(&arg, "conv1.weight").expect("a constant is snapshotted");
+        let tensor = create_deferred_tensor(&arg, "conv1.weight").expect("a constant is captured");
 
         let err = burn_pack::Writer::new(vec![tensor])
             .into_bytes()

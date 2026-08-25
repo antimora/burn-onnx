@@ -10,7 +10,7 @@
 //! `burn-onnx` links against.
 
 pub use crate::burn::custom_op::{CustomOp, OpOverride};
-pub use crate::burn::node_traits::{Field, create_lazy_snapshot};
+pub use crate::burn::node_traits::{Field, create_deferred_tensor};
 
 /// Convert an argument's name to an identifier.
 ///

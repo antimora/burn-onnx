@@ -69,27 +69,27 @@ impl NodeCodegen for onnx_ir::conv1d::Conv1dNode {
         imports.register("burn::nn::conv::Conv1dConfig");
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
-        use crate::burn::node_traits::create_lazy_snapshot;
-        let mut snapshots = vec![];
+    fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
+        use crate::burn::node_traits::create_deferred_tensor;
+        let mut tensors = vec![];
 
         // Weight tensor (input index 1)
         if let Some(weight_input) = self.inputs.get(1) {
             let weight_path = format!("{}.weight", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(weight_input, &weight_path) {
-                snapshots.push(snapshot);
+            if let Some(tensor) = create_deferred_tensor(weight_input, &weight_path) {
+                tensors.push(tensor);
             }
         }
 
         // Bias tensor if present (input index 2)
         if let Some(bias_input) = self.inputs.get(2) {
             let bias_path = format!("{}.bias", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(bias_input, &bias_path) {
-                snapshots.push(snapshot);
+            if let Some(tensor) = create_deferred_tensor(bias_input, &bias_path) {
+                tensors.push(tensor);
             }
         }
 
-        snapshots
+        tensors
     }
 }
 

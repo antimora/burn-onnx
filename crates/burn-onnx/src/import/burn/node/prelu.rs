@@ -49,20 +49,20 @@ impl NodeCodegen for PReluNode {
         ))
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
-        use crate::burn::node_traits::create_lazy_snapshot;
+    fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
+        use crate::burn::node_traits::create_deferred_tensor;
 
-        let mut snapshots = vec![];
+        let mut tensors = vec![];
 
         if let Some(alpha_input) = self.inputs.get(1) {
             let alpha_path = format!("{}.alpha", field_name);
-            if let Some(mut snapshot) = create_lazy_snapshot(alpha_input, &alpha_path) {
-                snapshot.shape = Shape::from([num_parameters(self)]);
-                snapshots.push(snapshot);
+            if let Some(mut tensor) = create_deferred_tensor(alpha_input, &alpha_path) {
+                tensor.shape = Shape::from([num_parameters(self)]);
+                tensors.push(tensor);
             }
         }
 
-        snapshots
+        tensors
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {

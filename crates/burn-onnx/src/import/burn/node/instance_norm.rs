@@ -43,26 +43,26 @@ impl NodeCodegen for InstanceNormalizationNode {
         ))
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
-        use crate::burn::node_traits::create_lazy_snapshot;
+    fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
+        use crate::burn::node_traits::create_deferred_tensor;
 
-        let mut snapshots = vec![];
+        let mut tensors = vec![];
 
         if let Some(gamma_input) = self.inputs.get(1) {
             let gamma_path = format!("{}.gamma", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(gamma_input, &gamma_path) {
-                snapshots.push(snapshot);
+            if let Some(tensor) = create_deferred_tensor(gamma_input, &gamma_path) {
+                tensors.push(tensor);
             }
         }
 
         if let Some(beta_input) = self.inputs.get(2) {
             let beta_path = format!("{}.beta", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(beta_input, &beta_path) {
-                snapshots.push(snapshot);
+            if let Some(tensor) = create_deferred_tensor(beta_input, &beta_path) {
+                tensors.push(tensor);
             }
         }
 
-        snapshots
+        tensors
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {

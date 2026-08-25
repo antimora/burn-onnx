@@ -88,27 +88,27 @@ pub(crate) fn node_register_imports(node: &Node, imports: &mut BurnImports, hook
     NodeCodegen::register_imports(node, imports)
 }
 
-pub(crate) fn node_collect_snapshots(
+pub(crate) fn node_collect_tensors(
     node: &Node,
     field_name: &str,
     hooks: &HookRegistry,
 ) -> Vec<PackTensor> {
     if let Some(over) = hooks.override_for(&node.node_type()) {
         return expect_hook(
-            over.collect_snapshots(node, field_name),
-            "OpOverride::collect_snapshots",
+            over.collect_tensors(node, field_name),
+            "OpOverride::collect_tensors",
             node.name(),
         );
     }
     if let Node::Custom(c) = node {
         let hook = require_custom_hook(hooks, c);
         return expect_hook(
-            hook.collect_snapshots(c, field_name),
-            "CustomOp::collect_snapshots",
+            hook.collect_tensors(c, field_name),
+            "CustomOp::collect_tensors",
             &c.name,
         );
     }
-    NodeCodegen::collect_snapshots(node, field_name)
+    NodeCodegen::collect_tensors(node, field_name)
 }
 
 /// Macro to implement NodeCodegen on onnx_ir::Node by dispatching to individual node impls
@@ -165,9 +165,9 @@ macro_rules! impl_node_codegen_dispatch {
                 }
             }
 
-            fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
+            fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
                 match self {
-                    $(Node::$variant(n) => n.collect_snapshots(field_name),)*
+                    $(Node::$variant(n) => n.collect_tensors(field_name),)*
                     _ => vec![],
                 }
             }

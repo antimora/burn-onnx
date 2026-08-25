@@ -3,7 +3,7 @@ use crate::LoadStrategy;
 use crate::burn::custom_op::HookRegistry;
 use crate::burn::node::NodeCodegen;
 use crate::burn::node_codegen::{
-    node_collect_snapshots, node_field, node_forward, node_register_imports,
+    node_collect_tensors, node_field, node_forward, node_register_imports,
 };
 use crate::burn::partition::{
     MIN_GRAPH_SIZE, Partition, reorder_constants_to_consumers, try_partition,
@@ -27,7 +27,7 @@ pub struct BurnGraph {
     graph_output_args: Vec<onnx_ir::Argument>,
     /// Whether to partition large graphs into submodules (default: true)
     partition: bool,
-    /// Cached partition result (computed once, reused by snapshot collection and codegen)
+    /// Cached partition result (computed once, reused by tensor collection and codegen)
     cached_partition: Option<Option<Partition>>,
     /// Graph I/O args that were converted from ScalarTensor to ScalarNative at the
     /// boundary. Maps arg name -> DType. Used to insert conversion code:
@@ -78,10 +78,10 @@ impl BurnGraph {
         // run before it (codegen() re-checks for direct codegen users).
         self.validate_hooks_in_subgraphs();
 
-        // Collect all tensor snapshots from nodes. Each one stays deferred: the writer
+        // Collect all deferred tensors from nodes. Each one stays deferred: the writer
         // draws its bytes one at a time, so peak memory is bounded by the largest single
         // tensor rather than by the whole model.
-        let tensors = self.collect_all_snapshots();
+        let tensors = self.collect_all_tensors();
 
         // Write burnpack file. The atomic variant builds the container in a scratch file
         // and renames it into place, so a deferred provider failing mid-write can't leave
@@ -105,22 +105,22 @@ impl BurnGraph {
         self
     }
 
-    /// Collect all tensor snapshots from nodes recursively.
+    /// Collect all deferred tensors from nodes recursively.
     ///
-    /// When partitioned into submodules, snapshot paths are prefixed with the submodule
+    /// When partitioned into submodules, tensor paths are prefixed with the submodule
     /// field name (e.g. "submodule1.linear1.weight") so that `load_from` routes weights
     /// to the correct nested module.
-    fn collect_all_snapshots(&mut self) -> Vec<PackTensor> {
+    fn collect_all_tensors(&mut self) -> Vec<PackTensor> {
         let partition = self.compute_partition();
 
         if let Some(partition) = partition {
-            self.collect_snapshots_partitioned(&partition)
+            self.collect_tensors_partitioned(&partition)
         } else {
-            self.collect_snapshots_flat()
+            self.collect_tensors_flat()
         }
     }
 
-    /// Compute the partition once and cache it for reuse by both snapshot
+    /// Compute the partition once and cache it for reuse by both tensor
     /// collection and codegen, avoiding redundant work and ensuring consistency.
     fn compute_partition(&mut self) -> Option<Partition> {
         if let Some(ref cached) = self.cached_partition {
@@ -141,36 +141,36 @@ impl BurnGraph {
         result
     }
 
-    fn collect_snapshots_flat(&self) -> Vec<PackTensor> {
-        let mut snapshots = Vec::new();
+    fn collect_tensors_flat(&self) -> Vec<PackTensor> {
+        let mut tensors = Vec::new();
         let mut field_name_counts: HashMap<String, usize> = HashMap::new();
-        collect_snapshots_from_nodes(
+        collect_tensors_from_nodes(
             &self.nodes,
             "",
             &mut field_name_counts,
-            &mut snapshots,
+            &mut tensors,
             &self.hooks,
         );
-        snapshots
+        tensors
     }
 
-    fn collect_snapshots_partitioned(&self, partition: &Partition) -> Vec<PackTensor> {
-        let mut snapshots = Vec::new();
+    fn collect_tensors_partitioned(&self, partition: &Partition) -> Vec<PackTensor> {
+        let mut tensors = Vec::new();
 
         for (chunk_idx, range) in partition.chunks.iter().enumerate() {
             let prefix = format!("submodule{}", chunk_idx + 1);
             let chunk_nodes = &self.nodes[range.clone()];
             // Each chunk gets its own counter to match collect_fields_for_nodes (per-chunk)
             let mut field_name_counts: HashMap<String, usize> = HashMap::new();
-            collect_snapshots_from_nodes(
+            collect_tensors_from_nodes(
                 chunk_nodes,
                 &prefix,
                 &mut field_name_counts,
-                &mut snapshots,
+                &mut tensors,
                 &self.hooks,
             );
         }
-        snapshots
+        tensors
     }
 
     /// Add blank spaces in some places
@@ -197,7 +197,7 @@ impl BurnGraph {
 
     /// Set the codegen hooks for custom (non-built-in) ops.
     ///
-    /// Must be applied before `with_burnpack`, which collects snapshots and
+    /// Must be applied before `with_burnpack`, which collects tensors and
     /// therefore consults the hooks for `Node::Custom` fields.
     pub(crate) fn with_hooks(mut self, hooks: Arc<HookRegistry>) -> Self {
         self.hooks = hooks;
@@ -1085,24 +1085,24 @@ fn collect_fields_for_nodes(nodes: &[Node], hooks: &HookRegistry) -> Vec<FieldTu
     all_fields
 }
 
-/// Collect tensor snapshots from a slice of nodes, optionally prefixing paths.
+/// Collect deferred tensors from a slice of nodes, optionally prefixing paths.
 ///
-/// When `prefix` is non-empty, snapshot paths become "prefix.field.weight" etc.
-fn collect_snapshots_from_nodes(
+/// When `prefix` is non-empty, tensor paths become "prefix.field.weight" etc.
+fn collect_tensors_from_nodes(
     nodes: &[Node],
     prefix: &str,
     field_name_counts: &mut HashMap<String, usize>,
-    snapshots: &mut Vec<PackTensor>,
+    tensors: &mut Vec<PackTensor>,
     hooks: &HookRegistry,
 ) {
     // Hook-free for the same reason as collect_subgraph_fields_recursive:
     // subgraph forward codegen is hook-free, and hook-relevant body nodes
     // are rejected up front.
-    fn collect_subgraph_snapshots_recursive(
+    fn collect_subgraph_tensors_recursive(
         subgraph: &onnx_ir::OnnxGraph,
         prefix: &str,
         field_name_counts: &mut HashMap<String, usize>,
-        snapshots: &mut Vec<PackTensor>,
+        tensors: &mut Vec<PackTensor>,
     ) {
         for node in &subgraph.nodes {
             if let Some(field) = NodeCodegen::field(node) {
@@ -1121,29 +1121,29 @@ fn collect_snapshots_from_nodes(
                 } else {
                     format!("{}.{}", prefix, unique_name)
                 };
-                let node_snapshots = NodeCodegen::collect_snapshots(node, &full_name);
-                snapshots.extend(node_snapshots);
+                let node_tensors = NodeCodegen::collect_tensors(node, &full_name);
+                tensors.extend(node_tensors);
             }
 
             if let Node::If(nested) = node {
-                collect_subgraph_snapshots_recursive(
+                collect_subgraph_tensors_recursive(
                     &nested.config.then_branch,
                     prefix,
                     field_name_counts,
-                    snapshots,
+                    tensors,
                 );
-                collect_subgraph_snapshots_recursive(
+                collect_subgraph_tensors_recursive(
                     &nested.config.else_branch,
                     prefix,
                     field_name_counts,
-                    snapshots,
+                    tensors,
                 );
             } else if let Node::Loop(nested) = node {
-                collect_subgraph_snapshots_recursive(
+                collect_subgraph_tensors_recursive(
                     &nested.config.body,
                     prefix,
                     field_name_counts,
-                    snapshots,
+                    tensors,
                 );
             }
         }
@@ -1166,29 +1166,29 @@ fn collect_snapshots_from_nodes(
             } else {
                 format!("{}.{}", prefix, unique_name)
             };
-            let node_snapshots = node_collect_snapshots(node, &full_name, hooks);
-            snapshots.extend(node_snapshots);
+            let node_tensors = node_collect_tensors(node, &full_name, hooks);
+            tensors.extend(node_tensors);
         }
 
         if let Node::If(if_node) = node {
-            collect_subgraph_snapshots_recursive(
+            collect_subgraph_tensors_recursive(
                 &if_node.config.then_branch,
                 prefix,
                 field_name_counts,
-                snapshots,
+                tensors,
             );
-            collect_subgraph_snapshots_recursive(
+            collect_subgraph_tensors_recursive(
                 &if_node.config.else_branch,
                 prefix,
                 field_name_counts,
-                snapshots,
+                tensors,
             );
         } else if let Node::Loop(loop_node) = node {
-            collect_subgraph_snapshots_recursive(
+            collect_subgraph_tensors_recursive(
                 &loop_node.config.body,
                 prefix,
                 field_name_counts,
-                snapshots,
+                tensors,
             );
         }
     }
@@ -1299,8 +1299,8 @@ mod tests {
         graph.codegen();
     }
 
-    /// Custom op that declares a module field and a weight snapshot,
-    /// exercising the node_field / node_collect_snapshots dispatch.
+    /// Custom op that declares a module field and a weight tensor,
+    /// exercising the node_field / node_collect_tensors dispatch.
     struct StatefulFftOp;
 
     impl crate::ext::CustomOp for StatefulFftOp {
@@ -1346,7 +1346,7 @@ mod tests {
             )))
         }
 
-        fn collect_snapshots(
+        fn collect_tensors(
             &self,
             _node: &onnx_ir::CustomNode,
             field_name: &str,
@@ -1364,21 +1364,20 @@ mod tests {
     }
 
     #[test]
-    fn custom_op_field_and_snapshots_dispatch_to_hook() {
+    fn custom_op_field_and_tensors_dispatch_to_hook() {
         let mut registry = HookRegistry::default();
         registry.add_custom_op(Box::new(StatefulFftOp));
         let registry = Arc::new(registry);
 
-        // Snapshot collection consults the hook's field and collect_snapshots
+        // Snapshot collection consults the hook's field and collect_tensors
         let graph = build_custom_op_graph().with_hooks(registry.clone());
         let node = &graph.nodes[0];
         let field =
             crate::burn::node_codegen::node_field(node, &registry).expect("hook-declared field");
         assert_eq!(field.name.to_string(), "fft_state");
-        let snapshots =
-            crate::burn::node_codegen::node_collect_snapshots(node, "fft_state", &registry);
-        assert_eq!(snapshots.len(), 1);
-        assert_eq!(snapshots[0].name, "fft_state.state");
+        let tensors = crate::burn::node_codegen::node_collect_tensors(node, "fft_state", &registry);
+        assert_eq!(tensors.len(), 1);
+        assert_eq!(tensors[0].name, "fft_state.state");
 
         // The generated struct and forward reference the hook's field
         let code = format_tokens(graph.codegen());

@@ -73,8 +73,8 @@ pub trait CustomOp: Send + Sync + 'static {
         Ok(None)
     }
 
-    /// Optional: weights/snapshot collection (parallels the built-in nodes).
-    fn collect_snapshots(
+    /// Optional: weights/tensor collection (parallels the built-in nodes).
+    fn collect_tensors(
         &self,
         _node: &CustomNode,
         _field_name: &str,
@@ -112,13 +112,13 @@ pub trait OpOverride: Send + Sync + 'static {
     /// Optional: declare a module field in place of the built-in's.
     ///
     /// The default (`Ok(None)`) suppresses the built-in's field: overriding a
-    /// weighted op means reimplementing both `field` and `collect_snapshots`.
+    /// weighted op means reimplementing both `field` and `collect_tensors`.
     fn field(&self, _node: &Node) -> Result<Option<Field>, ProcessError> {
         Ok(None)
     }
 
-    /// Optional: weights/snapshot collection in place of the built-in's.
-    fn collect_snapshots(
+    /// Optional: weights/tensor collection in place of the built-in's.
+    fn collect_tensors(
         &self,
         _node: &Node,
         _field_name: &str,

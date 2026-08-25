@@ -57,7 +57,7 @@ fn to_burn_activation(onnx_activation: LstmActivationFunction) -> ActivationConf
     }
 }
 
-/// Collect tensor snapshots for LSTM burnpack serialization.
+/// Collect deferred tensors for LSTM burnpack serialization.
 ///
 /// This function handles the complex weight transformation from ONNX's packed format
 /// to Burn's individual GateController structure using the Flex CPU backend for tensor ops.
@@ -72,7 +72,7 @@ fn to_burn_activation(onnx_activation: LstmActivationFunction) -> ActivationConf
 /// - input_gate.hidden_transform: weight `[hidden_size, hidden_size]`, bias `[hidden_size]`
 /// - forget_gate, output_gate, cell_gate: same structure
 #[allow(clippy::single_range_in_vec_init)]
-fn collect_lstm_snapshots(
+fn collect_lstm_tensors(
     field_name: &str,
     inputs: &[Argument],
     config: &onnx_ir::lstm::LstmConfig,
@@ -93,7 +93,7 @@ fn collect_lstm_snapshots(
     // missing W/R, or a group split across initializers and graph inputs), so reaching
     // here means the tensor store lost a value we were promised. Returning an empty list
     // instead would rebuild the bug this path exists to fix: a struct full of gate
-    // `Param`s that no snapshot fills, which `from_file` reports as missing tensors and
+    // `Param`s that no tensor fills, which `from_file` reports as missing tensors and
     // `Model::new` silently fills with random values.
     let (Some(data_w), Some(data_r)) = (data_w, data_r) else {
         panic!(
@@ -120,13 +120,13 @@ fn collect_lstm_snapshots(
         LstmDirection::Bidirectional => vec!["forward.", "reverse."],
     };
 
-    let mut snapshots = Vec::new();
+    let mut tensors = Vec::new();
 
     // Create tensors from data, pinning the runtime dtype to the ONNX weight
     // dtype via `(device, dtype)`. A bare `&device` second argument would let
     // `Tensor::from_data` resolve the dtype from the device default and
-    // silently truncate f64 weights before they enter the snapshot pipeline.
-    // The later `convert_dtype(dtype)` in `create_snapshot_from_data` would
+    // silently truncate f64 weights before they enter the tensor pipeline.
+    // The later `convert_dtype(dtype)` in `create_tensor_from_data` would
     // restore the dtype tag but not the lost low bits.
     let w_tensor: Tensor<3> = Tensor::from_data(data_w.clone(), (&device, dtype));
     let r_tensor: Tensor<3> = Tensor::from_data(data_r.clone(), (&device, dtype));
@@ -176,7 +176,7 @@ fn collect_lstm_snapshots(
                 "{}.{}{}.input_transform.weight",
                 field_name, dir_prefix, gate_name
             );
-            snapshots.push(create_snapshot_from_data(w_gate_data, &path, dtype));
+            tensors.push(create_tensor_from_data(w_gate_data, &path, dtype));
 
             // Input transform bias: Wb + Rb for this gate
             if let Some(ref b) = b_dir {
@@ -194,7 +194,7 @@ fn collect_lstm_snapshots(
                     "{}.{}{}.input_transform.bias",
                     field_name, dir_prefix, gate_name
                 );
-                snapshots.push(create_snapshot_from_data(bias_data, &path, dtype));
+                tensors.push(create_tensor_from_data(bias_data, &path, dtype));
             }
 
             // Hidden transform weight: slice from R and transpose
@@ -209,7 +209,7 @@ fn collect_lstm_snapshots(
                 "{}.{}{}.hidden_transform.weight",
                 field_name, dir_prefix, gate_name
             );
-            snapshots.push(create_snapshot_from_data(r_gate_data, &path, dtype));
+            tensors.push(create_tensor_from_data(r_gate_data, &path, dtype));
 
             // Hidden transform bias: zeros (combined bias is in input_transform)
             if b_dir.is_some() {
@@ -220,12 +220,12 @@ fn collect_lstm_snapshots(
                     "{}.{}{}.hidden_transform.bias",
                     field_name, dir_prefix, gate_name
                 );
-                snapshots.push(create_snapshot_from_data(zeros_data, &path, dtype));
+                tensors.push(create_tensor_from_data(zeros_data, &path, dtype));
             }
         }
     }
 
-    snapshots
+    tensors
 }
 
 /// Create a burnpack tensor from TensorData already in hand.
@@ -234,9 +234,9 @@ fn collect_lstm_snapshots(
 /// weight-slicing pipeline already pins the dtype when building the intermediate
 /// `Tensor<_>` (via `from_data(data, (device, dtype))`),
 /// so this `convert_dtype` is ordinarily a no-op. It stays in place to guarantee
-/// the snapshot's dtype tag matches the tensor data even if a future refactor
+/// the tensor's dtype tag matches the tensor data even if a future refactor
 /// introduces a path that produces data in a different dtype.
-fn create_snapshot_from_data(
+fn create_tensor_from_data(
     data: burn::tensor::TensorData,
     path: &str,
     dtype: burn::tensor::DType,
@@ -374,8 +374,8 @@ impl NodeCodegen for onnx_ir::lstm::LstmNode {
         rnn_common::field(&self.name, &self.inputs, ty, init)
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
-        collect_lstm_snapshots(field_name, &self.inputs, &self.config)
+    fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
+        collect_lstm_tensors(field_name, &self.inputs, &self.config)
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
@@ -757,7 +757,7 @@ mod tests {
         assert!(
             NodeCodegen::field(&node).is_none(),
             "runtime weights must not declare a struct field, or `from_file` fails on \
-             tensors no snapshot can supply"
+             tensors no tensor can supply"
         );
     }
 

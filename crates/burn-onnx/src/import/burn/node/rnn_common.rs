@@ -8,12 +8,12 @@
 //! - `B`: `[num_directions, 2 * gates * hidden_size]`, all of `Wb` then all of `Rb`
 //!
 //! When those arrive as initializers the split runs at build time in each op's
-//! `collect_*_snapshots` and the result is written into the `.bpk`. When they arrive
-//! as graph inputs there is nothing to snapshot, so the same split is emitted as
+//! `collect_*_tensors` and the result is written into the `.bpk`. When they arrive
+//! as graph inputs there is nothing to capture, so the same split is emitted as
 //! generated code and applied to a module built inside `forward`.
 //!
 //! The [`GateLayout`] each op declares names its gate order for both paths. Its
-//! [`BiasLayout`] drives the runtime path only: each `collect_*_snapshots` still encodes
+//! [`BiasLayout`] drives the runtime path only: each `collect_*_tensors` still encodes
 //! the same bias policy by hand, so the two have to be changed together.
 
 use super::prelude::*;
@@ -117,7 +117,7 @@ pub(crate) fn weights_are_runtime(inputs: &[Argument]) -> bool {
 
 /// The struct field holding this node's module, or `None` when the weights are runtime.
 ///
-/// A field on the runtime path would declare `Param`s that no snapshot can fill, which
+/// A field on the runtime path would declare `Param`s that no tensor can fill, which
 /// is what made `Model::from_file` panic before the weights were consumed.
 pub(crate) fn field(
     name: &str,
@@ -311,7 +311,7 @@ fn load_runtime_weights(
 /// `Argument::new` defaults to `ValueSource::Dynamic`, which is the state of a weight
 /// supplied as a graph input, so tests covering the static path have to say so. The
 /// fabricated `DataId` resolves in no store: these tests read `field`/`forward`, never
-/// `value()`. A test that calls `collect_snapshots` on one of these nodes will panic on
+/// `value()`. A test that calls `collect_tensors` on one of these nodes will panic on
 /// the unresolvable weight - back the argument with a real store instead of reaching for
 /// this helper there.
 #[cfg(test)]

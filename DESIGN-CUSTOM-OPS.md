@@ -15,7 +15,7 @@ them.
 
 Post-implementation review revisions (2026-08-12):
 
-- Trait methods that produce data (`forward`, `field`, `collect_snapshots` on
+- Trait methods that produce data (`forward`, `field`, `collect_tensors` on
   both `CustomOp` and `OpOverride`) return `Result<_, ProcessError>` so a hook
   can reject a configuration it cannot handle. Code generation itself has no
   recoverable error channel (`BurnGraph::codegen` returns a `TokenStream`), so
@@ -38,7 +38,7 @@ Post-implementation review revisions (2026-08-12):
   unconditionally overwriting `outputs[0]`.
 - `BurnGraph` rejects custom ops and override targets inside If/Loop/Scan
   bodies up front (subgraph body codegen is hook-free by design in v1), so
-  the field/snapshot collection and forward codegen halves cannot disagree.
+  the field/tensor collection and forward codegen halves cannot disagree.
 
 ## 1. Goals
 
@@ -616,7 +616,7 @@ single curated `burn_onnx::ext` module:
 ```rust
 // crates/burn-onnx/src/import/ext.rs (new) -- the ONLY entry point users import
 pub use crate::burn::custom_op::{CustomOp, OpOverride};
-pub use crate::burn::node_traits::{arg_to_ident, create_lazy_snapshot, Field};
+pub use crate::burn::node_traits::{arg_to_ident, create_deferred_tensor, Field};
 
 // Re-export the onnx-ir types users need so they need not depend on the
 // exact onnx-ir version directly.
@@ -625,7 +625,7 @@ pub use onnx_ir::{
     TensorData, TensorType,
 };
 
-// Burnpack tensor type used by collect_snapshots, plus the constructors for it.
+// Burnpack tensor type used by collect_tensors, plus the constructors for it.
 pub use burn_pack::{Error as PackError, Tensor as PackTensor};
 pub use burn_store::bridge;
 
@@ -665,9 +665,9 @@ impl<'a> Imports<'a> {
 
 Corrections to v1 in this list: `arg_to_ident` lives in `node_traits.rs:168`
 (not `argument_helpers.rs`) and is currently not re-exported anywhere, so the
-`ext` re-export is its promotion point. `create_lazy_snapshot`
+`ext` re-export is its promotion point. `create_deferred_tensor`
 (`node_traits.rs:197`) is what built-in nodes use to build `PackTensor`s
-from constant inputs; custom ops with weights need it for `collect_snapshots`,
+from constant inputs; custom ops with weights need it for `collect_tensors`,
 so it is part of the curated surface.
 
 Why wrappers instead of exposing `ScopeAtPosition` / `BurnImports`: the honest
@@ -731,15 +731,15 @@ pub trait CustomOp: Send + Sync + 'static {
     /// Optional: declare a module field (e.g. learnable params or RNG state).
     fn field(&self, _node: &CustomNode) -> Result<Option<Field>, ProcessError> { Ok(None) }
 
-    /// Optional: weights/snapshot collection (parallels NodeCodegen).
-    fn collect_snapshots(&self, _node: &CustomNode, _field_name: &str)
+    /// Optional: weights/tensor collection (parallels NodeCodegen).
+    fn collect_tensors(&self, _node: &CustomNode, _field_name: &str)
         -> Result<Vec<PackTensor>, ProcessError> { Ok(vec![]) }
 }
 ```
 
 `OpOverride` matches by `NodeType` instead of `(op_type, domain)` and receives
 the typed `Node`. It exposes the same overridable codegen surface as `CustomOp`
-(`forward`, `register_imports`, `field`, `collect_snapshots`) so the dispatch in
+(`forward`, `register_imports`, `field`, `collect_tensors`) so the dispatch in
 5.3 has a method to call for each. It deliberately has no `infer_output_types`:
 the built-in processor already produced correct types, and overrides are
 codegen-only (see open question 2).
@@ -755,7 +755,7 @@ pub trait OpOverride: Send + Sync + 'static {
 
     fn register_imports(&self, _imports: &mut Imports<'_>) {}
     fn field(&self, _node: &Node) -> Result<Option<Field>, ProcessError> { Ok(None) }
-    fn collect_snapshots(&self, _node: &Node, _field_name: &str)
+    fn collect_tensors(&self, _node: &Node, _field_name: &str)
         -> Result<Vec<PackTensor>, ProcessError> { Ok(vec![]) }
 }
 ```
@@ -855,7 +855,7 @@ impl NodeCodegen for Node {
         self.field_builtin()
     }
 
-    // register_imports() and collect_snapshots() take `&HookRegistry` and follow
+    // register_imports() and collect_tensors() take `&HookRegistry` and follow
     // the same pattern: override first, then Custom hook, then builtin.
 }
 ```
@@ -867,7 +867,7 @@ coverage pre-pass before codegen, so a miss here is a burn-onnx bug.)
 Threading: `BurnGraph` owns the `HookRegistry` (handed to it by `ModelGen`) and
 passes `&HookRegistry` into every `NodeCodegen` call site. All of those live in
 `graph.rs` (verified: `register_imports` at 475, `forward` at 688, `field` at
-885, `collect_snapshots` at 997; the `inputs`/`outputs` reads at 738/741 are
+885, `collect_tensors` at 997; the `inputs`/`outputs` reads at 738/741 are
 structural and unchanged). `partition.rs` has no direct `NodeCodegen` calls, so
 partitioned models pick up hooks for free through `graph.rs`.
 `ScopeAtPosition` itself does not carry the registry; this keeps it out of the
@@ -875,7 +875,7 @@ scope's clone-tracking state.
 
 Implementation correction: the hook-aware surface landed as free dispatch
 functions in `node_codegen.rs` (`node_forward`, `node_field`,
-`node_register_imports`, `node_collect_snapshots`), not as new parameters on
+`node_register_imports`, `node_collect_tensors`), not as new parameters on
 the `NodeCodegen` trait. Adding `&HookRegistry` to the trait would have
 re-signatured every per-node impl (~150 files) for a parameter none of them
 use; `Node` is a foreign type, so inherent methods were not an option either.
@@ -1060,9 +1060,9 @@ and fail with a friendly message" before any codegen capability lands.
    Handled naturally; no extra design needed.
 
 4. `field()` and learnable params. The trait supports declaring a struct field.
-   `collect_snapshots` is included from day one to avoid a breaking trait
-   change later, and `create_lazy_snapshot` is exported so custom ops build
-   snapshots the same way built-in nodes do.
+   `collect_tensors` is included from day one to avoid a breaking trait
+   change later, and `create_deferred_tensor` is exported so custom ops build
+   tensors the same way built-in nodes do.
 
 5. Versioning of the `CustomOp` trait. It lives in `burn-onnx`'s public API.
    Any change is a semver event. The trait above is minimal on purpose;

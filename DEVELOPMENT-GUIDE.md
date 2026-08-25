@@ -219,7 +219,7 @@ For example, the squeeze operation in `crates/onnx-ir/src/node/squeeze.rs` conta
    - `outputs(&self)` - Returns references to output arguments (usually just `&self.outputs`)
    - `forward(&self, scope)` - Generates Rust code for the operation using the `quote!` macro
    - `field(&self)` - (Optional) Declares module fields for parameters like weights
-   - `collect_snapshots(&self, field_name)` - (Optional) Collects tensor snapshots for burnpack
+   - `collect_tensors(&self, field_name)` - (Optional) Collects deferred tensors for burnpack
      serialization
 
 3. Use helper utilities from `argument_helpers.rs`:
@@ -1113,9 +1113,9 @@ generated code, or `ModelGen::development(true)` which dumps the parsed graph,
 to see the node types your override will actually be matched against.
 
 An override wins over the built-in for every node of the target type,
-including its `field()`/`collect_snapshots()`. The defaults suppress the
+including its `field()`/`collect_tensors()`. The defaults suppress the
 built-in's field, so overriding a weighted op (Conv, Gemm, ...) means
-reimplementing both `field()` and `collect_snapshots()` for it; the built-in
+reimplementing both `field()` and `collect_tensors()` for it; the built-in
 `Field` and its init code are not inherited. Override targets appearing
 inside `If`/`Loop`/`Scan` bodies are rejected at code generation (subgraph
 bodies always use built-in codegen).

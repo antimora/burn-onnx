@@ -46,29 +46,29 @@ impl NodeCodegen for onnx_ir::linear::LinearNode {
         Some(Field::new(self.name.clone(), quote! { Linear }, init_code))
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
-        use crate::burn::node_traits::create_lazy_snapshot;
+    fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
+        use crate::burn::node_traits::create_deferred_tensor;
 
-        let mut snapshots = vec![];
+        let mut tensors = vec![];
 
         // Weight tensor (input index 1)
         // No transposition needed - LinearLayout::Col handles ONNX [out, in] format
         if let Some(weight_input) = self.inputs.get(1) {
             let weight_path = format!("{}.weight", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(weight_input, &weight_path) {
-                snapshots.push(snapshot);
+            if let Some(tensor) = create_deferred_tensor(weight_input, &weight_path) {
+                tensors.push(tensor);
             }
         }
 
         // Bias tensor (input index 2, optional)
         if let Some(bias_input) = self.inputs.get(2) {
             let bias_path = format!("{}.bias", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(bias_input, &bias_path) {
-                snapshots.push(snapshot);
+            if let Some(tensor) = create_deferred_tensor(bias_input, &bias_path) {
+                tensors.push(tensor);
             }
         }
 
-        snapshots
+        tensors
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {

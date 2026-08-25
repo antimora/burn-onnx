@@ -83,15 +83,15 @@ impl NodeCodegen for DeformConvNode {
         ))
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
-        use crate::burn::node_traits::create_lazy_snapshot;
+    fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
+        use crate::burn::node_traits::create_deferred_tensor;
 
-        let mut snapshots = vec![];
+        let mut tensors = vec![];
 
         if let Some(weight_input) = self.inputs.get(1) {
             let weight_path = format!("{}.weight", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(weight_input, &weight_path) {
-                snapshots.push(snapshot);
+            if let Some(tensor) = create_deferred_tensor(weight_input, &weight_path) {
+                tensors.push(tensor);
             }
         }
 
@@ -99,12 +99,12 @@ impl NodeCodegen for DeformConvNode {
             && !bias_input.is_optional()
         {
             let bias_path = format!("{}.bias", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(bias_input, &bias_path) {
-                snapshots.push(snapshot);
+            if let Some(tensor) = create_deferred_tensor(bias_input, &bias_path) {
+                tensors.push(tensor);
             }
         }
 
-        snapshots
+        tensors
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
@@ -368,21 +368,21 @@ mod tests {
     }
 
     #[test]
-    fn test_deform_conv_collect_snapshots_with_bias() {
+    fn test_deform_conv_collect_tensors_with_bias() {
         use crate::burn::node_traits::NodeCodegen;
 
         let node = create_static_deform_conv_node("deform_conv1", true, false);
-        let snapshots = node.collect_snapshots("deform_conv1");
-        assert_eq!(snapshots.len(), 2);
+        let tensors = node.collect_tensors("deform_conv1");
+        assert_eq!(tensors.len(), 2);
     }
 
     #[test]
-    fn test_deform_conv_collect_snapshots_without_bias() {
+    fn test_deform_conv_collect_tensors_without_bias() {
         use crate::burn::node_traits::NodeCodegen;
 
         let node = create_static_deform_conv_node("deform_conv1", false, false);
-        let snapshots = node.collect_snapshots("deform_conv1");
-        assert_eq!(snapshots.len(), 1);
+        let tensors = node.collect_tensors("deform_conv1");
+        assert_eq!(tensors.len(), 1);
     }
 
     #[test]

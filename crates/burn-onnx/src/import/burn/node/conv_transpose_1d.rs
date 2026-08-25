@@ -60,10 +60,10 @@ impl NodeCodegen for onnx_ir::node::conv_transpose1d::ConvTranspose1dNode {
         imports.register("burn::nn::conv::ConvTranspose1dConfig");
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
-        use crate::burn::node_traits::create_lazy_snapshot;
+    fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
+        use crate::burn::node_traits::create_deferred_tensor;
 
-        let mut snapshots = vec![];
+        let mut tensors = vec![];
 
         // Weight tensor (input index 1)
         // ONNX ConvTranspose weight: [in_channels, out_channels/groups, kL]
@@ -71,8 +71,8 @@ impl NodeCodegen for onnx_ir::node::conv_transpose1d::ConvTranspose1dNode {
         // These layouts match! No transformation needed.
         if let Some(weight_input) = self.inputs.get(1) {
             let weight_path = format!("{}.weight", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(weight_input, &weight_path) {
-                snapshots.push(snapshot);
+            if let Some(tensor) = create_deferred_tensor(weight_input, &weight_path) {
+                tensors.push(tensor);
             }
         }
 
@@ -81,12 +81,12 @@ impl NodeCodegen for onnx_ir::node::conv_transpose1d::ConvTranspose1dNode {
             && let Some(bias_input) = self.inputs.get(2)
         {
             let bias_path = format!("{}.bias", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(bias_input, &bias_path) {
-                snapshots.push(snapshot);
+            if let Some(tensor) = create_deferred_tensor(bias_input, &bias_path) {
+                tensors.push(tensor);
             }
         }
 
-        snapshots
+        tensors
     }
 }
 
