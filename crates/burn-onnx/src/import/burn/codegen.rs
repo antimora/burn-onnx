@@ -376,7 +376,10 @@ mod tests {
     fn test_resolve_auto_pad_1d_not_set() {
         let padding = PaddingConfig1d::Explicit(1, 2);
         let result = resolve_auto_pad_1d(&AutoPad::NotSet, &padding, None, 3, 1, 1);
-        assert_eq!(result.to_string(), "PaddingConfig1d :: Explicit (1 , 2)");
+        assert_eq!(
+            result.to_string(),
+            quote! { PaddingConfig1d::Explicit(1, 2) }.to_string()
+        );
     }
 
     #[test]
@@ -389,7 +392,10 @@ mod tests {
             1,
             1,
         );
-        assert_eq!(result.to_string(), "PaddingConfig1d :: Explicit (1 , 1)");
+        assert_eq!(
+            result.to_string(),
+            quote! { PaddingConfig1d::Explicit(1, 1) }.to_string()
+        );
     }
 
     #[test]
@@ -397,7 +403,10 @@ mod tests {
         // No static spatial dimension: defer the computation to forward time.
         let result =
             resolve_auto_pad_1d(&AutoPad::SameUpper, &PaddingConfig1d::Valid, None, 3, 1, 1);
-        assert_eq!(result.to_string(), "PaddingConfig1d :: Same");
+        assert_eq!(
+            result.to_string(),
+            quote! { PaddingConfig1d::Same }.to_string()
+        );
     }
 
     #[test]
@@ -412,7 +421,7 @@ mod tests {
         );
         assert_eq!(
             result.to_string(),
-            "PaddingConfig2d :: Explicit (1 , 1 , 1 , 1)"
+            quote! { PaddingConfig2d::Explicit(1, 1, 1, 1) }.to_string()
         );
     }
 
@@ -426,7 +435,10 @@ mod tests {
             &[1, 1],
             &[1, 1],
         );
-        assert_eq!(result.to_string(), "PaddingConfig2d :: Same");
+        assert_eq!(
+            result.to_string(),
+            quote! { PaddingConfig2d::Same }.to_string()
+        );
     }
 
     #[test]
@@ -487,7 +499,10 @@ mod tests {
             &[1, 1, 1],
             &[1, 1, 1],
         );
-        assert_eq!(result.to_string(), "PaddingConfig3d :: Valid");
+        assert_eq!(
+            result.to_string(),
+            quote! { PaddingConfig3d::Valid }.to_string()
+        );
     }
 }
 
