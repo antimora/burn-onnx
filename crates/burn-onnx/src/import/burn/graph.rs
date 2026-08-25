@@ -82,32 +82,18 @@ impl BurnGraph {
         // Collect all tensor snapshots from nodes
         let snapshots = self.collect_all_snapshots();
 
-        // Materialize snapshots into the tensor-agnostic burnpack representation.
-        // This is currently eager because burn-pack doesn't accept lazy tensor providers.
-        // See https://github.com/tracel-ai/burn/issues/5219.
-        // FIXME: this is a regression that should be fixed for the official release
-        let tensors = snapshots
-            .iter()
-            .map(|snapshot| {
-                let data = snapshot.to_data().map_err(|e| (snapshot.full_path(), e))?;
-                Ok(Tensor::new(
-                    snapshot.full_path(),
-                    snapshot.dtype,
-                    snapshot.shape.clone(),
-                    snapshot.tensor_id.map(|id| id.val()),
-                    data.bytes,
-                ))
-            })
-            .collect::<Result<Vec<_>, (String, burn_store::TensorSnapshotError)>>()
-            .unwrap_or_else(|(path, e)| {
-                panic!("Failed to materialize tensor snapshot {path}: {e}")
-            });
+        // Convert snapshots into deferred burnpack tensors so the writer materializes
+        // them one at a time, bounding peak memory to the largest single tensor instead
+        // of the whole model.
+        let tensors = snapshots.into_iter().map(Tensor::from).collect();
 
-        // Write burnpack file
+        // Write burnpack file. The atomic variant builds the container in a scratch file
+        // and renames it into place, so a deferred provider failing mid-write can't leave
+        // a truncated .bpk behind.
         let burnpack_file = out_file.with_extension("bpk");
         Writer::new(tensors)
             .with_metadata("producer", "burn-onnx")
-            .write_to_file(&burnpack_file)
+            .write_to_file_atomic(&burnpack_file)
             .unwrap_or_else(|e| {
                 panic!(
                     "Failed to write burnpack file {}: {e}",
