@@ -169,6 +169,8 @@ impl NodeProcessor for LpPool1dProcessor {
             ));
         }
 
+        crate::node::padding::validate_auto_pad(node)?;
+
         crate::processor::same_as_input(node);
 
         Ok(())
@@ -369,5 +371,28 @@ mod tests {
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("dilations requires opset 11+"));
+    }
+
+    /// Pins `validate_auto_pad` into this processor's `infer_types`. Without the call the node
+    /// reaches burn-onnx codegen, which panics instead of reporting a `ProcessError`.
+    #[test]
+    fn test_lp_pool1d_rejects_unsupported_auto_pad_on_dynamic_shape() {
+        let mut node = TestNodeBuilder::new(NodeType::LpPool1d, "test_auto_pad")
+            .input_tensor_f32("data", 3, None)
+            .output_tensor_f32("output", 3, None)
+            .attr_ints("kernel_shape", vec![3])
+            .attr_int("p", 2)
+            .attr_string("auto_pad", "SAME_LOWER")
+            .build_with_graph_data(18);
+        let processor = LpPool1dProcessor;
+        let prefs = OutputPreferences::new();
+        let err = processor
+            .infer_types(&mut node, 18, &prefs)
+            .expect_err("SAME_LOWER over a dynamic input must be rejected")
+            .to_string();
+        assert!(
+            err.contains(&crate::node::padding::SameBlocker::SameLower.to_string()),
+            "{err}"
+        );
     }
 }

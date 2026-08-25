@@ -25,17 +25,15 @@ impl NodeCodegen for onnx_ir::conv3d::Conv3dNode {
         let groups = groups.to_tokens();
         let bias = self.inputs.len() == 3;
 
-        let shape = self.inputs[0].ty.static_shape_known();
-        let input_spatial = shape.as_deref().map(|s| &s[2..]);
+        let input_spatial = onnx_ir::node::padding::static_spatial_dims(&self.inputs[0].ty);
         let padding = crate::burn::codegen::resolve_auto_pad_3d(
             &self.config.auto_pad,
             &self.config.padding,
-            input_spatial,
+            input_spatial.as_deref(),
             &self.config.kernel_size,
             &self.config.stride,
             &self.config.dilation,
-        )
-        .to_tokens();
+        );
 
         Some(Field::new(
             self.name.clone(),

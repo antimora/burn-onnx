@@ -15,17 +15,15 @@ impl NodeCodegen for onnx_ir::lp_pool2d::LpPool2dNode {
         let strides = self.config.strides.to_tokens();
         let ceil_mode = self.config.ceil_mode;
 
-        let shape = self.inputs[0].ty.static_shape_known();
-        let input_spatial = shape.as_deref().map(|s| &s[2..]);
+        let input_spatial = onnx_ir::node::padding::static_spatial_dims(&self.inputs[0].ty);
         let padding = crate::burn::codegen::resolve_auto_pad_2d(
             &self.config.auto_pad,
             &self.config.padding,
-            input_spatial,
+            input_spatial.as_deref(),
             &self.config.kernel_size,
             &self.config.strides,
             &self.config.dilation,
-        )
-        .to_tokens();
+        );
 
         Some(Field::new(
             self.name.clone(),
@@ -138,5 +136,33 @@ mod tests {
             .with_ceil_mode(false)
             .init();
         "#);
+    }
+
+    #[test]
+    fn test_lp_pool2d_field_init_auto_pad_same_upper_dynamic() {
+        let config = LpPool2dConfig::new(
+            [3, 3],
+            [1, 1],
+            PaddingConfig2d::Valid,
+            [1, 1],
+            false,
+            AutoPad::SameUpper,
+            2,
+        );
+        let node = LpPool2dNodeBuilder::new("pool1")
+            .input_tensor("input", 4, DType::F32)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_field_init(&node);
+        // Dynamic H/W: burn computes the pads at forward time.
+        assert_snapshot!(code, @r"
+        let pool1 = AvgPool2dConfig::new([3, 3])
+            .with_strides([1, 1])
+            .with_padding(PaddingConfig2d::Same)
+            .with_count_include_pad(true)
+            .with_ceil_mode(false)
+            .init();
+        ");
     }
 }

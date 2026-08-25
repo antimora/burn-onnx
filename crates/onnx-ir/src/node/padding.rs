@@ -4,9 +4,16 @@
 //!
 //! Provides `PaddingConfig1d`, `PaddingConfig2d`, `PaddingConfig3d` enums and helper
 //! functions to convert ONNX padding arrays.
+//!
+//! [`forward_time_same_blocker`] encodes what burn's `PaddingConfig::Same` can serve, which is
+//! burn knowledge in a crate that otherwise mirrors ONNX. That is deliberate: `NodeCodegen`
+//! returns no `Result`, so burn-onnx cannot reject anything without panicking, and rejecting
+//! here is the only way to give the user a `ProcessError` naming the node. Treat it as an
+//! exception forced by the missing error channel, not as licence to move more burn knowledge in.
 
 use std::fmt;
 
+use crate::ir::{ArgType, AttributeValue, RawNode};
 use crate::processor::ProcessError;
 
 /// ONNX auto_pad attribute value.
@@ -50,6 +57,133 @@ impl fmt::Display for AutoPad {
             AutoPad::SameLower => write!(f, "SAME_LOWER"),
             AutoPad::Valid => write!(f, "VALID"),
         }
+    }
+}
+
+/// Spatial dimensions of a convolution or pooling input, when all of them are known.
+///
+/// Only the dimensions after N and C are inspected: a dynamic batch size does not stop the
+/// padding from being computed at import time.
+pub fn static_spatial_dims(ty: &ArgType) -> Option<Vec<usize>> {
+    ty.static_shape()?.get(2..)?.iter().copied().collect()
+}
+
+/// Why burn cannot defer a `SAME_UPPER`/`SAME_LOWER` padding to forward time.
+///
+/// Each variant names a property of burn's `calculate_same_padding`, verified against the pinned
+/// burn revision. `Display` renders the sentence that goes into the user-facing `ProcessError`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SameBlocker {
+    /// ONNX puts the extra pad of an odd total at the start, burn puts it at the end.
+    SameLower,
+    /// burn's forward-time padding takes no dilation, so the effective kernel would be wrong.
+    Dilated,
+    /// burn's 3D padding is symmetric-only, so an odd total has nowhere to go.
+    ThreeSpatialDims,
+}
+
+impl fmt::Display for SameBlocker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SameBlocker::SameLower => write!(
+                f,
+                "SAME_LOWER puts the extra pad at the start of the dimension, while padding \
+                 computed at forward time puts it at the end"
+            ),
+            SameBlocker::Dilated => {
+                write!(
+                    f,
+                    "padding computed at forward time does not account for dilation"
+                )
+            }
+            SameBlocker::ThreeSpatialDims => write!(
+                f,
+                "padding computed at forward time is symmetric-only over 3 spatial dimensions"
+            ),
+        }
+    }
+}
+
+/// Why burn cannot defer this `SAME_UPPER`/`SAME_LOWER` padding to forward time, if it cannot.
+///
+/// `PaddingConfig::Same` derives the pads from the real input size during `forward`, which is the
+/// only option left when the spatial dimensions are unknown at import time. It reproduces ONNX
+/// for `SAME_UPPER` over one or two spatial dimensions without dilation.
+///
+/// Other cases can coincide with ONNX without being listed as safe here: an even total makes
+/// SAME_LOWER and SAME_UPPER identical, and a stride-1 odd kernel is always symmetric even in 3D.
+/// This check stays conservative rather than reasoning about pad parity, so it rejects them.
+///
+/// The answer assumes the burn module routes padding through `calculate_padding_1d_pair` or
+/// `calculate_padding_2d_pairs`, which keep the two sides separate. Every module burn-onnx
+/// targets today does; `DeformConv2d` does not, and would need its own check.
+///
+/// onnx-ir turns a blocker into a `ProcessError`; burn-onnx codegen asserts there is none before
+/// emitting `Same`. Both consult this function so the rule is stated once, but each gathers its
+/// arguments separately, so every op reaching a `resolve_auto_pad_*` must also call
+/// [`validate_auto_pad`] for the two to agree.
+pub fn forward_time_same_blocker(
+    auto_pad: &AutoPad,
+    dilated: bool,
+    spatial_rank: usize,
+) -> Option<SameBlocker> {
+    if *auto_pad == AutoPad::SameLower {
+        Some(SameBlocker::SameLower)
+    } else if dilated {
+        Some(SameBlocker::Dilated)
+    } else if spatial_rank > 2 {
+        Some(SameBlocker::ThreeSpatialDims)
+    } else {
+        None
+    }
+}
+
+/// Reject a `SAME_UPPER`/`SAME_LOWER` auto_pad whose input spatial dimensions are unknown and
+/// that burn cannot resolve at forward time either.
+///
+/// Known spatial dimensions let the pads be computed during import, which covers every mode over
+/// one or two spatial dimensions. 3D still requires the resulting pads to come out symmetric;
+/// `PaddingConfig3d::to_tokens` in burn-onnx rejects the rest.
+pub(crate) fn validate_auto_pad(node: &RawNode) -> Result<(), ProcessError> {
+    let auto_pad = match node.attrs.get("auto_pad") {
+        None => return Ok(()),
+        Some(AttributeValue::String(value)) => AutoPad::parse(value)?,
+        Some(other) => {
+            return Err(ProcessError::InvalidAttribute {
+                name: "auto_pad".to_string(),
+                reason: format!("expected a string, got {other:?}"),
+            });
+        }
+    };
+
+    let input = &node.inputs[0].ty;
+    if !matches!(auto_pad, AutoPad::SameUpper | AutoPad::SameLower)
+        || static_spatial_dims(input).is_some()
+    {
+        return Ok(());
+    }
+
+    let dilated = match node.attrs.get("dilations") {
+        None => false,
+        Some(AttributeValue::Int64s(dilations)) => dilations.iter().any(|&d| d != 1),
+        Some(other) => {
+            return Err(ProcessError::InvalidAttribute {
+                name: "dilations".to_string(),
+                reason: format!("expected a list of ints, got {other:?}"),
+            });
+        }
+    };
+
+    match forward_time_same_blocker(&auto_pad, dilated, input.rank().saturating_sub(2)) {
+        None => Ok(()),
+        Some(blocker) => Err(ProcessError::InvalidAttribute {
+            name: "auto_pad".to_string(),
+            reason: format!(
+                "{auto_pad} needs the input spatial dimensions, but they are dynamic, and the \
+                 padding cannot be deferred to forward time either: {blocker}. Re-export the \
+                 model with a static input shape, or with explicit pads."
+            ),
+        }),
     }
 }
 
@@ -282,6 +416,127 @@ pub(crate) fn padding_config_3d(pads: &[i64]) -> PaddingConfig3d {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::{DType, NodeType, TensorType};
+    use crate::node::test_utils::TestNodeBuilder;
+
+    /// Conv node whose input spatial dimensions are `spatial` (`None` = dynamic). The spatial
+    /// rank, which decides the 3D blocker, follows from how many are given. The node type is
+    /// always Conv2d even for other ranks; `validate_auto_pad` does not inspect it.
+    fn conv_node(auto_pad: &str, spatial: &[Option<usize>], dilations: Vec<i64>) -> RawNode {
+        let mut static_shape = vec![None, Some(3)];
+        static_shape.extend_from_slice(spatial);
+        let rank = static_shape.len();
+        TestNodeBuilder::new(NodeType::Conv2d, "test_conv")
+            .add_input(
+                "data",
+                ArgType::Tensor(TensorType {
+                    dtype: DType::F32,
+                    rank,
+                    static_shape: Some(static_shape),
+                }),
+            )
+            .output_tensor_f32("output", rank, None)
+            .attr_string("auto_pad", auto_pad)
+            .attr_ints("dilations", dilations)
+            .build()
+    }
+
+    #[test]
+    fn test_static_spatial_dims_ignores_dynamic_batch() {
+        let node = conv_node("SAME_UPPER", &[Some(7), Some(9)], vec![1, 1]);
+        assert_eq!(static_spatial_dims(&node.inputs[0].ty), Some(vec![7, 9]));
+    }
+
+    #[test]
+    fn test_static_spatial_dims_dynamic() {
+        let node = conv_node("SAME_UPPER", &[None, None], vec![1, 1]);
+        assert_eq!(static_spatial_dims(&node.inputs[0].ty), None);
+    }
+
+    #[test]
+    fn test_validate_auto_pad_accepts_static_spatial() {
+        // Over 1 or 2 spatial dimensions every mode is fine once the dimensions are known:
+        // the pads are computed during import.
+        for auto_pad in ["SAME_UPPER", "SAME_LOWER"] {
+            let node = conv_node(auto_pad, &[Some(7), Some(7)], vec![2, 2]);
+            assert!(validate_auto_pad(&node).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_validate_auto_pad_accepts_same_upper_dynamic() {
+        let node = conv_node("SAME_UPPER", &[None, None], vec![1, 1]);
+        assert!(validate_auto_pad(&node).is_ok());
+    }
+
+    #[test]
+    fn test_validate_auto_pad_rejects_same_lower_dynamic() {
+        let node = conv_node("SAME_LOWER", &[None, None], vec![1, 1]);
+        let err = validate_auto_pad(&node).unwrap_err().to_string();
+        assert!(err.contains(&SameBlocker::SameLower.to_string()), "{err}");
+    }
+
+    #[test]
+    fn test_validate_auto_pad_rejects_dilation_dynamic() {
+        let node = conv_node("SAME_UPPER", &[None, None], vec![2, 2]);
+        let err = validate_auto_pad(&node).unwrap_err().to_string();
+        assert!(err.contains(&SameBlocker::Dilated.to_string()), "{err}");
+    }
+
+    #[test]
+    fn test_validate_auto_pad_rejects_3d_dynamic() {
+        let node = conv_node("SAME_UPPER", &[None, None, None], vec![1, 1, 1]);
+        let err = validate_auto_pad(&node).unwrap_err().to_string();
+        assert!(
+            err.contains(&SameBlocker::ThreeSpatialDims.to_string()),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn test_forward_time_same_blocker_precedence() {
+        // SAME_LOWER is reported before dilation, and dilation before the 3D limit, so the
+        // message names the first thing the user has to change.
+        assert_eq!(
+            forward_time_same_blocker(&AutoPad::SameLower, true, 3),
+            Some(SameBlocker::SameLower)
+        );
+        assert_eq!(
+            forward_time_same_blocker(&AutoPad::SameUpper, true, 3),
+            Some(SameBlocker::Dilated)
+        );
+        assert_eq!(
+            forward_time_same_blocker(&AutoPad::SameUpper, false, 3),
+            Some(SameBlocker::ThreeSpatialDims)
+        );
+        assert_eq!(
+            forward_time_same_blocker(&AutoPad::SameUpper, false, 2),
+            None
+        );
+    }
+
+    #[test]
+    fn test_validate_auto_pad_rejects_wrong_attribute_types() {
+        let mut node = conv_node("SAME_UPPER", &[None, None], vec![1, 1]);
+        node.attrs
+            .insert("auto_pad".to_string(), AttributeValue::Int64(1));
+        let err = validate_auto_pad(&node).unwrap_err().to_string();
+        assert!(err.contains("expected a string"), "{err}");
+
+        let mut node = conv_node("SAME_UPPER", &[None, None], vec![1, 1]);
+        node.attrs
+            .insert("dilations".to_string(), AttributeValue::Int64(1));
+        let err = validate_auto_pad(&node).unwrap_err().to_string();
+        assert!(err.contains("expected a list of ints"), "{err}");
+    }
+
+    #[test]
+    fn test_validate_auto_pad_ignores_other_modes() {
+        for auto_pad in ["NOTSET", "VALID"] {
+            let node = conv_node(auto_pad, &[None, None], vec![1, 1]);
+            assert!(validate_auto_pad(&node).is_ok());
+        }
+    }
 
     // AutoPad tests
     #[test]

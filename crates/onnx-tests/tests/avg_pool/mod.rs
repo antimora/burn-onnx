@@ -6,6 +6,7 @@ include_models!(
     avg_pool1d_ceil_mode,
     avg_pool2d,
     avg_pool2d_asymmetric_padding,
+    avg_pool2d_same_upper_dynamic,
     avg_pool2d_ceil_mode
 );
 
@@ -230,5 +231,33 @@ mod tests {
             expected_sum,
             output_sum
         );
+    }
+
+    #[test]
+    fn avg_pool2d_same_upper_dynamic() {
+        // auto_pad=SAME_UPPER over dynamic H/W. kernel 2 / stride 2 over an extent of 5 leaves
+        // a total pad of 1 at the end, so the trailing windows are half padding.
+        // count_include_pad=1 because burn ignores 0 under asymmetric padding
+        // (tracel-ai/burn#5450); see the generator script.
+        let device = Default::default();
+        let model: avg_pool2d_same_upper_dynamic::Model =
+            avg_pool2d_same_upper_dynamic::Model::from_file(
+                concat!(env!("OUT_DIR"), "/model/avg_pool2d_same_upper_dynamic.bpk"),
+                &device,
+            );
+
+        let input = Tensor::<1, burn::tensor::Int>::arange(1..26, &device)
+            .reshape([1, 1, 5, 5])
+            .float();
+        let output = model.forward(input);
+
+        // Ground truth from onnx.reference.ReferenceEvaluator
+        // (avg_pool2d_same_upper_dynamic.py).
+        let expected = TensorData::from([[[
+            [4.0f32, 6.0, 3.75],
+            [14.0, 16.0, 8.75],
+            [10.75, 11.75, 6.25],
+        ]]]);
+        output.to_data().assert_eq(&expected, true);
     }
 }

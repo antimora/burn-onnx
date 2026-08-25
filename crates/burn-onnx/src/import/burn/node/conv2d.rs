@@ -24,17 +24,15 @@ impl NodeCodegen for onnx_ir::conv2d::Conv2dNode {
         let groups = groups.to_tokens();
         let bias = self.inputs.len() == 3;
 
-        let shape = self.inputs[0].ty.static_shape_known();
-        let input_spatial = shape.as_deref().map(|s| &s[2..]);
+        let input_spatial = onnx_ir::node::padding::static_spatial_dims(&self.inputs[0].ty);
         let padding = crate::burn::codegen::resolve_auto_pad_2d(
             &self.config.auto_pad,
             &self.config.padding,
-            input_spatial,
+            input_spatial.as_deref(),
             &self.config.kernel_size,
             &self.config.stride,
             &self.config.dilation,
-        )
-        .to_tokens();
+        );
 
         Some(Field::new(
             self.name.clone(),
@@ -195,6 +193,36 @@ mod tests {
         let conv1 = Conv2dConfig::new([3, 64], [3, 3])
             .with_stride([1, 1])
             .with_padding(PaddingConfig2d::Explicit(1, 1, 1, 1))
+            .with_dilation([1, 1])
+            .with_groups(1)
+            .with_bias(true)
+            .init(device);
+        ");
+    }
+
+    #[test]
+    fn test_conv2d_field_init_auto_pad_same_upper_dynamic() {
+        let config = Conv2dConfig::new(
+            [3, 3],
+            [1, 1],
+            PaddingConfig2d::Valid,
+            [1, 1],
+            1,
+            AutoPad::SameUpper,
+        );
+        let node = Conv2dNodeBuilder::new("conv1")
+            .input_tensor("input", 4, DType::F32)
+            .input_static_tensor_shape("weight", vec![64, 3, 3, 3], DType::F32)
+            .input_static_tensor_shape("bias", vec![64], DType::F32)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_field_init(&node);
+        // Dynamic H/W: burn computes the pads at forward time.
+        assert_snapshot!(code, @r"
+        let conv1 = Conv2dConfig::new([3, 64], [3, 3])
+            .with_stride([1, 1])
+            .with_padding(PaddingConfig2d::Same)
             .with_dilation([1, 1])
             .with_groups(1)
             .with_bias(true)

@@ -6,13 +6,14 @@ include_models!(
     maxpool1d_ceil_mode,
     maxpool2d,
     maxpool2d_asymmetric_padding,
+    maxpool2d_same_upper_dynamic,
     maxpool2d_ceil_mode
 );
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::{Device, Shape, Tensor, TensorData};
+    use burn::tensor::{Device, Int, Shape, Tensor, TensorData};
 
     #[test]
     fn maxpool1d() {
@@ -176,5 +177,32 @@ mod tests {
             expected_sum,
             output_sum
         );
+    }
+
+    #[test]
+    fn maxpool2d_same_upper_dynamic() {
+        // auto_pad=SAME_UPPER over dynamic H/W: kernel 2, stride 2 on an extent of 5 leaves a
+        // total padding of 1, which SAME_UPPER puts at the end, so the windows are
+        // [0,1] [2,3] [4,pad]. SAME_LOWER would pad the start and shift every window:
+        // [pad,0] [1,2] [3,4].
+        let device = Default::default();
+        let model: maxpool2d_same_upper_dynamic::Model =
+            maxpool2d_same_upper_dynamic::Model::from_file(
+                concat!(env!("OUT_DIR"), "/model/maxpool2d_same_upper_dynamic.bpk"),
+                &device,
+            );
+
+        let input = Tensor::<1, Int>::arange(1..51, &device)
+            .reshape([1, 2, 5, 5])
+            .float();
+        let output = model.forward(input);
+
+        // Ground truth from onnx.reference.ReferenceEvaluator
+        // (maxpool2d_same_upper_dynamic.py).
+        let expected = TensorData::from([[
+            [[7.0f32, 9.0, 10.0], [17.0, 19.0, 20.0], [22.0, 24.0, 25.0]],
+            [[32.0, 34.0, 35.0], [42.0, 44.0, 45.0], [47.0, 49.0, 50.0]],
+        ]]);
+        output.to_data().assert_eq(&expected, true);
     }
 }

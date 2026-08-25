@@ -3,8 +3,10 @@ use crate::include_models;
 include_models!(
     conv1d,
     conv1d_asymmetric_padding,
+    conv1d_same_upper_dynamic,
     conv2d,
     conv2d_asymmetric_padding,
+    conv2d_same_upper_dynamic,
     conv3d
 );
 
@@ -130,5 +132,64 @@ mod tests {
         // sum magnifies gemm-order accumulation drift (~2.5e-3 absolute vs PyTorch).
         let expected_sum = -481.67495_7_f32;
         assert!(expected_sum.approx_eq(output_sum, (5.0e-3, 2)));
+    }
+
+    #[test]
+    fn conv1d_same_upper_dynamic() {
+        // The 1D counterpart of conv2d_same_upper_dynamic. Its job is to compile and run
+        // PaddingConfig1d::Same, which the snapshot tests only assert as generated text.
+        // stride 2 makes the pads depend on the parity of the length: L=9 -> (1, 2), L=8 -> (1, 1).
+        let device = Default::default();
+        let model: conv1d_same_upper_dynamic::Model = conv1d_same_upper_dynamic::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/conv1d_same_upper_dynamic.bpk"),
+            &device,
+        );
+
+        // Ground truth from onnxruntime (conv1d_same_upper_dynamic.py).
+        for (length, out_len, expected_sum) in
+            [(9usize, 5usize, -23.750_193_f32), (8, 4, -19.424_349)]
+        {
+            let input = Tensor::<3>::ones([1, 2, length], &device);
+            let output = model.forward(input);
+
+            assert_eq!(output.shape(), Shape::from([1, 3, out_len]));
+
+            let output_sum = output.sum().into_scalar::<f32>();
+            assert!(
+                expected_sum.approx_eq(output_sum, (1.0e-3, 2)),
+                "L={length}: expected {expected_sum}, got {output_sum}"
+            );
+        }
+    }
+
+    #[test]
+    fn conv2d_same_upper_dynamic() {
+        // auto_pad=SAME_UPPER over dynamic H/W: burn derives the pads from the real input size
+        // at forward time. stride 2 makes the pads depend on the parity of the extent, so the
+        // two sizes below exercise different pads (5x6 -> H (1,1) W (1,1); 8x7 -> H (0,1)
+        // W (1,2)), and the odd totals exercise SAME_UPPER putting the extra pad last.
+        let device = Default::default();
+        let model: conv2d_same_upper_dynamic::Model = conv2d_same_upper_dynamic::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/conv2d_same_upper_dynamic.bpk"),
+            &device,
+        );
+
+        // Ground truth from onnxruntime (see conv2d_same_upper_dynamic.py for why not
+        // ReferenceEvaluator).
+        for (height, width, out_h, out_w, expected_sum) in [
+            (5usize, 6usize, 3usize, 3usize, -45.890_423_f32),
+            (8, 7, 4, 4, -123.938_919),
+        ] {
+            let input = Tensor::<4>::ones([1, 2, height, width], &device);
+            let output = model.forward(input);
+
+            assert_eq!(output.shape(), Shape::from([1, 3, out_h, out_w]));
+
+            let output_sum = output.sum().into_scalar::<f32>();
+            assert!(
+                expected_sum.approx_eq(output_sum, (1.0e-3, 2)),
+                "{height}x{width}: expected {expected_sum}, got {output_sum}"
+            );
+        }
     }
 }

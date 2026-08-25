@@ -112,6 +112,8 @@ impl NodeProcessor for AvgPool1dProcessor {
             }
         }
 
+        crate::node::padding::validate_auto_pad(node)?;
+
         // Extract input tensor type
         let tensor = match &node.inputs[0].ty {
             ArgType::Tensor(tensor) => tensor,
@@ -330,5 +332,27 @@ mod tests {
         let prefs = OutputPreferences::new();
         let result = processor.infer_types(&mut node, 11, &prefs);
         assert!(result.is_ok());
+    }
+
+    /// Pins `validate_auto_pad` into this processor's `infer_types`. Without the call the node
+    /// reaches burn-onnx codegen, which panics instead of reporting a `ProcessError`.
+    #[test]
+    fn test_avg_pool1d_rejects_unsupported_auto_pad_on_dynamic_shape() {
+        let mut node = TestNodeBuilder::new(NodeType::AveragePool1d, "test_auto_pad")
+            .input_tensor_f32("data", 3, None)
+            .output_tensor_f32("output", 3, None)
+            .attr_ints("kernel_shape", vec![3])
+            .attr_string("auto_pad", "SAME_LOWER")
+            .build_with_graph_data(16);
+        let processor = AvgPool1dProcessor;
+        let prefs = OutputPreferences::new();
+        let err = processor
+            .infer_types(&mut node, 16, &prefs)
+            .expect_err("SAME_LOWER over a dynamic input must be rejected")
+            .to_string();
+        assert!(
+            err.contains(&crate::node::padding::SameBlocker::SameLower.to_string()),
+            "{err}"
+        );
     }
 }

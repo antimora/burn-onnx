@@ -102,6 +102,8 @@ impl NodeProcessor for Conv2dProcessor {
             }
         }
 
+        crate::node::padding::validate_auto_pad(node)?;
+
         // Extract input tensor type
         let tensor = match &node.inputs[0].ty {
             ArgType::Tensor(tensor) => tensor,
@@ -587,5 +589,27 @@ mod tests {
             }
             _ => panic!("Expected tensor output"),
         }
+    }
+
+    /// Pins `validate_auto_pad` into this processor's `infer_types`. Without the call the node
+    /// reaches burn-onnx codegen, which panics instead of reporting a `ProcessError`.
+    #[test]
+    fn test_conv2d_rejects_unsupported_auto_pad_on_dynamic_shape() {
+        let mut node = TestNodeBuilder::new(NodeType::Conv2d, "test_auto_pad")
+            .input_tensor_f32("data", 4, None)
+            .input_tensor_f32_data("weight", vec![0.0; 32], vec![4, 2, 2, 2])
+            .output_tensor_f32("output", 4, None)
+            .attr_string("auto_pad", "SAME_LOWER")
+            .build_with_graph_data(16);
+        let processor = Conv2dProcessor;
+        let prefs = OutputPreferences::new();
+        let err = processor
+            .infer_types(&mut node, 16, &prefs)
+            .expect_err("SAME_LOWER over a dynamic input must be rejected")
+            .to_string();
+        assert!(
+            err.contains(&crate::node::padding::SameBlocker::SameLower.to_string()),
+            "{err}"
+        );
     }
 }

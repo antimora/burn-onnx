@@ -2,7 +2,9 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use onnx_ir::ir::DType;
-use onnx_ir::node::padding::{AutoPad, PaddingConfig1d, PaddingConfig2d, PaddingConfig3d};
+use onnx_ir::node::padding::{
+    AutoPad, PaddingConfig1d, PaddingConfig2d, PaddingConfig3d, forward_time_same_blocker,
+};
 
 // ============================================================================
 // Codegen utilities for converting types to TokenStream
@@ -211,9 +213,18 @@ fn compute_auto_pad_1dim(
     }
 }
 
-/// Resolve auto_pad to a PaddingConfig1d.
+/// Message for the SAME_UPPER/SAME_LOWER cases that neither import-time nor forward-time
+/// padding can serve. `validate_auto_pad` in onnx-ir rejects these with a `ProcessError` that
+/// names the node, so reaching this point means the two sides disagree.
+const UNREACHABLE_DYNAMIC_AUTO_PAD: &str = "auto_pad SAME_UPPER/SAME_LOWER on a dynamically shaped input reached codegen; onnx-ir's \
+     validate_auto_pad should have rejected it. Re-export the model with a static input shape, \
+     or with explicit pads";
+
+/// Resolve auto_pad to the tokens of a `PaddingConfig1d`.
 ///
-/// Panics if auto_pad is SameUpper/SameLower and input_spatial is None.
+/// With known spatial dimensions the pads are computed here. Without them `Same` defers the
+/// computation to forward time, which matches ONNX SAME_UPPER without dilation. SAME_LOWER and
+/// dilated cases are rejected in onnx-ir before reaching here; the assert is the backstop.
 pub fn resolve_auto_pad_1d(
     auto_pad: &AutoPad,
     padding: &PaddingConfig1d,
@@ -221,20 +232,31 @@ pub fn resolve_auto_pad_1d(
     kernel: usize,
     stride: usize,
     dilation: usize,
-) -> PaddingConfig1d {
+) -> TokenStream {
     match auto_pad {
-        AutoPad::NotSet => padding.clone(),
-        AutoPad::Valid => PaddingConfig1d::Valid,
-        AutoPad::SameUpper | AutoPad::SameLower => {
-            let shape = input_spatial
-                .expect("auto_pad SAME_UPPER/SAME_LOWER requires static input shape, but input has dynamic dimensions. Use explicit pads instead");
-            let (left, right) = compute_auto_pad_1dim(auto_pad, shape[0], kernel, stride, dilation);
-            PaddingConfig1d::Explicit(left, right)
-        }
+        AutoPad::NotSet => padding.to_tokens(),
+        AutoPad::Valid => PaddingConfig1d::Valid.to_tokens(),
+        AutoPad::SameUpper | AutoPad::SameLower => match input_spatial {
+            Some(shape) => {
+                let (left, right) =
+                    compute_auto_pad_1dim(auto_pad, shape[0], kernel, stride, dilation);
+                PaddingConfig1d::Explicit(left, right).to_tokens()
+            }
+            None => {
+                assert!(
+                    forward_time_same_blocker(auto_pad, dilation != 1, 1).is_none(),
+                    "{UNREACHABLE_DYNAMIC_AUTO_PAD}"
+                );
+                // Spelled inline: PaddingConfig1d in onnx-ir has no `Same` variant to emit.
+                quote! { PaddingConfig1d::Same }
+            }
+        },
     }
 }
 
-/// Resolve auto_pad to a PaddingConfig2d.
+/// Resolve auto_pad to the tokens of a `PaddingConfig2d`.
+///
+/// See [`resolve_auto_pad_1d`] for how a dynamically shaped input is handled.
 pub fn resolve_auto_pad_2d(
     auto_pad: &AutoPad,
     padding: &PaddingConfig2d,
@@ -242,23 +264,36 @@ pub fn resolve_auto_pad_2d(
     kernel: &[usize; 2],
     stride: &[usize; 2],
     dilation: &[usize; 2],
-) -> PaddingConfig2d {
+) -> TokenStream {
     match auto_pad {
-        AutoPad::NotSet => padding.clone(),
-        AutoPad::Valid => PaddingConfig2d::Valid,
-        AutoPad::SameUpper | AutoPad::SameLower => {
-            let shape = input_spatial
-                .expect("auto_pad SAME_UPPER/SAME_LOWER requires static input shape, but input has dynamic dimensions. Use explicit pads instead");
-            let (top, bottom) =
-                compute_auto_pad_1dim(auto_pad, shape[0], kernel[0], stride[0], dilation[0]);
-            let (left, right) =
-                compute_auto_pad_1dim(auto_pad, shape[1], kernel[1], stride[1], dilation[1]);
-            PaddingConfig2d::Explicit(top, left, bottom, right)
-        }
+        AutoPad::NotSet => padding.to_tokens(),
+        AutoPad::Valid => PaddingConfig2d::Valid.to_tokens(),
+        AutoPad::SameUpper | AutoPad::SameLower => match input_spatial {
+            Some(shape) => {
+                let (top, bottom) =
+                    compute_auto_pad_1dim(auto_pad, shape[0], kernel[0], stride[0], dilation[0]);
+                let (left, right) =
+                    compute_auto_pad_1dim(auto_pad, shape[1], kernel[1], stride[1], dilation[1]);
+                PaddingConfig2d::Explicit(top, left, bottom, right).to_tokens()
+            }
+            None => {
+                let dilated = dilation.iter().any(|&d| d != 1);
+                assert!(
+                    forward_time_same_blocker(auto_pad, dilated, 2).is_none(),
+                    "{UNREACHABLE_DYNAMIC_AUTO_PAD}"
+                );
+                // Spelled inline: PaddingConfig2d in onnx-ir has no `Same` variant to emit.
+                quote! { PaddingConfig2d::Same }
+            }
+        },
     }
 }
 
-/// Resolve auto_pad to a PaddingConfig3d.
+/// Resolve auto_pad to the tokens of a `PaddingConfig3d`.
+///
+/// A dynamically shaped input has no fallback here: burn's 3D `Same` panics at forward time on
+/// an asymmetric total, so `validate_auto_pad` rejects it upstream. The static path below is not
+/// unrestricted either; `PaddingConfig3d::to_tokens` still rejects asymmetric pads.
 pub fn resolve_auto_pad_3d(
     auto_pad: &AutoPad,
     padding: &PaddingConfig3d,
@@ -266,20 +301,19 @@ pub fn resolve_auto_pad_3d(
     kernel: &[usize; 3],
     stride: &[usize; 3],
     dilation: &[usize; 3],
-) -> PaddingConfig3d {
+) -> TokenStream {
     match auto_pad {
-        AutoPad::NotSet => padding.clone(),
-        AutoPad::Valid => PaddingConfig3d::Valid,
+        AutoPad::NotSet => padding.to_tokens(),
+        AutoPad::Valid => PaddingConfig3d::Valid.to_tokens(),
         AutoPad::SameUpper | AutoPad::SameLower => {
-            let shape = input_spatial
-                .expect("auto_pad SAME_UPPER/SAME_LOWER requires static input shape, but input has dynamic dimensions. Use explicit pads instead");
+            let shape = input_spatial.expect(UNREACHABLE_DYNAMIC_AUTO_PAD);
             let (front, back) =
                 compute_auto_pad_1dim(auto_pad, shape[0], kernel[0], stride[0], dilation[0]);
             let (top, bottom) =
                 compute_auto_pad_1dim(auto_pad, shape[1], kernel[1], stride[1], dilation[1]);
             let (left, right) =
                 compute_auto_pad_1dim(auto_pad, shape[2], kernel[2], stride[2], dilation[2]);
-            PaddingConfig3d::Explicit(front, top, left, back, bottom, right)
+            PaddingConfig3d::Explicit(front, top, left, back, bottom, right).to_tokens()
         }
     }
 }
@@ -342,7 +376,7 @@ mod tests {
     fn test_resolve_auto_pad_1d_not_set() {
         let padding = PaddingConfig1d::Explicit(1, 2);
         let result = resolve_auto_pad_1d(&AutoPad::NotSet, &padding, None, 3, 1, 1);
-        assert_eq!(result, PaddingConfig1d::Explicit(1, 2));
+        assert_eq!(result.to_string(), "PaddingConfig1d :: Explicit (1 , 2)");
     }
 
     #[test]
@@ -355,7 +389,15 @@ mod tests {
             1,
             1,
         );
-        assert_eq!(result, PaddingConfig1d::Explicit(1, 1));
+        assert_eq!(result.to_string(), "PaddingConfig1d :: Explicit (1 , 1)");
+    }
+
+    #[test]
+    fn test_resolve_auto_pad_1d_same_upper_dynamic() {
+        // No static spatial dimension: defer the computation to forward time.
+        let result =
+            resolve_auto_pad_1d(&AutoPad::SameUpper, &PaddingConfig1d::Valid, None, 3, 1, 1);
+        assert_eq!(result.to_string(), "PaddingConfig1d :: Same");
     }
 
     #[test]
@@ -368,7 +410,23 @@ mod tests {
             &[1, 1],
             &[1, 1],
         );
-        assert_eq!(result, PaddingConfig2d::Explicit(1, 1, 1, 1));
+        assert_eq!(
+            result.to_string(),
+            "PaddingConfig2d :: Explicit (1 , 1 , 1 , 1)"
+        );
+    }
+
+    #[test]
+    fn test_resolve_auto_pad_2d_same_upper_dynamic() {
+        let result = resolve_auto_pad_2d(
+            &AutoPad::SameUpper,
+            &PaddingConfig2d::Valid,
+            None,
+            &[3, 3],
+            &[1, 1],
+            &[1, 1],
+        );
+        assert_eq!(result.to_string(), "PaddingConfig2d :: Same");
     }
 
     #[test]
@@ -429,7 +487,7 @@ mod tests {
             &[1, 1, 1],
             &[1, 1, 1],
         );
-        assert_eq!(result, PaddingConfig3d::Valid);
+        assert_eq!(result.to_string(), "PaddingConfig3d :: Valid");
     }
 }
 
