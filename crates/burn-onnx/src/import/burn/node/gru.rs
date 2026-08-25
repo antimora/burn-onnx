@@ -21,7 +21,8 @@ use super::prelude::*;
 use super::rnn_common::{
     self, BiasLayout, GateLayout, ModuleExpr, state_direction_axis, y_direction_axis,
 };
-use burn_store::TensorSnapshot;
+use burn_pack::Tensor as PackTensor;
+use burn_store::bridge;
 use onnx_ir::gru::{GruActivationFunction, GruDirection};
 
 /// Collect tensor snapshots for GRU burnpack serialization.
@@ -40,7 +41,7 @@ fn collect_gru_snapshots(
     field_name: &str,
     inputs: &[Argument],
     config: &onnx_ir::gru::GruConfig,
-) -> Vec<TensorSnapshot> {
+) -> Vec<PackTensor> {
     use crate::burn::node_traits::extract_node_data;
     use burn::tensor::Tensor;
 
@@ -134,12 +135,7 @@ fn collect_gru_snapshots(
                 "{}.{}{}.input_transform.weight",
                 field_name, dir_prefix, gate_name
             );
-            snapshots.push(create_snapshot_from_data(
-                w_gate_data,
-                &path,
-                "Linear",
-                dtype,
-            ));
+            snapshots.push(create_snapshot_from_data(w_gate_data, &path, dtype));
 
             // Input transform bias: Wb for this gate
             if let Some(ref b) = b_dir {
@@ -153,7 +149,7 @@ fn collect_gru_snapshots(
                     "{}.{}{}.input_transform.bias",
                     field_name, dir_prefix, gate_name
                 );
-                snapshots.push(create_snapshot_from_data(bias_data, &path, "Linear", dtype));
+                snapshots.push(create_snapshot_from_data(bias_data, &path, dtype));
             }
 
             // Hidden transform weight: ONNX [hidden_size, hidden_size] -> Burn [hidden_size, hidden_size]
@@ -167,12 +163,7 @@ fn collect_gru_snapshots(
                 "{}.{}{}.hidden_transform.weight",
                 field_name, dir_prefix, gate_name
             );
-            snapshots.push(create_snapshot_from_data(
-                r_gate_data,
-                &path,
-                "Linear",
-                dtype,
-            ));
+            snapshots.push(create_snapshot_from_data(r_gate_data, &path, dtype));
 
             // Hidden transform bias: Rb for this gate
             if let Some(b) = &b_dir {
@@ -186,7 +177,7 @@ fn collect_gru_snapshots(
                     "{}.{}{}.hidden_transform.bias",
                     field_name, dir_prefix, gate_name
                 );
-                snapshots.push(create_snapshot_from_data(bias_data, &path, "Linear", dtype));
+                snapshots.push(create_snapshot_from_data(bias_data, &path, dtype));
             }
         }
     }
@@ -194,34 +185,18 @@ fn collect_gru_snapshots(
     snapshots
 }
 
-/// Create a TensorSnapshot from TensorData.
+/// Create a burnpack tensor from TensorData already in hand.
 fn create_snapshot_from_data(
     data: burn::tensor::TensorData,
     path: &str,
-    container_type: &str,
     dtype: burn::tensor::DType,
-) -> TensorSnapshot {
+) -> PackTensor {
     use burn::module::ParamId;
-    use burn_store::TensorSnapshotError;
 
+    // No-op when `data` already has the declared dtype; defensive otherwise.
     let data = data.convert_dtype(dtype);
 
-    let shape = data.shape.clone();
-    let path_stack: Vec<String> = path.split('.').map(String::from).collect();
-    let container_stack = vec![format!("Struct:{}", container_type)];
-
-    let data_fn = TensorSnapshot::data_fn(
-        move || -> Result<burn::tensor::TensorData, TensorSnapshotError> { Ok(data.clone()) },
-    );
-
-    TensorSnapshot::from_closure(
-        data_fn,
-        dtype,
-        shape,
-        path_stack,
-        container_stack,
-        ParamId::new(),
-    )
+    bridge::from_data(data, path.to_string(), Some(ParamId::new().val()))
 }
 
 /// Generate forward code for unidirectional (forward/reverse) GRU.
@@ -513,7 +488,7 @@ impl NodeCodegen for onnx_ir::gru::GruNode {
         rnn_common::field(&self.name, &self.inputs, ty, init)
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<TensorSnapshot> {
+    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
         collect_gru_snapshots(field_name, &self.inputs, &self.config)
     }
 

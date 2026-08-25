@@ -1,5 +1,5 @@
 use super::prelude::*;
-use burn_store::TensorSnapshot;
+use burn_pack::Tensor as PackTensor;
 
 impl NodeCodegen for onnx_ir::conv2d::Conv2dNode {
     fn inputs(&self) -> &[Argument] {
@@ -51,7 +51,7 @@ impl NodeCodegen for onnx_ir::conv2d::Conv2dNode {
         ))
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<TensorSnapshot> {
+    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
         use crate::burn::node_traits::create_lazy_snapshot;
 
         let mut snapshots = vec![];
@@ -59,7 +59,7 @@ impl NodeCodegen for onnx_ir::conv2d::Conv2dNode {
         // Weight tensor (input index 1)
         if let Some(weight_input) = self.inputs.get(1) {
             let weight_path = format!("{}.weight", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(weight_input, &weight_path, "Conv2d") {
+            if let Some(snapshot) = create_lazy_snapshot(weight_input, &weight_path) {
                 snapshots.push(snapshot);
             }
         }
@@ -69,7 +69,7 @@ impl NodeCodegen for onnx_ir::conv2d::Conv2dNode {
             && let Some(bias_input) = self.inputs.get(2)
         {
             let bias_path = format!("{}.bias", field_name);
-            if let Some(snapshot) = create_lazy_snapshot(bias_input, &bias_path, "Conv2d") {
+            if let Some(snapshot) = create_lazy_snapshot(bias_input, &bias_path) {
                 snapshots.push(snapshot);
             }
         }

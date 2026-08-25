@@ -31,7 +31,7 @@ embedded-alloc = "0.7.0"
 
 burn = { workspace = true, features = ["flex"] }
 burn-flex = { workspace = true, features = ["critical-section"] }
-burn-store = { workspace = true, features = ["burnpack"] }
+burn-store = { workspace = true }
 
 [build-dependencies]
 burn-onnx = { workspace = true, features = ["default"] }

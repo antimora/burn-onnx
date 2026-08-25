@@ -23,7 +23,7 @@ toml = { workspace = true }
 
 [dev-dependencies]
 burn = { workspace = true }
-burn-store = { workspace = true, features = ["std", "burnpack"] }
+burn-store = { workspace = true, features = ["std"] }
 float-cmp = { workspace = true }
 
 [build-dependencies]

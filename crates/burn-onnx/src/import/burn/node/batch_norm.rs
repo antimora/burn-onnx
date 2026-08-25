@@ -1,5 +1,5 @@
 use super::prelude::*;
-use burn_store::TensorSnapshot;
+use burn_pack::Tensor as PackTensor;
 use onnx_ir::node::batch_norm::{BatchNormConfig, BatchNormalizationNode};
 
 impl NodeCodegen for BatchNormalizationNode {
@@ -103,7 +103,7 @@ impl NodeCodegen for BatchNormalizationNode {
         }
     }
 
-    fn collect_snapshots(&self, field_name: &str) -> Vec<TensorSnapshot> {
+    fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
         match &self.config {
             BatchNormConfig::Static(_) => {
                 use crate::burn::node_traits::create_lazy_snapshot;
@@ -111,18 +111,14 @@ impl NodeCodegen for BatchNormalizationNode {
 
                 if let Some(gamma_input) = self.inputs.get(1) {
                     let gamma_path = format!("{}.gamma", field_name);
-                    if let Some(snapshot) =
-                        create_lazy_snapshot(gamma_input, &gamma_path, "BatchNorm")
-                    {
+                    if let Some(snapshot) = create_lazy_snapshot(gamma_input, &gamma_path) {
                         snapshots.push(snapshot);
                     }
                 }
 
                 if let Some(beta_input) = self.inputs.get(2) {
                     let beta_path = format!("{}.beta", field_name);
-                    if let Some(snapshot) =
-                        create_lazy_snapshot(beta_input, &beta_path, "BatchNorm")
-                    {
+                    if let Some(snapshot) = create_lazy_snapshot(beta_input, &beta_path) {
                         snapshots.push(snapshot);
                     }
                 }
@@ -130,7 +126,7 @@ impl NodeCodegen for BatchNormalizationNode {
                 if let Some(running_mean_input) = self.inputs.get(3) {
                     let running_mean_path = format!("{}.running_mean", field_name);
                     if let Some(snapshot) =
-                        create_lazy_snapshot(running_mean_input, &running_mean_path, "BatchNorm")
+                        create_lazy_snapshot(running_mean_input, &running_mean_path)
                     {
                         snapshots.push(snapshot);
                     }
@@ -139,7 +135,7 @@ impl NodeCodegen for BatchNormalizationNode {
                 if let Some(running_var_input) = self.inputs.get(4) {
                     let running_var_path = format!("{}.running_var", field_name);
                     if let Some(snapshot) =
-                        create_lazy_snapshot(running_var_input, &running_var_path, "BatchNorm")
+                        create_lazy_snapshot(running_var_input, &running_var_path)
                     {
                         snapshots.push(snapshot);
                     }

@@ -8,7 +8,7 @@ use crate::burn::custom_op::{CustomOp, HookRegistry};
 use crate::burn::scope::ScopeAtPosition;
 use crate::burn::{BurnImports, Field};
 use crate::ext::{CodegenContext, Imports};
-use burn_store::TensorSnapshot;
+use burn_pack::Tensor as PackTensor;
 
 // ============================================================================
 // Hook-aware dispatch
@@ -92,7 +92,7 @@ pub(crate) fn node_collect_snapshots(
     node: &Node,
     field_name: &str,
     hooks: &HookRegistry,
-) -> Vec<TensorSnapshot> {
+) -> Vec<PackTensor> {
     if let Some(over) = hooks.override_for(&node.node_type()) {
         return expect_hook(
             over.collect_snapshots(node, field_name),
@@ -165,7 +165,7 @@ macro_rules! impl_node_codegen_dispatch {
                 }
             }
 
-            fn collect_snapshots(&self, field_name: &str) -> Vec<TensorSnapshot> {
+            fn collect_snapshots(&self, field_name: &str) -> Vec<PackTensor> {
                 match self {
                     $(Node::$variant(n) => n.collect_snapshots(field_name),)*
                     _ => vec![],

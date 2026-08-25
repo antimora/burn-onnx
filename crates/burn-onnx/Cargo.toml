@@ -55,10 +55,7 @@ onnx-ir = { workspace = true, optional = true }
 
 burn = { workspace = true, optional = true }
 burn-pack = { workspace = true, optional = true, features = ["std"] }
-burn-store = { workspace = true, optional = true, features = [
-    "std",
-    "burnpack",
-] }
+burn-store = { workspace = true, optional = true, features = ["std"] }
 
 clap = { version = "4", optional = true, features = ["derive"] }
 derive-new = { workspace = true, optional = true }

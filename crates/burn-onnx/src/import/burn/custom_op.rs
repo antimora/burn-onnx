@@ -15,7 +15,7 @@ use proc_macro2::TokenStream;
 
 use crate::burn::node_traits::Field;
 use crate::ext::{CodegenContext, Imports};
-use burn_store::TensorSnapshot;
+use burn_pack::Tensor as PackTensor;
 
 /// Codegen hook for one custom (non-built-in) ONNX operator.
 ///
@@ -78,7 +78,7 @@ pub trait CustomOp: Send + Sync + 'static {
         &self,
         _node: &CustomNode,
         _field_name: &str,
-    ) -> Result<Vec<TensorSnapshot>, ProcessError> {
+    ) -> Result<Vec<PackTensor>, ProcessError> {
         Ok(vec![])
     }
 }
@@ -122,7 +122,7 @@ pub trait OpOverride: Send + Sync + 'static {
         &self,
         _node: &Node,
         _field_name: &str,
-    ) -> Result<Vec<TensorSnapshot>, ProcessError> {
+    ) -> Result<Vec<PackTensor>, ProcessError> {
         Ok(vec![])
     }
 }

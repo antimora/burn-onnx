@@ -11,7 +11,7 @@ workspace = true
 
 [dependencies]
 burn = { workspace = true, features = ["flex", "dataset", "vision"] }
-burn-store = { workspace = true, features = ["std", "burnpack"] }
+burn-store = { workspace = true, features = ["std"] }
 serde = { workspace = true }
 
 [build-dependencies]

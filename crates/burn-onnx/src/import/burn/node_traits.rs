@@ -1,7 +1,8 @@
 extern crate alloc;
 
 use burn::tensor::Shape;
-use burn_store::{TensorSnapshot, TensorSnapshotError};
+use burn_pack::{Error as PackError, Tensor as PackTensor};
+use burn_store::bridge;
 use proc_macro2::{Ident, Span, TokenStream};
 
 use onnx_ir::Argument;
@@ -128,7 +129,7 @@ pub trait NodeCodegen: std::fmt::Debug {
     /// # Notes
     ///
     /// For nodes without learnable parameters, the default implementation returns an empty vec.
-    fn collect_snapshots(&self, _field_name: &str) -> Vec<TensorSnapshot> {
+    fn collect_snapshots(&self, _field_name: &str) -> Vec<PackTensor> {
         vec![]
     }
 }
@@ -185,25 +186,21 @@ pub fn arg_to_ident(arg: &Argument) -> proc_macro2::Ident {
 // device's default `FloatDType`, which can silently truncate f64 weights to
 // f32 before they enter the snapshot pipeline.
 
-/// Create a lazy tensor snapshot from an ONNX argument.
+/// Create a lazy burnpack tensor from an ONNX argument.
 ///
-/// This creates a TensorSnapshot that lazily loads tensor data only when needed.
-/// The closure captures the argument and calls `value()` only when `to_data()` is invoked.
+/// The returned tensor carries only metadata until its bytes are drawn: the closure
+/// captures the argument and calls `value()` only when the writer asks for the data.
+/// That keeps a save's peak memory bounded by the largest single tensor.
 ///
 /// # Arguments
 ///
 /// * `input` - The ONNX argument containing tensor data
 /// * `path` - The tensor path (e.g., "linear1.weight")
-/// * `container_type` - The container type (e.g., "Linear")
 ///
 /// # Returns
 ///
-/// A TensorSnapshot with lazy data loading
-pub fn create_lazy_snapshot(
-    input: &Argument,
-    path: &str,
-    container_type: &str,
-) -> Option<TensorSnapshot> {
+/// A deferred [`PackTensor`], or `None` when the input carries no static data
+pub fn create_lazy_snapshot(input: &Argument, path: &str) -> Option<PackTensor> {
     use burn::module::ParamId;
     use burn::tensor::TensorData;
     use onnx_ir::ir::ArgType;
@@ -230,32 +227,25 @@ pub fn create_lazy_snapshot(
     // Clone the input for the closure (lightweight, doesn't copy tensor data)
     let input_clone = input.clone();
 
-    // Create a lazy closure that only loads data when called
-    let data_fn = TensorSnapshot::data_fn(move || -> Result<TensorData, TensorSnapshotError> {
-        let mut data = input_clone.value().ok_or_else(|| {
-            TensorSnapshotError::DataError(format!(
-                "Failed to extract tensor data for '{}'",
-                input_clone.name
-            ))
-        })?;
-        // Scalar data has shape [], but Param<Tensor<1>> expects shape [1]
-        if is_scalar && data.shape.is_empty() {
-            data.shape = Shape::from([1]);
-        }
-        Ok(data)
-    });
-
-    // Parse path into path_stack
-    let path_stack: Vec<String> = path.split('.').map(String::from).collect();
-    let container_stack = vec![format!("Struct:{}", container_type)];
-
-    Some(TensorSnapshot::from_closure(
-        data_fn,
+    // Only loads data when the writer draws the bytes.
+    Some(bridge::deferred(
+        path.to_string(),
         dtype,
         shape,
-        path_stack,
-        container_stack,
-        ParamId::new(),
+        Some(ParamId::new().val()),
+        move || -> Result<TensorData, PackError> {
+            let mut data = input_clone.value().ok_or_else(|| {
+                PackError::ValidationError(format!(
+                    "Failed to extract tensor data for '{}'",
+                    input_clone.name
+                ))
+            })?;
+            // Scalar data has shape [], but Param<Tensor<1>> expects shape [1]
+            if is_scalar && data.shape.is_empty() {
+                data.shape = Shape::from([1]);
+            }
+            Ok(data)
+        },
     ))
 }
 
@@ -309,7 +299,7 @@ mod tests {
             }),
         );
         assert_eq!(arg.value_source, ValueSource::Dynamic);
-        assert!(create_lazy_snapshot(&arg, "prelu1.alpha", "PRelu").is_none());
+        assert!(create_lazy_snapshot(&arg, "prelu1.alpha").is_none());
     }
 
     #[test]
@@ -326,6 +316,40 @@ mod tests {
         );
         assert_eq!(arg.value_source, ValueSource::Optional);
 
-        assert!(create_lazy_snapshot(&arg, "deform_conv1.bias", "DeformConv").is_none());
+        assert!(create_lazy_snapshot(&arg, "deform_conv1.bias").is_none());
+    }
+
+    /// An unlifted constant fails when the writer draws its bytes, and that failure has to
+    /// name both ends: the burnpack path to locate it in the model, and the ONNX argument to
+    /// locate it in the graph. The path comes from burn-pack, whose writer annotates every
+    /// provider error with the tensor it was drawing; the argument name comes from the
+    /// closure here. Neither alone is enough to act on.
+    #[test]
+    fn unlifted_constant_write_failure_names_path_and_argument() {
+        use onnx_ir::ir::{ArgType, Argument, TensorType, ValueSource};
+
+        let mut arg = Argument::new(
+            "onnx_initializer_7",
+            ArgType::Tensor(TensorType {
+                dtype: DType::F32,
+                rank: 1,
+                static_shape: Some(vec![Some(3)]),
+            }),
+        );
+        // Claims to be a constant, but nothing ever lifted a value into the store.
+        arg.value_source = ValueSource::Constant;
+
+        let tensor = create_lazy_snapshot(&arg, "conv1.weight").expect("a constant is snapshotted");
+
+        let err = burn_pack::Writer::new(vec![tensor])
+            .into_bytes()
+            .expect_err("an unlifted constant must fail the write");
+
+        let msg = err.to_string();
+        assert!(msg.contains("conv1.weight"), "missing burnpack path: {msg}");
+        assert!(
+            msg.contains("onnx_initializer_7"),
+            "missing ONNX argument name: {msg}"
+        );
     }
 }

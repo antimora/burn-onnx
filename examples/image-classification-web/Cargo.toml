@@ -19,7 +19,7 @@ default = []
 burn = { workspace = true, default-features = false, features = [
     "flex", "webgpu",
 ] }
-burn-store = { workspace = true, default-features = false, features = ["burnpack"] }
+burn-store = { workspace = true, default-features = false }
 
 log = { workspace = true }
 serde = { workspace = true }

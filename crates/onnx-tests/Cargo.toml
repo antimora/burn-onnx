@@ -13,7 +13,7 @@ test-metal = ["burn/metal"]
 
 [dev-dependencies]
 burn = { workspace = true }
-burn-store = { workspace = true, features = ["std", "burnpack"] }
+burn-store = { workspace = true, features = ["std"] }
 serde = { workspace = true }
 float-cmp = { workspace = true }
 insta = { workspace = true }
