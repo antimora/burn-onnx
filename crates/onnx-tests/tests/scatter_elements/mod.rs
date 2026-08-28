@@ -7,7 +7,9 @@ include_models!(
     scatter_elements_max,
     scatter_elements_min,
     scatter_elements_bool,
-    scatter_elements_3d
+    scatter_elements_3d,
+    scatter_elements_1d,
+    scatter_elements_int
 );
 
 #[cfg(test)]
@@ -176,8 +178,10 @@ mod tests {
         let device = Default::default();
         let model: scatter_elements_max::Model = scatter_elements_max::Model::new(&device);
 
-        // max(-inf, 0.5) is 0.5. Expressing the reduction as a scatter-add of
-        // `updates - gathered` would compute -inf + inf here and yield NaN.
+        // max(-inf, 0.5) is 0.5. This guards a rejected implementation: folding max as a
+        // scatter-add of `(updates - gathered).clamp_min(0)` computes -inf + inf here and
+        // yields NaN. Assignment expressed as an add cannot be rescued for an infinite
+        // existing value, whatever the delta is clamped to.
         let data = Tensor::<2>::from_floats(
             [
                 [f32::NEG_INFINITY, 2.0, 3.0],
@@ -203,10 +207,16 @@ mod tests {
         let model: scatter_elements_max::Model = scatter_elements_max::Model::new(&device);
 
         // Every update targets row 0. ONNX folds them with max, so the result is the
-        // largest update, not their sum.
+        // largest update, not their sum. The larger update comes first so that the
+        // expected value is not also the last write, which keeps the test able to tell a
+        // correct fold from last-write-wins.
+        //
+        // burn documents duplicate indices as undefined for scatter_nd with Assign, Mul,
+        // Min and Max. They fold sequentially on the CPU backends this suite runs on, but
+        // cubecl races, so this assertion is CPU-backend only.
         let data = Tensor::<2>::zeros([3, 3], &device);
         let indices = Tensor::<2, Int>::from_ints([[0, 0, 0], [0, 0, 0]], &device);
-        let updates = Tensor::<2>::from_floats([[2.0, 2.0, 2.0], [3.0, 3.0, 3.0]], &device);
+        let updates = Tensor::<2>::from_floats([[3.0, 3.0, 3.0], [2.0, 2.0, 2.0]], &device);
 
         let output = model.forward(data, indices, updates);
 
@@ -228,7 +238,8 @@ mod tests {
 
         let output = model.forward(data, indices, updates);
 
-        // row1[0]*=1.0, row0[1]*=1.1, row2[2]*=1.2, row0[0]*=2.0, row2[1]*=2.1, row1[2]*=2.2
+        // data[1,0]*=1.0=4, data[0,1]*=1.1=2.2, data[2,2]*=1.2=10.8
+        // data[0,0]*=2.0=2, data[2,1]*=2.1=16.8, data[1,2]*=2.2=13.2
         let expected = TensorData::from([[2.0f32, 2.2, 3.0], [4.0, 5.0, 13.2], [7.0, 16.8, 10.8]]);
         output
             .to_data()
@@ -241,7 +252,8 @@ mod tests {
         let model: scatter_elements_3d::Model = scatter_elements_3d::Model::new(&device);
 
         // Rank 3 with axis=1, so the generated coordinate columns cover a non-unit outer
-        // stride and the unit inner stride. Indices mix negative and positive values.
+        // stride and the unit inner stride. Indices mix negative and positive values, and no
+        // column repeats a target row: burn leaves duplicate indices undefined for scatter_nd.
         let data = Tensor::<3>::from_floats(
             [
                 [
@@ -260,7 +272,7 @@ mod tests {
         let indices = Tensor::<3, Int>::from_ints(
             [
                 [[0, -1, 1, -2], [2, 1, -3, 0]],
-                [[-2, 0, 2, 1], [1, -1, 0, -3]],
+                [[-2, 0, 2, 1], [2, -1, 0, -3]],
             ],
             &device,
         );
@@ -282,10 +294,67 @@ mod tests {
             ],
             [
                 [12.0, 13.5, 21.0, 22.5],
-                [18.0, 17.0, 18.0, 19.0],
+                [16.0, 17.0, 18.0, 19.0],
                 [20.0, 21.0, 22.0, 23.0],
             ],
         ]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, burn::tensor::Tolerance::default());
+    }
+
+    #[test]
+    fn scatter_elements_1d() {
+        let device = Default::default();
+        let model: scatter_elements_1d::Model = scatter_elements_1d::Model::new(&device);
+
+        // Rank 1: the generated stride loop is empty and the scatter axis is the only
+        // coordinate column.
+        let data = Tensor::<1>::from_floats([1.0, 2.0, 3.0, 4.0], &device);
+        let indices = Tensor::<1, Int>::from_ints([2, 0, -1], &device);
+        let updates = Tensor::<1>::from_floats([9.0, 8.0, 7.0], &device);
+
+        let output = model.forward(data, indices, updates);
+
+        let expected = TensorData::from([8.0f32, 2.0, 9.0, 7.0]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, burn::tensor::Tolerance::default());
+    }
+
+    #[test]
+    fn scatter_elements_int_dtype() {
+        let device = Default::default();
+        let model: scatter_elements_int::Model = scatter_elements_int::Model::new(&device);
+
+        let data = Tensor::<2, Int>::from_ints([[1, 2, 3], [4, 5, 6], [7, 8, 9]], &device);
+        let indices = Tensor::<2, Int>::from_ints([[1, 0, 2], [0, 2, -2]], &device);
+        let updates = Tensor::<2, Int>::from_ints([[10, 20, 30], [40, 50, 60]], &device);
+
+        let output = model.forward(data, indices, updates);
+
+        // `Tensor<D, Int>` graph inputs carry the backend's default int dtype, which is not
+        // the same on every backend, so compare at a fixed width.
+        let expected = TensorData::from([[40i64, 20, 3], [10, 5, 60], [7, 50, 30]]);
+        assert_eq!(output.to_data().convert::<i64>(), expected);
+    }
+
+    #[test]
+    fn scatter_elements_empty_indices() {
+        let device = Default::default();
+        let model: scatter_elements_max::Model = scatter_elements_max::Model::new(&device);
+
+        // An empty index tensor is a legal ONNX no-op. It has to be special-cased because
+        // scatter_nd rejects empty indices, and reshape reads a 0 in the target shape as
+        // "keep the source dim" rather than as an empty dimension.
+        let data =
+            Tensor::<2>::from_floats([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], &device);
+        let indices = Tensor::<2, Int>::zeros([0, 3], &device);
+        let updates = Tensor::<2>::zeros([0, 3], &device);
+
+        let output = model.forward(data, indices, updates);
+
+        let expected = TensorData::from([[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]);
         output
             .to_data()
             .assert_approx_eq::<f32>(&expected, burn::tensor::Tolerance::default());
