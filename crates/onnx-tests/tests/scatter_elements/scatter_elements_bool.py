@@ -7,7 +7,7 @@
 # ]
 # ///
 
-# used to generate model: scatter_elements_max.onnx
+# used to generate model: scatter_elements_bool.onnx
 
 import numpy as np
 import onnx
@@ -16,32 +16,30 @@ from onnx.reference import ReferenceEvaluator
 
 
 def main():
-    data = helper.make_tensor_value_info("data", TensorProto.FLOAT, [3, 3])
+    data = helper.make_tensor_value_info("data", TensorProto.BOOL, [2, 3])
     indices = helper.make_tensor_value_info("indices", TensorProto.INT64, [2, 3])
-    updates = helper.make_tensor_value_info("updates", TensorProto.FLOAT, [2, 3])
-    output = helper.make_tensor_value_info("output", TensorProto.FLOAT, [3, 3])
+    updates = helper.make_tensor_value_info("updates", TensorProto.BOOL, [2, 3])
+    output = helper.make_tensor_value_info("output", TensorProto.BOOL, [2, 3])
 
     node = helper.make_node(
         "ScatterElements",
         inputs=["data", "indices", "updates"],
         outputs=["output"],
-        axis=0,
-        reduction="max",
+        axis=1,
     )
 
     graph = helper.make_graph(
-        [node], "scatter_elements_max_graph", [data, indices, updates], [output]
+        [node], "scatter_elements_bool_graph", [data, indices, updates], [output]
     )
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18)])
     model.ir_version = 8
     onnx.checker.check_model(model)
-    onnx.save(model, "scatter_elements_max.onnx")
+    onnx.save(model, "scatter_elements_bool.onnx")
 
-    test_data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=np.float32)
-    test_indices = np.array([[1, 0, 2], [0, 2, 1]], dtype=np.int64)
-    # Mixed: some updates beat the existing value at their target, others fall below,
-    # so both branches of the reduction are exercised.
-    test_updates = np.array([[9.5, 1.1, 2.5], [0.5, 8.5, 7.5]], dtype=np.float32)
+    # Covers both directions: some targets are set true, others cleared to false.
+    test_data = np.array([[True, True, True], [False, False, False]], dtype=bool)
+    test_indices = np.array([[2, 0, 1], [1, 2, 0]], dtype=np.int64)
+    test_updates = np.array([[False, False, True], [True, True, False]], dtype=bool)
 
     ref = ReferenceEvaluator(model)
     [result] = ref.run(

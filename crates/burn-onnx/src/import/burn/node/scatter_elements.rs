@@ -24,114 +24,56 @@ impl NodeCodegen for onnx_ir::scatter_elements::ScatterElementsNode {
             _ => panic!("Expected tensor input for data"),
         };
 
-        if matches!(data_kind, TensorKind::Bool)
-            && !matches!(self.config.reduction, ScatterElementsReduction::None)
-        {
-            panic!(
-                "ScatterElements with {:?} reduction not supported for bool tensors",
-                self.config.reduction
-            );
+        if matches!(data_kind, TensorKind::Bool) {
+            if !matches!(self.config.reduction, ScatterElementsReduction::None) {
+                panic!(
+                    "ScatterElements with {:?} reduction not supported for bool tensors",
+                    self.config.reduction
+                );
+            }
+
+            // Bool scatter only maps to a logical `or`, which cannot clear a bit, so the
+            // assignment round-trips through i64 and uses the same delta identity as below.
+            return quote! {
+                let #output = {
+                    let bool_data = #data.int().cast(burn::tensor::DType::I64);
+                    let bool_updates = #updates.int().cast(burn::tensor::DType::I64);
+                    let gathered = bool_data.clone().gather(#dim, #indices.clone());
+                    bool_data
+                        .scatter(#dim, #indices, bool_updates - gathered, burn::tensor::IndexingUpdateOp::Add)
+                        .bool()
+                };
+            };
         }
 
-        match self.config.reduction {
-            // Native scatter for Add reduction
-            ScatterElementsReduction::Add => quote! {
-                let #output = #data.scatter(#dim, #indices, #updates, burn::tensor::IndexingUpdateOp::Add);
-            },
-
-            // For None with numeric types: gather current values, scatter-add the diff
-            // At targets: data[p] + (updates[p] - data[p]) = updates[p]
-            // Elsewhere: unchanged
-            ScatterElementsReduction::None if !matches!(data_kind, TensorKind::Bool) => quote! {
-                let #output = {
-                    let gathered = #data.clone().gather(#dim, #indices.clone());
-                    #data.scatter(#dim, #indices, #updates - gathered, burn::tensor::IndexingUpdateOp::Add)
+        // Assign, Min and Max are not implemented by the flex and cubecl backends
+        // (tracel-ai/burn#5522), so they gather the current values and scatter-add a delta:
+        //   none: data[p] + (updates[p] - data[p])       = updates[p]
+        //   max:  data[p] + max(0, updates[p] - data[p]) = max(data[p], updates[p])
+        //   min:  data[p] + min(0, updates[p] - data[p]) = min(data[p], updates[p])
+        // Elsewhere the tensor is unchanged. This assumes unique indices; ONNX applies the
+        // reduction repeatedly when indices are duplicated.
+        let delta = match &self.config.reduction {
+            ScatterElementsReduction::Add => {
+                return quote! {
+                    let #output = #data.scatter(#dim, #indices, #updates, burn::tensor::IndexingUpdateOp::Add);
                 };
-            },
-
-            // Bool None and Mul/Max/Min need element-by-element loop
-            _ => {
-                let reduction_body = match self.config.reduction {
-                    ScatterElementsReduction::None => quote! {
-                        output_flat = output_flat.slice_assign(
-                            [target_offset..target_offset + 1],
-                            update_val,
-                        );
-                    },
-                    ScatterElementsReduction::Mul => quote! {
-                        let existing = output_flat.clone().narrow(0, target_offset, 1);
-                        output_flat = output_flat.slice_assign(
-                            [target_offset..target_offset + 1],
-                            existing.mul(update_val),
-                        );
-                    },
-                    ScatterElementsReduction::Max => quote! {
-                        let existing = output_flat.clone().narrow(0, target_offset, 1);
-                        let mask = update_val.clone().greater_equal(existing.clone());
-                        let result = existing.mask_where(mask, update_val);
-                        output_flat = output_flat.slice_assign(
-                            [target_offset..target_offset + 1],
-                            result,
-                        );
-                    },
-                    ScatterElementsReduction::Min => quote! {
-                        let existing = output_flat.clone().narrow(0, target_offset, 1);
-                        let mask = update_val.clone().lower_equal(existing.clone());
-                        let result = existing.mask_where(mask, update_val);
-                        output_flat = output_flat.slice_assign(
-                            [target_offset..target_offset + 1],
-                            result,
-                        );
-                    },
-                    ScatterElementsReduction::Add => unreachable!(),
-                };
-
-                quote! {
-                    let #output = {
-                        let data_dims = #data.dims();
-                        let updates_dims = #updates.dims();
-                        let indices_data = #indices.to_data().convert::<i64>();
-                        let indices_values: alloc::vec::Vec<i64> = indices_data.into_vec::<i64>().unwrap();
-                        let r = data_dims.len();
-                        let dim: usize = #dim;
-
-                        let mut data_strides = alloc::vec![1usize; r];
-                        for i in (0..r.saturating_sub(1)).rev() {
-                            data_strides[i] = data_strides[i + 1] * data_dims[i + 1];
-                        }
-                        let mut idx_strides = alloc::vec![1usize; r];
-                        for i in (0..r.saturating_sub(1)).rev() {
-                            idx_strides[i] = idx_strides[i + 1] * updates_dims[i + 1];
-                        }
-
-                        let total_data: usize = data_dims.iter().product();
-                        let total_updates: usize = updates_dims.iter().product();
-                        let mut output_flat = #data.reshape([total_data]);
-                        let updates_flat = #updates.reshape([total_updates]);
-
-                        for flat_idx in 0..total_updates {
-                            let mut remaining = flat_idx;
-                            let mut target_offset = 0usize;
-                            for d in 0..r {
-                                let coord = remaining / idx_strides[d];
-                                remaining %= idx_strides[d];
-                                if d == dim {
-                                    let dim_size = data_dims[d] as i64;
-                                    let mut idx = indices_values[flat_idx];
-                                    if idx < 0 { idx += dim_size; }
-                                    assert!(idx >= 0 && idx < dim_size, "ScatterElements: index out of bounds");
-                                    target_offset += idx as usize * data_strides[d];
-                                } else {
-                                    target_offset += coord * data_strides[d];
-                                }
-                            }
-                            let update_val = updates_flat.clone().narrow(0, flat_idx, 1);
-                            #reduction_body
-                        }
-                        output_flat.reshape(data_dims)
-                    };
-                }
             }
+            ScatterElementsReduction::Mul => {
+                return quote! {
+                    let #output = #data.scatter(#dim, #indices, #updates, burn::tensor::IndexingUpdateOp::Mul);
+                };
+            }
+            ScatterElementsReduction::None => quote! { #updates - gathered },
+            ScatterElementsReduction::Max => quote! { (#updates - gathered).clamp_min(0) },
+            ScatterElementsReduction::Min => quote! { (#updates - gathered).clamp_max(0) },
+        };
+
+        quote! {
+            let #output = {
+                let gathered = #data.clone().gather(#dim, #indices.clone());
+                #data.scatter(#dim, #indices, #delta, burn::tensor::IndexingUpdateOp::Add)
+            };
         }
     }
 }
@@ -207,68 +149,17 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r#"
+        assert_snapshot!(code, @r"
         pub fn forward(
             &self,
             data: Tensor<2>,
             indices: Tensor<2, Int>,
             updates: Tensor<2>,
         ) -> Tensor<2> {
-            let output = {
-                let data_dims = data.dims();
-                let updates_dims = updates.dims();
-                let indices_data = indices.to_data().convert::<i64>();
-                let indices_values: alloc::vec::Vec<i64> = indices_data
-                    .into_vec::<i64>()
-                    .unwrap();
-                let r = data_dims.len();
-                let dim: usize = 0;
-                let mut data_strides = alloc::vec![1usize; r];
-                for i in (0..r.saturating_sub(1)).rev() {
-                    data_strides[i] = data_strides[i + 1] * data_dims[i + 1];
-                }
-                let mut idx_strides = alloc::vec![1usize; r];
-                for i in (0..r.saturating_sub(1)).rev() {
-                    idx_strides[i] = idx_strides[i + 1] * updates_dims[i + 1];
-                }
-                let total_data: usize = data_dims.iter().product();
-                let total_updates: usize = updates_dims.iter().product();
-                let mut output_flat = data.reshape([total_data]);
-                let updates_flat = updates.reshape([total_updates]);
-                for flat_idx in 0..total_updates {
-                    let mut remaining = flat_idx;
-                    let mut target_offset = 0usize;
-                    for d in 0..r {
-                        let coord = remaining / idx_strides[d];
-                        remaining %= idx_strides[d];
-                        if d == dim {
-                            let dim_size = data_dims[d] as i64;
-                            let mut idx = indices_values[flat_idx];
-                            if idx < 0 {
-                                idx += dim_size;
-                            }
-                            assert!(
-                                idx >= 0 && idx < dim_size,
-                                "ScatterElements: index out of bounds"
-                            );
-                            target_offset += idx as usize * data_strides[d];
-                        } else {
-                            target_offset += coord * data_strides[d];
-                        }
-                    }
-                    let update_val = updates_flat.clone().narrow(0, flat_idx, 1);
-                    let existing = output_flat.clone().narrow(0, target_offset, 1);
-                    output_flat = output_flat
-                        .slice_assign(
-                            [target_offset..target_offset + 1],
-                            existing.mul(update_val),
-                        );
-                }
-                output_flat.reshape(data_dims)
-            };
+            let output = data.scatter(0, indices, updates, burn::tensor::IndexingUpdateOp::Mul);
             output
         }
-        "#);
+        ");
     }
 
     #[test]
@@ -282,7 +173,7 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r#"
+        assert_snapshot!(code, @r"
         pub fn forward(
             &self,
             data: Tensor<2>,
@@ -290,59 +181,17 @@ mod tests {
             updates: Tensor<2>,
         ) -> Tensor<2> {
             let output = {
-                let data_dims = data.dims();
-                let updates_dims = updates.dims();
-                let indices_data = indices.to_data().convert::<i64>();
-                let indices_values: alloc::vec::Vec<i64> = indices_data
-                    .into_vec::<i64>()
-                    .unwrap();
-                let r = data_dims.len();
-                let dim: usize = 0;
-                let mut data_strides = alloc::vec![1usize; r];
-                for i in (0..r.saturating_sub(1)).rev() {
-                    data_strides[i] = data_strides[i + 1] * data_dims[i + 1];
-                }
-                let mut idx_strides = alloc::vec![1usize; r];
-                for i in (0..r.saturating_sub(1)).rev() {
-                    idx_strides[i] = idx_strides[i + 1] * updates_dims[i + 1];
-                }
-                let total_data: usize = data_dims.iter().product();
-                let total_updates: usize = updates_dims.iter().product();
-                let mut output_flat = data.reshape([total_data]);
-                let updates_flat = updates.reshape([total_updates]);
-                for flat_idx in 0..total_updates {
-                    let mut remaining = flat_idx;
-                    let mut target_offset = 0usize;
-                    for d in 0..r {
-                        let coord = remaining / idx_strides[d];
-                        remaining %= idx_strides[d];
-                        if d == dim {
-                            let dim_size = data_dims[d] as i64;
-                            let mut idx = indices_values[flat_idx];
-                            if idx < 0 {
-                                idx += dim_size;
-                            }
-                            assert!(
-                                idx >= 0 && idx < dim_size,
-                                "ScatterElements: index out of bounds"
-                            );
-                            target_offset += idx as usize * data_strides[d];
-                        } else {
-                            target_offset += coord * data_strides[d];
-                        }
-                    }
-                    let update_val = updates_flat.clone().narrow(0, flat_idx, 1);
-                    let existing = output_flat.clone().narrow(0, target_offset, 1);
-                    let mask = update_val.clone().greater_equal(existing.clone());
-                    let result = existing.mask_where(mask, update_val);
-                    output_flat = output_flat
-                        .slice_assign([target_offset..target_offset + 1], result);
-                }
-                output_flat.reshape(data_dims)
+                let gathered = data.clone().gather(0, indices.clone());
+                data.scatter(
+                    0,
+                    indices,
+                    (updates - gathered).clamp_min(0),
+                    burn::tensor::IndexingUpdateOp::Add,
+                )
             };
             output
         }
-        "#);
+        ");
     }
 
     #[test]
@@ -356,7 +205,7 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r#"
+        assert_snapshot!(code, @r"
         pub fn forward(
             &self,
             data: Tensor<2>,
@@ -364,59 +213,17 @@ mod tests {
             updates: Tensor<2>,
         ) -> Tensor<2> {
             let output = {
-                let data_dims = data.dims();
-                let updates_dims = updates.dims();
-                let indices_data = indices.to_data().convert::<i64>();
-                let indices_values: alloc::vec::Vec<i64> = indices_data
-                    .into_vec::<i64>()
-                    .unwrap();
-                let r = data_dims.len();
-                let dim: usize = 0;
-                let mut data_strides = alloc::vec![1usize; r];
-                for i in (0..r.saturating_sub(1)).rev() {
-                    data_strides[i] = data_strides[i + 1] * data_dims[i + 1];
-                }
-                let mut idx_strides = alloc::vec![1usize; r];
-                for i in (0..r.saturating_sub(1)).rev() {
-                    idx_strides[i] = idx_strides[i + 1] * updates_dims[i + 1];
-                }
-                let total_data: usize = data_dims.iter().product();
-                let total_updates: usize = updates_dims.iter().product();
-                let mut output_flat = data.reshape([total_data]);
-                let updates_flat = updates.reshape([total_updates]);
-                for flat_idx in 0..total_updates {
-                    let mut remaining = flat_idx;
-                    let mut target_offset = 0usize;
-                    for d in 0..r {
-                        let coord = remaining / idx_strides[d];
-                        remaining %= idx_strides[d];
-                        if d == dim {
-                            let dim_size = data_dims[d] as i64;
-                            let mut idx = indices_values[flat_idx];
-                            if idx < 0 {
-                                idx += dim_size;
-                            }
-                            assert!(
-                                idx >= 0 && idx < dim_size,
-                                "ScatterElements: index out of bounds"
-                            );
-                            target_offset += idx as usize * data_strides[d];
-                        } else {
-                            target_offset += coord * data_strides[d];
-                        }
-                    }
-                    let update_val = updates_flat.clone().narrow(0, flat_idx, 1);
-                    let existing = output_flat.clone().narrow(0, target_offset, 1);
-                    let mask = update_val.clone().lower_equal(existing.clone());
-                    let result = existing.mask_where(mask, update_val);
-                    output_flat = output_flat
-                        .slice_assign([target_offset..target_offset + 1], result);
-                }
-                output_flat.reshape(data_dims)
+                let gathered = data.clone().gather(0, indices.clone());
+                data.scatter(
+                    0,
+                    indices,
+                    (updates - gathered).clamp_max(0),
+                    burn::tensor::IndexingUpdateOp::Add,
+                )
             };
             output
         }
-        "#);
+        ");
     }
 
     #[test]
@@ -457,7 +264,7 @@ mod tests {
             .config(config)
             .build();
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @r#"
+        assert_snapshot!(code, @r"
         pub fn forward(
             &self,
             data: Tensor<1, Bool>,
@@ -465,56 +272,21 @@ mod tests {
             updates: Tensor<1, Bool>,
         ) -> Tensor<1, Bool> {
             let output = {
-                let data_dims = data.dims();
-                let updates_dims = updates.dims();
-                let indices_data = indices.to_data().convert::<i64>();
-                let indices_values: alloc::vec::Vec<i64> = indices_data
-                    .into_vec::<i64>()
-                    .unwrap();
-                let r = data_dims.len();
-                let dim: usize = 0;
-                let mut data_strides = alloc::vec![1usize; r];
-                for i in (0..r.saturating_sub(1)).rev() {
-                    data_strides[i] = data_strides[i + 1] * data_dims[i + 1];
-                }
-                let mut idx_strides = alloc::vec![1usize; r];
-                for i in (0..r.saturating_sub(1)).rev() {
-                    idx_strides[i] = idx_strides[i + 1] * updates_dims[i + 1];
-                }
-                let total_data: usize = data_dims.iter().product();
-                let total_updates: usize = updates_dims.iter().product();
-                let mut output_flat = data.reshape([total_data]);
-                let updates_flat = updates.reshape([total_updates]);
-                for flat_idx in 0..total_updates {
-                    let mut remaining = flat_idx;
-                    let mut target_offset = 0usize;
-                    for d in 0..r {
-                        let coord = remaining / idx_strides[d];
-                        remaining %= idx_strides[d];
-                        if d == dim {
-                            let dim_size = data_dims[d] as i64;
-                            let mut idx = indices_values[flat_idx];
-                            if idx < 0 {
-                                idx += dim_size;
-                            }
-                            assert!(
-                                idx >= 0 && idx < dim_size,
-                                "ScatterElements: index out of bounds"
-                            );
-                            target_offset += idx as usize * data_strides[d];
-                        } else {
-                            target_offset += coord * data_strides[d];
-                        }
-                    }
-                    let update_val = updates_flat.clone().narrow(0, flat_idx, 1);
-                    output_flat = output_flat
-                        .slice_assign([target_offset..target_offset + 1], update_val);
-                }
-                output_flat.reshape(data_dims)
+                let bool_data = data.int().cast(burn::tensor::DType::I64);
+                let bool_updates = updates.int().cast(burn::tensor::DType::I64);
+                let gathered = bool_data.clone().gather(0, indices.clone());
+                bool_data
+                    .scatter(
+                        0,
+                        indices,
+                        bool_updates - gathered,
+                        burn::tensor::IndexingUpdateOp::Add,
+                    )
+                    .bool()
             };
             output
         }
-        "#);
+        ");
     }
 
     #[test]

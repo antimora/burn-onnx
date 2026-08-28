@@ -39,7 +39,9 @@ def main():
 
     test_data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=np.float32)
     test_indices = np.array([[1, 0, 2], [0, 2, 1]], dtype=np.int64)
-    test_updates = np.array([[1.0, 1.1, 1.2], [2.0, 2.1, 2.2]], dtype=np.float32)
+    # Mixed: some updates beat the existing value at their target, others fall below,
+    # so both branches of the reduction are exercised.
+    test_updates = np.array([[9.5, 1.1, 2.5], [0.5, 8.5, 7.5]], dtype=np.float32)
 
     ref = ReferenceEvaluator(model)
     [result] = ref.run(

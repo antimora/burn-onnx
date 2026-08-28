@@ -593,6 +593,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/scatter_elements/scatter_elements_mul.onnx")
         .input("tests/scatter_elements/scatter_elements_max.onnx")
         .input("tests/scatter_elements/scatter_elements_min.onnx")
+        .input("tests/scatter_elements/scatter_elements_bool.onnx")
         // ScatterND operator tests
         .input("tests/scatter_nd/scatter_nd.onnx")
         .input("tests/scatter_nd/scatter_nd_2d.onnx")
