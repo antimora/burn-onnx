@@ -77,7 +77,7 @@ functionality.
 | [Gelu][61]                       | ✅             | ✅           |
 | [Gemm][62]                       | ✅             | ✅           |
 | [GlobalAveragePool][63]          | ✅             | ✅           |
-| [GlobalLpPool][64]               | ❌             | ❌           |
+| [GlobalLpPool][64]               | ✅             | ✅           |
 | [GlobalMaxPool][65]              | ❌             | ❌           |
 | [Greater][66]                    | ✅             | ✅           |
 | [GreaterOrEqual][67]             | ✅             | ✅           |

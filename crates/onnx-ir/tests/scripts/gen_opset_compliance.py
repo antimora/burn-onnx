@@ -166,6 +166,7 @@ SUPPORTED_OPS = {
     "AveragePool": "avg_pool",
     "MaxPool": "max_pool",
     "GlobalAveragePool": "global_avg_pool",
+    "GlobalLpPool": "global_lp_pool",
     # Normalization
     "BatchNormalization": "batch_norm",
     "InstanceNormalization": "instance_norm",
@@ -614,6 +615,15 @@ def make_global_avg_pool(op_name: str, opset: int):
     inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3, 8, 8])
     out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
     node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"))
+    return [node], [inp], [out], []
+
+
+def make_global_lp_pool(op_name: str, opset: int):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3, 8, 8])
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
+    # `p` is a FLOAT attribute in opset 1 and an INT from opset 2 on.
+    p_attr = 2.0 if opset < 2 else 2
+    node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"), p=p_attr)
     return [node], [inp], [out], []
 
 
@@ -1167,6 +1177,7 @@ GENERATORS = {
     "avg_pool": make_avg_pool,
     "max_pool": make_max_pool,
     "global_avg_pool": make_global_avg_pool,
+    "global_lp_pool": make_global_lp_pool,
     "batch_norm": make_batch_norm,
     "instance_norm": make_instance_norm,
     "layer_norm": make_layer_norm,

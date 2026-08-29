@@ -260,6 +260,10 @@ impl ProcessorRegistry {
             NodeType::GlobalAveragePool,
             Box::new(crate::node::global_avg_pool::GlobalAveragePoolProcessor),
         );
+        registry.register(
+            NodeType::GlobalLpPool,
+            Box::new(crate::node::global_lp_pool::GlobalLpPoolProcessor),
+        );
 
         // Identity operation (typically eliminated during post-processing)
         registry.register(

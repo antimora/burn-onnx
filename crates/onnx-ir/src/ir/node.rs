@@ -361,6 +361,7 @@ define_node_enum! {
     MaxPool2d => max_pool2d::MaxPool2dNode,
     MaxPool3d => max_pool3d::MaxPool3dNode,
     GlobalAveragePool => global_avg_pool::GlobalAveragePoolNode,
+    GlobalLpPool => global_lp_pool::GlobalLpPoolNode,
     GlobalMaxPool => unsupported::GlobalMaxPoolNode,
 
     // NORMALIZATION

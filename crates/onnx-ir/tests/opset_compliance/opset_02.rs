@@ -12,6 +12,22 @@ fn graph() -> OnnxGraph {
 }
 
 #[rstest]
+fn global_lp_pool(graph: &OnnxGraph) {
+    let node = find_node(graph, "globallppool");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    GlobalLpPool "globallppool1"
+      Inputs:
+        globallppool_input: F32[1, 3, 8, 8]
+      Outputs:
+        globallppool1_out1: F32[1, 3, 1, 1]
+      Config:
+        GlobalLpPoolConfig {
+            p: 2.0,
+        }
+    "#);
+}
+
+#[rstest]
 fn pad(graph: &OnnxGraph) {
     let node = find_node(graph, "pad");
     insta::assert_snapshot!(format!("{node}"), @r#"
