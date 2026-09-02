@@ -2,7 +2,7 @@
 
 use burn::backend::ir::{
     ActivationOperationIr, BaseOperationIr, FloatOperationIr, GraphIr, IntOperationIr,
-    ModuleOperationIr, NumericOperationIr, OperationIr, TensorId, TensorIr,
+    ModuleOperationIr, NumericOperationIr, OperationIr, SliceOpIr, TensorId, TensorIr,
 };
 use hashbrown::HashMap;
 
@@ -21,6 +21,7 @@ impl PotentiallyDynamicAxes {
             sample.operations.iter().zip(&validation.operations)
         {
             tracker.transfer(sample_operation);
+            tracker.transfer_slice(sample_operation, validation_operation);
             tracker.transfer_reshape(sample_operation, validation_operation);
             tracker.observe_changes(sample_operation, validation_operation);
         }
@@ -169,6 +170,18 @@ impl AxisTracker {
                     }
                 }
             }
+            BaseOperationIr::Select(operation) => {
+                for axis in 0..operation.out.shape.num_dims() {
+                    if axis == operation.dim {
+                        self.axis(&operation.indices, 0, &operation.out, axis);
+                    } else {
+                        self.axis(&operation.tensor, axis, &operation.out, axis);
+                    }
+                }
+            }
+            BaseOperationIr::Scatter(operation) => {
+                self.same_axes(&operation.tensor, &operation.out)
+            }
             BaseOperationIr::Cast(operation) => self.same_axes(&operation.input, &operation.out),
             BaseOperationIr::AllDim(operation) | BaseOperationIr::AnyDim(operation) => {
                 self.reduced_axes(&operation.input, &operation.out, operation.axis)
@@ -207,8 +220,15 @@ impl AxisTracker {
             }
             NumericOperationIr::MeanDim(operation)
             | NumericOperationIr::SumDim(operation)
-            | NumericOperationIr::ProdDim(operation) => {
+            | NumericOperationIr::ProdDim(operation)
+            | NumericOperationIr::ArgMax(operation)
+            | NumericOperationIr::ArgMin(operation) => {
                 self.reduced_axes(&operation.input, &operation.out, operation.axis)
+            }
+            NumericOperationIr::MaxDimWithIndices(operation)
+            | NumericOperationIr::MinDimWithIndices(operation) => {
+                self.reduced_axes(&operation.tensor, &operation.out, operation.dim);
+                self.reduced_axes(&operation.tensor, &operation.out_indices, operation.dim);
             }
             _ => {}
         }
@@ -229,6 +249,10 @@ impl AxisTracker {
 
     fn transfer_module(&mut self, operation: &ModuleOperationIr) {
         match operation {
+            ModuleOperationIr::Conv1d(operation) => {
+                self.axis(&operation.x, 0, &operation.out, 0);
+                self.derived_axis(&operation.x, 2, &operation.out, 2);
+            }
             ModuleOperationIr::Conv2d(operation) => {
                 self.axis(&operation.x, 0, &operation.out, 0);
                 self.derived_axis(&operation.x, 2, &operation.out, 2);
@@ -257,6 +281,42 @@ impl AxisTracker {
                 operation.out.shape.num_dims().saturating_sub(1),
             ),
             _ => {}
+        }
+    }
+
+    fn transfer_slice(&mut self, sample: &OperationIr, validation: &OperationIr) {
+        let (Some(sample), Some(validation)) =
+            (slice_operation(sample), slice_operation(validation))
+        else {
+            return;
+        };
+        for axis in 0..sample.out.shape.num_dims() {
+            let dimensions = sample
+                .tensor
+                .shape
+                .get(axis)
+                .zip(validation.tensor.shape.get(axis));
+            let exact = sample
+                .ranges
+                .get(axis)
+                .zip(validation.ranges.get(axis))
+                .zip(dimensions)
+                .is_some_and(
+                    |(
+                        (sample_range, validation_range),
+                        (&sample_dimension, &validation_dimension),
+                    )| {
+                        sample_range.step == validation_range.step
+                            && sample_range.step.unsigned_abs() == 1
+                            && slice_covers_axis(sample_range, sample_dimension)
+                            && slice_covers_axis(validation_range, validation_dimension)
+                    },
+                );
+            if exact {
+                self.axis(&sample.tensor, axis, &sample.out, axis);
+            } else {
+                self.derived_axis(&sample.tensor, axis, &sample.out, axis);
+            }
         }
     }
 
@@ -409,17 +469,35 @@ fn reshape_tensors(operation: &OperationIr) -> Option<(&TensorIr, &TensorIr)> {
     }
 }
 
+fn slice_operation(operation: &OperationIr) -> Option<&SliceOpIr> {
+    match operation {
+        OperationIr::BaseFloat(BaseOperationIr::Slice(operation))
+        | OperationIr::BaseInt(BaseOperationIr::Slice(operation))
+        | OperationIr::BaseBool(BaseOperationIr::Slice(operation)) => Some(operation),
+        _ => None,
+    }
+}
+
+fn slice_covers_axis(range: &burn::backend::Slice, dimension: usize) -> bool {
+    range.start == 0
+        && isize::try_from(dimension).is_ok_and(|dimension| range.end == Some(dimension))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::backend::ir::{AdaptiveAvgPool2dOpIr, MatmulOpIr, SwapDimsOpIr};
+    use burn::backend::ir::{AdaptiveAvgPool2dOpIr, MatmulOpIr, ReduceDimOpIr, SwapDimsOpIr};
     use burn::backend::{DType, Shape};
 
     fn tensor(id: u64, shape: &[usize]) -> TensorIr {
+        tensor_with_dtype(id, shape, DType::F32)
+    }
+
+    fn tensor_with_dtype(id: u64, shape: &[usize], dtype: DType) -> TensorIr {
         TensorIr::uninit(
             TensorId::new(id),
             shape.iter().copied().collect::<Shape>(),
-            DType::F32,
+            dtype,
         )
     }
 
@@ -498,6 +576,45 @@ mod tests {
 
         assert!(!dynamic.contains(TensorId::new(3), 0));
         assert!(!dynamic.contains(TensorId::new(3), 1));
+    }
+
+    #[test]
+    fn arg_reduction_preserves_only_non_reduced_dynamic_axes() {
+        let sample = graph(
+            OperationIr::NumericFloat(
+                DType::F32,
+                NumericOperationIr::ArgMax(ReduceDimOpIr {
+                    input: tensor(1, &[2, 4]),
+                    out: tensor_with_dtype(2, &[2, 1], DType::I64),
+                    axis: 1,
+                    accumulator_len: 4,
+                }),
+            ),
+            &[1],
+            &[2],
+        );
+        let validation = graph(
+            OperationIr::NumericFloat(
+                DType::F32,
+                NumericOperationIr::ArgMax(ReduceDimOpIr {
+                    input: tensor(11, &[5, 6]),
+                    out: tensor_with_dtype(12, &[5, 1], DType::I64),
+                    axis: 1,
+                    accumulator_len: 6,
+                }),
+            ),
+            &[11],
+            &[12],
+        );
+        let specs = [InputSpec::new([
+            AxisSpec::dynamic("rows"),
+            AxisSpec::dynamic("columns"),
+        ])];
+
+        let dynamic = PotentiallyDynamicAxes::analyze(&sample, &validation, &specs);
+
+        assert_eq!(dynamic.symbol(TensorId::new(2), 0), Some("rows"));
+        assert!(!dynamic.contains(TensorId::new(2), 1));
     }
 
     #[test]
