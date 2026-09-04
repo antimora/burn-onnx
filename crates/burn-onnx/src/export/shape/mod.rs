@@ -116,6 +116,11 @@ struct PairedInput<'a> {
     spec: &'a InputSpec,
 }
 
+struct ConvolutionCapture<'a, const D: usize> {
+    input: &'a TensorIr,
+    padding: &'a [(usize, usize); D],
+}
+
 enum DimensionResolution {
     Resolved(ShapeExpr),
     Infer,
@@ -160,11 +165,129 @@ impl<'a> PairedTraceAnalysis<'a> {
             .collect::<Result<_, _>>()?;
         let potentially_dynamic =
             PotentiallyDynamicAxes::analyze(resolver.sample, resolver.validation, resolver.inputs);
-        Ok(Self {
+        let analysis = Self {
             resolver,
             inputs,
             potentially_dynamic,
-        })
+        };
+        analysis.validate_dynamic_operation_contracts()?;
+        Ok(analysis)
+    }
+
+    /// Reject operations whose runtime behavior depends on information that
+    /// Burn's captured IR has already normalized away.
+    fn validate_dynamic_operation_contracts(&self) -> Result<(), ExportError> {
+        for (index, (operation, validation_operation)) in self
+            .resolver
+            .sample
+            .operations
+            .iter()
+            .zip(&self.resolver.validation.operations)
+            .enumerate()
+        {
+            match (operation, validation_operation) {
+                (
+                    OperationIr::BaseFloat(BaseOperationIr::Slice(slice))
+                    | OperationIr::BaseInt(BaseOperationIr::Slice(slice))
+                    | OperationIr::BaseBool(BaseOperationIr::Slice(slice)),
+                    _,
+                ) => {
+                    if let Some(axis) = (0..slice.ranges.len())
+                        .find(|&axis| self.potentially_dynamic.contains(slice.tensor.id, axis))
+                    {
+                        return Err(ExportError::DynamicShapeLost {
+                            tensor: slice.out.id,
+                            axis,
+                            reason: format!(
+                                "operation {index} slices a tensor with a potentially dynamic axis; Burn clamps every range, including `..`, to the captured shape, so the intended bounds cannot be recovered"
+                            ),
+                        });
+                    }
+                }
+                (
+                    OperationIr::Module(ModuleOperationIr::Conv1d(conv)),
+                    OperationIr::Module(ModuleOperationIr::Conv1d(validation)),
+                ) => {
+                    self.validate_strided_convolution_padding(
+                        index,
+                        ConvolutionCapture {
+                            input: &conv.x,
+                            padding: &conv.options.padding,
+                        },
+                        ConvolutionCapture {
+                            input: &validation.x,
+                            padding: &validation.options.padding,
+                        },
+                        &conv.weight,
+                        &conv.options.stride,
+                    )?;
+                }
+                (
+                    OperationIr::Module(ModuleOperationIr::Conv2d(conv)),
+                    OperationIr::Module(ModuleOperationIr::Conv2d(validation)),
+                ) => {
+                    self.validate_strided_convolution_padding(
+                        index,
+                        ConvolutionCapture {
+                            input: &conv.x,
+                            padding: &conv.options.padding,
+                        },
+                        ConvolutionCapture {
+                            input: &validation.x,
+                            padding: &validation.options.padding,
+                        },
+                        &conv.weight,
+                        &conv.options.stride,
+                    )?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_strided_convolution_padding<const D: usize>(
+        &self,
+        index: usize,
+        sample: ConvolutionCapture<'_, D>,
+        validation: ConvolutionCapture<'_, D>,
+        weight: &TensorIr,
+        stride: &[usize; D],
+    ) -> Result<(), ExportError> {
+        let sample_input = sample.input;
+        let validation_input = validation.input;
+        // Burn resolves `Same` to concrete start/end widths using the captured
+        // input shape, and the original intent is not retained in Conv op IR.
+        // Padding that differs between captures is rejected before this check.
+        // If both equal captures could have come from `Same`, reject them too;
+        // explicit padding can be disambiguated with a validation shape whose
+        // corresponding `Same` widths differ.
+        let sample_spatial_offset = sample_input.shape.num_dims().saturating_sub(D);
+        let validation_spatial_offset = validation_input.shape.num_dims().saturating_sub(D);
+        let kernel_spatial_offset = weight.shape.num_dims().saturating_sub(D);
+        for (spatial_axis, &stride) in stride.iter().enumerate() {
+            let axis = sample_spatial_offset + spatial_axis;
+            let validation_axis = validation_spatial_offset + spatial_axis;
+            let kernel_axis = kernel_spatial_offset + spatial_axis;
+            let kernel_size = weight.shape[kernel_axis];
+            if stride > 1
+                && kernel_size > 1
+                && self.potentially_dynamic.contains(sample_input.id, axis)
+                && sample.padding[spatial_axis]
+                    == same_padding(kernel_size, stride, sample_input.shape[axis])
+                && validation.padding[spatial_axis]
+                    == same_padding(kernel_size, stride, validation_input.shape[validation_axis])
+            {
+                return Err(ExportError::DynamicShapeLost {
+                    tensor: sample_input.id,
+                    axis,
+                    reason: format!(
+                        "operation {index} has strided convolution padding on a potentially dynamic axis; captured IR does not preserve input-dependent padding intent"
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     fn dynamic_axes(&self) -> Result<Vec<DynamicAxis>, ExportError> {
@@ -294,7 +417,8 @@ impl<'a> PairedTraceAnalysis<'a> {
             [] if sample.source.is_none() => Err(ExportError::DynamicShapeLost {
                 tensor: sample.output.id,
                 axis,
-                reason: "Full dimension does not match an annotated dynamic input axis".into(),
+                reason: "created tensor dimension does not match an annotated dynamic input axis"
+                    .into(),
             }),
             [] => Ok(DimensionResolution::Infer),
             candidates => Err(ExportError::DynamicShapeLost {
@@ -399,10 +523,22 @@ impl<'a> PairedTraceAnalysis<'a> {
             Err(ExportError::DynamicShapeLost {
                 tensor: operation.output.id,
                 axis,
-                reason: "equal Full dimensions cannot be proven static from two captures".into(),
+                reason: "equal created tensor dimensions cannot be proven static from two captures"
+                    .into(),
             })
         }
     }
+}
+
+fn same_padding(kernel_size: usize, stride: usize, input_size: usize) -> (usize, usize) {
+    let output_size = input_size.div_ceil(stride);
+    let total = output_size
+        .saturating_sub(1)
+        .saturating_mul(stride)
+        .saturating_add(kernel_size)
+        .saturating_sub(input_size);
+    let start = total / 2;
+    (start, total - start)
 }
 
 /// Reject varying shape operands that the paired resolver cannot represent.
@@ -454,6 +590,46 @@ fn validate_shape_sensitive_operations(
                     tensor: sample.out.id,
                     axis,
                     reason: format!("operation {index} has a varying interpolation output size"),
+                });
+            }
+            (
+                OperationIr::Module(ModuleOperationIr::Conv1d(sample)),
+                OperationIr::Module(ModuleOperationIr::Conv1d(validation)),
+            ) if sample.options.padding != validation.options.padding => {
+                let spatial_axis = sample
+                    .options
+                    .padding
+                    .iter()
+                    .zip(&validation.options.padding)
+                    .position(|(sample, validation)| sample != validation)
+                    .unwrap_or(0);
+                let axis = sample.x.shape.num_dims().saturating_sub(1) + spatial_axis;
+                return Err(ExportError::DynamicShapeLost {
+                    tensor: sample.x.id,
+                    axis,
+                    reason: format!(
+                        "operation {index} has strided convolution padding on a potentially dynamic axis; captured IR does not preserve input-dependent padding intent"
+                    ),
+                });
+            }
+            (
+                OperationIr::Module(ModuleOperationIr::Conv2d(sample)),
+                OperationIr::Module(ModuleOperationIr::Conv2d(validation)),
+            ) if sample.options.padding != validation.options.padding => {
+                let spatial_axis = sample
+                    .options
+                    .padding
+                    .iter()
+                    .zip(&validation.options.padding)
+                    .position(|(sample, validation)| sample != validation)
+                    .unwrap_or(0);
+                let axis = sample.x.shape.num_dims().saturating_sub(2) + spatial_axis;
+                return Err(ExportError::DynamicShapeLost {
+                    tensor: sample.x.id,
+                    axis,
+                    reason: format!(
+                        "operation {index} has strided convolution padding on a potentially dynamic axis; captured IR does not preserve input-dependent padding intent"
+                    ),
                 });
             }
             (

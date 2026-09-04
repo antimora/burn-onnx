@@ -86,11 +86,11 @@ pub(super) fn lower(
         return Ok(true);
     }
     if let NumericOperationIr::MaxDimWithIndices(reduce) = numeric {
-        lower_reduce_with_indices(context, index, reduce, "ArgMax")?;
+        lower_reduce_with_indices(context, index, reduce, true, "MaxDimWithIndices")?;
         return Ok(true);
     }
     if let NumericOperationIr::MinDimWithIndices(reduce) = numeric {
-        lower_reduce_with_indices(context, index, reduce, "ArgMin")?;
+        lower_reduce_with_indices(context, index, reduce, false, "MinDimWithIndices")?;
         return Ok(true);
     }
     if let Some((op_type, scalar)) = scalar_operation(numeric) {
@@ -125,6 +125,7 @@ fn lower_arg(
     reduce: &ReduceDimOpIr,
     arg_op: &'static str,
 ) -> Result<(), ExportError> {
+    let keepdims = reduce.out.shape.num_dims() == reduce.input.shape.num_dims();
     lower_arg_indices(
         context,
         index,
@@ -132,46 +133,96 @@ fn lower_arg(
         &reduce.out,
         reduce.axis,
         arg_op,
-    )?;
-    Ok(())
+        keepdims,
+    )
 }
 
 /// Lower a max or min reduction that also yields the winning indices.
 ///
-/// ONNX has no single operator for this pair. `ArgMax`/`ArgMin` produces the
-/// indices, and `GatherElements` reads the values back out through them.
+/// `TopK` with `K = 1` directly produces both rank-preserving outputs and uses
+/// the lowest index to break ties, matching Burn's non-NaN contract.
+/// ONNX does not specify NaN ordering for `TopK`, so NaN inputs may still
+/// differ from Burn's first-NaN behavior.
 fn lower_reduce_with_indices(
     context: &mut LoweringContext<'_>,
     index: usize,
     reduce: &ReduceDimWithIndicesOpIr,
-    arg_op: &'static str,
+    largest: bool,
+    operation: &'static str,
 ) -> Result<(), ExportError> {
-    // `GatherElements` needs indices of the input's rank, which only the
-    // dimension-keeping form provides.
-    if reduce.out.shape.num_dims() != reduce.tensor.shape.num_dims() {
+    // Opset 18 selects TopK-11.
+    if !matches!(
+        reduce.tensor.dtype,
+        DType::F16
+            | DType::F32
+            | DType::F64
+            | DType::I8
+            | DType::I16
+            | DType::I32
+            | DType::I64
+            | DType::U8
+            | DType::U16
+            | DType::U32
+            | DType::U64
+    ) {
         return Err(ExportError::UnsupportedOperation {
             operation: index,
-            kind: format!("{arg_op} reduction that drops the reduced dimension"),
+            kind: format!(
+                "{operation} with {:?} input in ONNX opset 18",
+                reduce.tensor.dtype
+            ),
+        });
+    }
+    if reduce.out.shape.num_dims() != reduce.tensor.shape.num_dims()
+        || reduce.out_indices.shape.num_dims() != reduce.tensor.shape.num_dims()
+    {
+        return Err(ExportError::UnsupportedOperation {
+            operation: index,
+            kind: format!("invalid Burn IR: {operation} outputs must preserve the input rank"),
+        });
+    }
+    if !reduce.out_indices.dtype.is_int() && !reduce.out_indices.dtype.is_uint() {
+        return Err(ExportError::UnsupportedOperation {
+            operation: index,
+            kind: format!(
+                "{operation} with non-integer {:?} indices output",
+                reduce.out_indices.dtype
+            ),
         });
     }
 
+    let k = format!("node_{index}_k");
+    context.i64_initializer(k.clone(), &[1]);
     let input = context.tensor_name(reduce.tensor.id);
-    let indices64 = lower_arg_indices(
-        context,
-        index,
-        &reduce.tensor,
-        &reduce.out_indices,
-        reduce.dim,
-        arg_op,
-    )?;
     let output = context.tensor_name(reduce.out.id);
+    let indices_output = context.tensor_name(reduce.out_indices.id);
+    let indices64 = if reduce.out_indices.dtype == DType::I64 {
+        indices_output.clone()
+    } else {
+        format!("node_{index}_indices64")
+    };
     context.node(
         format!("node_{index}"),
-        "GatherElements",
-        vec![input, indices64],
-        vec![output],
+        "TopK",
+        vec![input, k],
+        vec![output, indices64.clone()],
     );
     context.int_attribute("axis", reduce.dim as i64);
+    context.int_attribute("largest", largest as i64);
+    context.int_attribute("sorted", 1);
+
+    if indices64 != indices_output {
+        context.node(
+            format!("node_{index}_indices_cast"),
+            "Cast",
+            vec![indices64],
+            vec![indices_output],
+        );
+        context.int_attribute(
+            "to",
+            onnx_dtype_parts(reduce.out_indices.id, reduce.out_indices.dtype)? as i64,
+        );
+    }
     Ok(())
 }
 
@@ -187,7 +238,8 @@ fn lower_arg_indices(
     output: &TensorIr,
     axis: usize,
     arg_op: &'static str,
-) -> Result<String, ExportError> {
+    keepdims: bool,
+) -> Result<(), ExportError> {
     if !output.dtype.is_int() && !output.dtype.is_uint() {
         return Err(ExportError::UnsupportedOperation {
             operation: index,
@@ -201,27 +253,28 @@ fn lower_arg_indices(
     } else {
         format!("node_{index}_indices64")
     };
+    let arg_input = context.tensor_name(input.id);
     context.node(
         format!("node_{index}_arg"),
         arg_op,
-        vec![context.tensor_name(input.id)],
+        vec![arg_input],
         vec![indices64.clone()],
     );
     context.int_attribute("axis", axis as i64);
-    context.int_attribute("keepdims", 1);
+    context.int_attribute("keepdims", keepdims as i64);
     context.int_attribute("select_last_index", 0);
 
     if indices64 != output_name {
         context.node(
             format!("node_{index}_indices_cast"),
             "Cast",
-            vec![indices64.clone()],
+            vec![indices64],
             vec![output_name],
         );
         context.int_attribute("to", onnx_dtype_parts(output.id, output.dtype)? as i64);
     }
 
-    Ok(indices64)
+    Ok(())
 }
 
 fn lower_pad(

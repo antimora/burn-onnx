@@ -17,7 +17,7 @@ mod numeric;
 use std::collections::BTreeMap;
 
 use burn::backend::ir::{OperationIr, ScalarIr, TensorId, TensorIr};
-use burn::backend::{DType, TensorData};
+use burn::backend::{DType, TensorData, f16};
 use context::LoweringContext;
 use hashbrown::{HashMap, HashSet};
 use onnx_ir::{GraphProto, TensorProto, TypeProto, ValueInfoProto};
@@ -285,8 +285,16 @@ fn scalar_tensor(
     let bytes = match dtype {
         DType::F32 => value.elem::<f32>().to_le_bytes().to_vec(),
         DType::F64 => value.elem::<f64>().to_le_bytes().to_vec(),
+        DType::F16 => value.elem::<f16>().to_le_bytes().to_vec(),
+        DType::I8 => value.elem::<i8>().to_le_bytes().to_vec(),
+        DType::I16 => value.elem::<i16>().to_le_bytes().to_vec(),
         DType::I32 => value.elem::<i32>().to_le_bytes().to_vec(),
         DType::I64 => value.elem::<i64>().to_le_bytes().to_vec(),
+        DType::U8 => value.elem::<u8>().to_le_bytes().to_vec(),
+        DType::U16 => value.elem::<u16>().to_le_bytes().to_vec(),
+        DType::U32 => value.elem::<u32>().to_le_bytes().to_vec(),
+        DType::U64 => value.elem::<u64>().to_le_bytes().to_vec(),
+        DType::Bool(_) => vec![value.elem::<bool>() as u8],
         dtype => {
             return Err(ExportError::UnsupportedDType {
                 tensor,
@@ -302,12 +310,40 @@ fn scalar_tensor(
 mod tests {
     use super::*;
     use burn::backend::Shape;
-    use burn::backend::ir::{BinaryOpIr, GraphIr, NumericOperationIr};
+    use burn::backend::ir::{
+        BinaryOpIr, GraphIr, NumericOperationIr, ReduceDimOpIr, ReduceDimWithIndicesOpIr,
+    };
     use onnx_ir::ModelProto;
     use protobuf::Message;
 
     fn tensor(id: u64) -> TensorIr {
         TensorIr::uninit(TensorId::new(id), Shape::new([2, 3]), DType::F32)
+    }
+
+    #[test]
+    fn serializes_all_constant_of_shape_opset_18_scalar_dtypes() {
+        let cases = [
+            (DType::F16, vec![0, 60]),
+            (DType::F32, vec![0, 0, 128, 63]),
+            (DType::F64, vec![0, 0, 0, 0, 0, 0, 240, 63]),
+            (DType::I8, vec![1]),
+            (DType::I16, vec![1, 0]),
+            (DType::I32, vec![1, 0, 0, 0]),
+            (DType::I64, vec![1, 0, 0, 0, 0, 0, 0, 0]),
+            (DType::U8, vec![1]),
+            (DType::U16, vec![1, 0]),
+            (DType::U32, vec![1, 0, 0, 0]),
+            (DType::U64, vec![1, 0, 0, 0, 0, 0, 0, 0]),
+            (DType::Bool(burn::backend::BoolStore::Native), vec![1]),
+        ];
+
+        for (dtype, expected) in cases {
+            let tensor = TensorId::new(1);
+            let scalar = scalar_tensor(dtype, ScalarIr::new(1, &dtype), tensor).unwrap();
+
+            assert_eq!(scalar.data_type, onnx_dtype_parts(tensor, dtype).unwrap());
+            assert_eq!(scalar.raw_data.as_ref(), expected);
+        }
     }
 
     #[test]
@@ -340,5 +376,88 @@ mod tests {
         assert_eq!(model.graph.node[0].op_type, "Add");
         assert_eq!(model.graph.input.len(), 2);
         assert_eq!(model.graph.output.len(), 1);
+    }
+
+    #[test]
+    fn casts_non_i64_topk_indices_without_swapping_outputs() {
+        let input = tensor(1);
+        let output = TensorIr::uninit(TensorId::new(2), Shape::new([2, 1]), DType::F32);
+        let indices = TensorIr::uninit(TensorId::new(3), Shape::new([2, 1]), DType::I32);
+        let graph = GraphIr::new(vec![OperationIr::NumericFloat(
+            DType::F32,
+            NumericOperationIr::MaxDimWithIndices(ReduceDimWithIndicesOpIr {
+                tensor: input,
+                dim: 1,
+                out: output,
+                out_indices: indices,
+            }),
+        )]);
+        let graph = ResolvedExportGraph {
+            graph,
+            shapes: vec![],
+            dynamic_axes: vec![],
+        };
+        let runtime_inputs = graph.graph.inputs.clone();
+        let model = export_graph_with_bindings_and_opset(
+            &graph,
+            &BTreeMap::new(),
+            &runtime_inputs,
+            &HashMap::new(),
+            Opset::default(),
+        )
+        .unwrap();
+        let model = ModelProto::parse_from_bytes(model.as_bytes()).unwrap();
+
+        assert_eq!(model.graph.node[0].op_type, "TopK");
+        assert_eq!(model.graph.node[0].output[0], "tensor_2");
+        assert_eq!(model.graph.node[0].output[1], "node_0_indices64");
+        assert_eq!(model.graph.node[1].op_type, "Cast");
+        assert_eq!(model.graph.node[1].input, ["node_0_indices64"]);
+        assert_eq!(model.graph.node[1].output, ["tensor_3"]);
+        assert_eq!(
+            model.graph.node[1]
+                .attribute
+                .iter()
+                .find(|attribute| attribute.name == "to")
+                .unwrap()
+                .i,
+            6
+        );
+    }
+
+    #[test]
+    fn casts_non_i64_arg_reduction_output() {
+        let input = tensor(1);
+        let output = TensorIr::uninit(TensorId::new(2), Shape::new([2, 1]), DType::I32);
+        let graph = GraphIr::new(vec![OperationIr::NumericFloat(
+            DType::F32,
+            NumericOperationIr::ArgMax(ReduceDimOpIr {
+                input,
+                out: output,
+                axis: 1,
+                accumulator_len: 3,
+            }),
+        )]);
+        let graph = ResolvedExportGraph {
+            graph,
+            shapes: vec![],
+            dynamic_axes: vec![],
+        };
+        let runtime_inputs = graph.graph.inputs.clone();
+        let model = export_graph_with_bindings_and_opset(
+            &graph,
+            &BTreeMap::new(),
+            &runtime_inputs,
+            &HashMap::new(),
+            Opset::default(),
+        )
+        .unwrap();
+        let model = ModelProto::parse_from_bytes(model.as_bytes()).unwrap();
+
+        assert_eq!(model.graph.node[0].op_type, "ArgMax");
+        assert_eq!(model.graph.node[0].output, ["node_0_indices64"]);
+        assert_eq!(model.graph.node[1].op_type, "Cast");
+        assert_eq!(model.graph.node[1].input, ["node_0_indices64"]);
+        assert_eq!(model.graph.node[1].output, ["tensor_2"]);
     }
 }
