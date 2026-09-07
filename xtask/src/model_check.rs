@@ -139,12 +139,36 @@ const MODELS: &[ModelInfo] = &[
         blocked: false,
     },
     ModelInfo {
+        id: "arcface",
+        dir: "arcface",
+        name: "ArcFace (LResNet100E-IR)",
+        env: None,
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
         id: "silero-vad",
         dir: "silero-vad",
         name: "Silero VAD",
         env: None,
         download_args: &[],
         blocked: false,
+    },
+    // Blocked on cost and on the divergence tracked in
+    // tracel-ai/burn-onnx#371: kokoro is 2,464 nodes / ~310 MB of weights and
+    // takes minutes to codegen and compile, and its audio still differs from
+    // the ORT reference by ~1.3x peak amplitude (Pearson r = 0.69). The
+    // default run only enforces a smoke tier (finite samples, r above a
+    // floor), so running it in CI would cost the compile without checking the
+    // numbers that matter. Unblock once #371 lands and `KOKORO_STRICT=1`
+    // passes. Still runnable via `--model kokoro`.
+    ModelInfo {
+        id: "kokoro",
+        dir: "kokoro",
+        name: "Kokoro v1.0 (TTS)",
+        env: None,
+        download_args: &[],
+        blocked: true,
     },
     ModelInfo {
         id: "all-minilm-l6-v2",
@@ -224,6 +248,14 @@ const MODELS: &[ModelInfo] = &[
         id: "mediapipe-face-detector",
         dir: "mediapipe-face-detector",
         name: "MediaPipe Face Detector",
+        env: None,
+        download_args: &[],
+        blocked: false,
+    },
+    ModelInfo {
+        id: "rtmw3d",
+        dir: "rtmw3d",
+        name: "RTMW3D-x",
         env: None,
         download_args: &[],
         blocked: false,
