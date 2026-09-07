@@ -8,7 +8,9 @@ on:
       - '.github/workflows/model-checks.yml'
       - 'crates/burn-onnx/**'
       - 'crates/onnx-ir/**'
+      - 'crates/onnx-ir-derive/**'
       - 'crates/model-checks/**'
+      - 'xtask/**'
       - 'Cargo.lock'
       - 'Cargo.toml'
   pull_request:
@@ -17,7 +19,9 @@ on:
       - '.github/workflows/model-checks.yml'
       - 'crates/burn-onnx/**'
       - 'crates/onnx-ir/**'
+      - 'crates/onnx-ir-derive/**'
       - 'crates/model-checks/**'
+      - 'xtask/**'
       - 'Cargo.lock'
       - 'Cargo.toml'
   workflow_dispatch:
