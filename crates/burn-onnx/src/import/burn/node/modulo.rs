@@ -213,6 +213,22 @@ mod tests {
     use insta::assert_snapshot;
     use onnx_ir::modulo::{ModConfig, ModNodeBuilder};
 
+    #[test]
+    fn swapped_operand_names_are_rejected() {
+        // `broadcast_binary_op` (broadcast_helpers.rs) emits `let lhs = #lhs;
+        // let rhs = #rhs;`, which reads `lhs` after rebinding it, so operands
+        // named `rhs` and `lhs` would make both sides the same tensor.
+        let config = ModConfig::new(false);
+        let node = ModNodeBuilder::new("mod1")
+            .input_tensor("rhs", 2, DType::F32)
+            .input_tensor("lhs", 2, DType::F32)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let error = shadow_check_result(&node).unwrap_err();
+        assert_eq!(error.name(), Some("lhs"));
+    }
+
     // --- on_device + on_device (same rank) ---
 
     #[test]
