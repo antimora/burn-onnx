@@ -50,16 +50,16 @@ pub(crate) fn broadcast_binary_op(
     let rank_lit = proc_macro2::Literal::usize_suffixed(output_rank);
     quote! {
         {
-            let __lhs = #lhs;
-            let __rhs = #rhs;
-            let __lhs_dims: [usize; #rank_lit] = __lhs.dims();
-            let __rhs_dims: [usize; #rank_lit] = __rhs.dims();
-            let mut __shape = [0i64; #rank_lit];
+            let lhs = #lhs;
+            let rhs = #rhs;
+            let lhs_dims: [usize; #rank_lit] = lhs.dims();
+            let rhs_dims: [usize; #rank_lit] = rhs.dims();
+            let mut shape = [0i64; #rank_lit];
             #[allow(clippy::needless_range_loop)]
-            for __i in 0..#rank_lit {
-                __shape[__i] = core::cmp::max(__lhs_dims[__i] as i64, __rhs_dims[__i] as i64);
+            for i in 0..#rank_lit {
+                shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
             }
-            __lhs.expand(__shape).#op(__rhs.expand(__shape))
+            lhs.expand(shape).#op(rhs.expand(shape))
         }
     }
 }

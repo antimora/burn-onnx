@@ -142,9 +142,9 @@ impl NodeCodegen for onnx_ir::modulo::ModNode {
                 quote! {
                     let #output = {
                         let mut result = #lhs;
-                        let __scalar = #scalar_expr;
+                        let scalar = #scalar_expr;
                         for result_item in result.iter_mut() {
-                            *result_item %= __scalar;
+                            *result_item %= scalar;
                         }
                         result
                     };
@@ -155,9 +155,9 @@ impl NodeCodegen for onnx_ir::modulo::ModNode {
                 quote! {
                     let #output = {
                         let mut result = #rhs;
-                        let __scalar = #scalar_expr;
+                        let scalar = #scalar_expr;
                         for result_item in result.iter_mut() {
-                            *result_item = __scalar % *result_item;
+                            *result_item = scalar % *result_item;
                         }
                         result
                     };
@@ -226,19 +226,16 @@ mod tests {
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: Tensor<2>, b: Tensor<2>) -> Tensor<2> {
             let output = {
-                let __lhs = a;
-                let __rhs = b;
-                let __lhs_dims: [usize; 2usize] = __lhs.dims();
-                let __rhs_dims: [usize; 2usize] = __rhs.dims();
-                let mut __shape = [0i64; 2usize];
+                let lhs = a;
+                let rhs = b;
+                let lhs_dims: [usize; 2usize] = lhs.dims();
+                let rhs_dims: [usize; 2usize] = rhs.dims();
+                let mut shape = [0i64; 2usize];
                 #[allow(clippy::needless_range_loop)]
-                for __i in 0..2usize {
-                    __shape[__i] = core::cmp::max(
-                        __lhs_dims[__i] as i64,
-                        __rhs_dims[__i] as i64,
-                    );
+                for i in 0..2usize {
+                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
                 }
-                __lhs.expand(__shape).remainder(__rhs.expand(__shape))
+                lhs.expand(shape).remainder(rhs.expand(shape))
             };
             output
         }
@@ -276,19 +273,16 @@ mod tests {
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: Tensor<2>, b: Tensor<3>) -> Tensor<3> {
             let output = {
-                let __lhs = (a).unsqueeze_dims(&[0isize]);
-                let __rhs = b;
-                let __lhs_dims: [usize; 3usize] = __lhs.dims();
-                let __rhs_dims: [usize; 3usize] = __rhs.dims();
-                let mut __shape = [0i64; 3usize];
+                let lhs = (a).unsqueeze_dims(&[0isize]);
+                let rhs = b;
+                let lhs_dims: [usize; 3usize] = lhs.dims();
+                let rhs_dims: [usize; 3usize] = rhs.dims();
+                let mut shape = [0i64; 3usize];
                 #[allow(clippy::needless_range_loop)]
-                for __i in 0..3usize {
-                    __shape[__i] = core::cmp::max(
-                        __lhs_dims[__i] as i64,
-                        __rhs_dims[__i] as i64,
-                    );
+                for i in 0..3usize {
+                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
                 }
-                __lhs.expand(__shape).remainder(__rhs.expand(__shape))
+                lhs.expand(shape).remainder(rhs.expand(shape))
             };
             output
         }
@@ -307,19 +301,16 @@ mod tests {
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: Tensor<3>, b: Tensor<2>) -> Tensor<3> {
             let output = {
-                let __lhs = a;
-                let __rhs = (b).unsqueeze_dims(&[0isize]);
-                let __lhs_dims: [usize; 3usize] = __lhs.dims();
-                let __rhs_dims: [usize; 3usize] = __rhs.dims();
-                let mut __shape = [0i64; 3usize];
+                let lhs = a;
+                let rhs = (b).unsqueeze_dims(&[0isize]);
+                let lhs_dims: [usize; 3usize] = lhs.dims();
+                let rhs_dims: [usize; 3usize] = rhs.dims();
+                let mut shape = [0i64; 3usize];
                 #[allow(clippy::needless_range_loop)]
-                for __i in 0..3usize {
-                    __shape[__i] = core::cmp::max(
-                        __lhs_dims[__i] as i64,
-                        __rhs_dims[__i] as i64,
-                    );
+                for i in 0..3usize {
+                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
                 }
-                __lhs.expand(__shape).remainder(__rhs.expand(__shape))
+                lhs.expand(shape).remainder(rhs.expand(shape))
             };
             output
         }
@@ -374,19 +365,16 @@ mod tests {
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: Tensor<3>, b: Tensor<1>) -> Tensor<3> {
             let output = {
-                let __lhs = a;
-                let __rhs = (b).unsqueeze_dims(&[0isize, 1isize]);
-                let __lhs_dims: [usize; 3usize] = __lhs.dims();
-                let __rhs_dims: [usize; 3usize] = __rhs.dims();
-                let mut __shape = [0i64; 3usize];
+                let lhs = a;
+                let rhs = (b).unsqueeze_dims(&[0isize, 1isize]);
+                let lhs_dims: [usize; 3usize] = lhs.dims();
+                let rhs_dims: [usize; 3usize] = rhs.dims();
+                let mut shape = [0i64; 3usize];
                 #[allow(clippy::needless_range_loop)]
-                for __i in 0..3usize {
-                    __shape[__i] = core::cmp::max(
-                        __lhs_dims[__i] as i64,
-                        __rhs_dims[__i] as i64,
-                    );
+                for i in 0..3usize {
+                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
                 }
-                __lhs.expand(__shape).remainder(__rhs.expand(__shape))
+                lhs.expand(shape).remainder(rhs.expand(shape))
             };
             output
         }
@@ -422,19 +410,16 @@ mod tests {
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: Tensor<1>, b: Tensor<1>) -> Tensor<1> {
             let output = {
-                let __lhs = a;
-                let __rhs = b;
-                let __lhs_dims: [usize; 1usize] = __lhs.dims();
-                let __rhs_dims: [usize; 1usize] = __rhs.dims();
-                let mut __shape = [0i64; 1usize];
+                let lhs = a;
+                let rhs = b;
+                let lhs_dims: [usize; 1usize] = lhs.dims();
+                let rhs_dims: [usize; 1usize] = rhs.dims();
+                let mut shape = [0i64; 1usize];
                 #[allow(clippy::needless_range_loop)]
-                for __i in 0..1usize {
-                    __shape[__i] = core::cmp::max(
-                        __lhs_dims[__i] as i64,
-                        __rhs_dims[__i] as i64,
-                    );
+                for i in 0..1usize {
+                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
                 }
-                __lhs.expand(__shape).remainder(__rhs.expand(__shape))
+                lhs.expand(shape).remainder(rhs.expand(shape))
             };
             output
         }
@@ -560,25 +545,22 @@ mod tests {
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: f32, b: Tensor<2>) -> Tensor<2> {
             let output = {
-                let __lhs = Tensor::<
+                let lhs = Tensor::<
                     1,
                 >::from_data(
                         burn::tensor::TensorData::from([a as f64]),
                         (&self.device, burn::tensor::DType::F32),
                     )
                     .unsqueeze_dims(&[0isize]);
-                let __rhs = b;
-                let __lhs_dims: [usize; 2usize] = __lhs.dims();
-                let __rhs_dims: [usize; 2usize] = __rhs.dims();
-                let mut __shape = [0i64; 2usize];
+                let rhs = b;
+                let lhs_dims: [usize; 2usize] = lhs.dims();
+                let rhs_dims: [usize; 2usize] = rhs.dims();
+                let mut shape = [0i64; 2usize];
                 #[allow(clippy::needless_range_loop)]
-                for __i in 0..2usize {
-                    __shape[__i] = core::cmp::max(
-                        __lhs_dims[__i] as i64,
-                        __rhs_dims[__i] as i64,
-                    );
+                for i in 0..2usize {
+                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
                 }
-                __lhs.expand(__shape).remainder(__rhs.expand(__shape))
+                lhs.expand(shape).remainder(rhs.expand(shape))
             };
             output
         }
@@ -649,9 +631,9 @@ mod tests {
         pub fn forward(&self, lhs: [i64; 3], rhs: i64) -> [i64; 3] {
             let output = {
                 let mut result = lhs;
-                let __scalar = rhs as i64;
+                let scalar = rhs as i64;
                 for result_item in result.iter_mut() {
-                    *result_item %= __scalar;
+                    *result_item %= scalar;
                 }
                 result
             };
@@ -675,9 +657,9 @@ mod tests {
         pub fn forward(&self, lhs: i64, rhs: [i64; 3]) -> [i64; 3] {
             let output = {
                 let mut result = rhs;
-                let __scalar = lhs as i64;
+                let scalar = lhs as i64;
                 for result_item in result.iter_mut() {
-                    *result_item = __scalar % *result_item;
+                    *result_item = scalar % *result_item;
                 }
                 result
             };
@@ -831,9 +813,9 @@ mod tests {
         pub fn forward(&self, lhs: [i64; 3], rhs: i64) -> [i64; 3] {
             let output = {
                 let mut result = lhs;
-                let __scalar = rhs as i64;
+                let scalar = rhs as i64;
                 for result_item in result.iter_mut() {
-                    *result_item %= __scalar;
+                    *result_item %= scalar;
                 }
                 result
             };
@@ -855,9 +837,9 @@ mod tests {
         pub fn forward(&self, lhs: i64, rhs: [i64; 3]) -> [i64; 3] {
             let output = {
                 let mut result = rhs;
-                let __scalar = lhs as i64;
+                let scalar = lhs as i64;
                 for result_item in result.iter_mut() {
-                    *result_item = __scalar % *result_item;
+                    *result_item = scalar % *result_item;
                 }
                 result
             };
@@ -883,9 +865,9 @@ mod tests {
         pub fn forward(&self, lhs: [i64; 3], rhs: Tensor<1, Int>) -> [i64; 3] {
             let output = {
                 let mut result = lhs;
-                let __scalar = (rhs).into_scalar::<i64>() as i64;
+                let scalar = (rhs).into_scalar::<i64>() as i64;
                 for result_item in result.iter_mut() {
-                    *result_item %= __scalar;
+                    *result_item %= scalar;
                 }
                 result
             };
@@ -907,9 +889,9 @@ mod tests {
         pub fn forward(&self, lhs: Tensor<1, Int>, rhs: [i64; 3]) -> [i64; 3] {
             let output = {
                 let mut result = rhs;
-                let __scalar = (lhs).into_scalar::<i64>() as i64;
+                let scalar = (lhs).into_scalar::<i64>() as i64;
                 for result_item in result.iter_mut() {
-                    *result_item = __scalar % *result_item;
+                    *result_item = scalar % *result_item;
                 }
                 result
             };

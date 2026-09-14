@@ -1531,10 +1531,7 @@ mod tests {
     }
 
     /// Two Clip nodes chained through a single intermediate tensor,
-    /// each with its own independent runtime scalar bounds. The
-    /// generated `__clip_min` / `__clip_max` temporaries must each
-    /// live inside their own per-node block so clone-tracking and
-    /// name resolution don't interleave across the two instances.
+    /// each with its own independent runtime scalar bounds.
     fn build_two_clip_chain() -> BurnGraph {
         use onnx_ir::clip::{ClipConfig, ClipNodeBuilder};
         use onnx_ir::node::clip::ClipInput;
@@ -1579,93 +1576,22 @@ mod tests {
         graph
     }
 
-    /// Walk the generated Rust text and return the list of innermost
-    /// `{ ... }` blocks (as substrings of `code`, without the braces).
-    /// Used by scoping regression tests: counting raw occurrences of a
-    /// `let __foo` binding is not enough because the same bindings at
-    /// the outer `forward` scope would still pass. An innermost-block
-    /// scan lets us assert that the bindings sit inside a per-node
-    /// subscope, not at the function top level.
-    ///
-    /// "Innermost" means the block contains no nested `{...}` children.
-    /// Tracked per-block on the stack so siblings don't pollute each
-    /// other (a parent with one inner child is still a parent — not
-    /// innermost — but its other children can still qualify).
-    fn innermost_blocks(code: &str) -> Vec<&str> {
-        let bytes = code.as_bytes();
-        let mut stack: Vec<(usize, bool)> = Vec::new();
-        let mut innermost: Vec<(usize, usize)> = Vec::new();
-        for (i, &b) in bytes.iter().enumerate() {
-            match b {
-                b'{' => {
-                    if let Some(last) = stack.last_mut() {
-                        last.1 = true;
-                    }
-                    stack.push((i, false));
-                }
-                b'}' => {
-                    if let Some((open, has_inner)) = stack.pop()
-                        && !has_inner
-                    {
-                        innermost.push((open + 1, i));
-                    }
-                }
-                _ => {}
-            }
-        }
-        innermost.into_iter().map(|(s, e)| &code[s..e]).collect()
-    }
-
-    /// Regression test for #317, issue 6: verifies that runtime-bound Clip
-    /// nodes emit their `__clip_min` / `__clip_max` temporaries inside
-    /// per-node block scopes rather than at the outer `forward` scope.
-    /// Without the wrapper block, both `let __clip_min = ...;` bindings
-    /// would land at the outer scope — still legal Rust, but
-    /// clone-tracking for the runtime-bound inputs and variable
-    /// resolution for downstream consumers would interleave across nodes
-    /// in hard-to-debug ways.
-    ///
-    /// The test walks the generated code to find every innermost `{ ... }`
-    /// block and counts the ones that contain both a `let __clip_min = `
-    /// and a `let __clip_max = `. That count must be exactly two (one per
-    /// Clip node). A raw `code.matches(...).count() == 2` would also pass
-    /// if both bindings were at the outer scope, which is exactly the
-    /// regression we are trying to rule out.
+    /// Regression test for #317, issue 6: two runtime-bound Clip nodes in
+    /// the same forward() must each clamp with their own bounds rather than
+    /// sharing temporaries that resolve to the wrong node's inputs.
     #[test]
-    fn multi_instance_clip_scoping() {
+    fn multi_instance_clip_bounds() {
         let graph = build_two_clip_chain();
         let code = format_tokens(graph.codegen());
 
-        let scoped_blocks: Vec<&str> = innermost_blocks(&code)
-            .into_iter()
-            .filter(|b| b.contains("let __clip_min = ") && b.contains("let __clip_max = "))
-            .collect();
-
-        assert_eq!(
-            scoped_blocks.len(),
-            2,
-            "expected exactly two innermost blocks each containing \
-             both `let __clip_min =` and `let __clip_max =`, got \
-             {} such blocks. Full generated code:\n{code}",
-            scoped_blocks.len()
+        assert!(
+            code.contains("input.clamp((min0 as f64), (max0 as f64))"),
+            "first clip should clamp with its own bounds:\n{code}"
         );
-
-        // Belt-and-braces: each scoped block must declare exactly one
-        // `__clip_min` and one `__clip_max`. A block containing two
-        // `__clip_min` bindings would mean two clip nodes collapsed into
-        // a single scope, which is the bug we are guarding against.
-        for (idx, block) in scoped_blocks.iter().enumerate() {
-            assert_eq!(
-                block.matches("let __clip_min = ").count(),
-                1,
-                "block {idx} should declare exactly one __clip_min, got:\n{block}"
-            );
-            assert_eq!(
-                block.matches("let __clip_max = ").count(),
-                1,
-                "block {idx} should declare exactly one __clip_max, got:\n{block}"
-            );
-        }
+        assert!(
+            code.contains("t0.clamp((min1 as f64), (max1 as f64))"),
+            "second clip should clamp with its own bounds:\n{code}"
+        );
     }
 
     #[test]
