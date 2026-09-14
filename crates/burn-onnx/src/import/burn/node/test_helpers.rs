@@ -53,7 +53,7 @@ pub fn shadow_check_result<T>(node: &T) -> Result<(), shadow_check::Shadowed>
 where
     T: NodeCodegen,
 {
-    shadow_check::Checker::default().check("test", &forward_tokens(node, false, 1))
+    shadow_check::Checker::default().check("the node under test", &forward_tokens(node, false, 1))
 }
 
 /// Generate forward pass code for a node with optional clone behavior
@@ -87,10 +87,6 @@ where
     T: NodeCodegen,
 {
     let body = forward_tokens(node, with_clone, node_position);
-    if let Err(shadowed) = shadow_check::Checker::default().check("test", &body) {
-        panic!("{shadowed}");
-    }
-    let body = shadow_check::strip(body);
 
     // Filter inputs to only include dynamic inputs (not constants/initializers)
     let dynamic_inputs: Vec<_> = node
@@ -114,6 +110,11 @@ where
     let return_type = codegen_return_type(node.outputs());
     let return_expr = codegen_return_expr(node.outputs());
 
+    let mut checker = shadow_check::Checker::default();
+    if let Err(shadowed) = checker.check("the node under test", &quote! { #body #return_expr }) {
+        panic!("{shadowed}");
+    }
+
     // Generate the full forward function
     let forward_fn = quote! {
         pub fn forward(&self, #input_def) -> #return_type {
@@ -122,7 +123,7 @@ where
         }
     };
 
-    format_tokens(forward_fn)
+    format_tokens(shadow_check::strip(forward_fn))
 }
 
 /// Generate forward pass code with default parameters

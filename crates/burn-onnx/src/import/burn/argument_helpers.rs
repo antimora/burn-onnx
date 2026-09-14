@@ -7,7 +7,7 @@ use onnx_ir::{
     Argument,
     ir::{ArgType, DType},
 };
-use proc_macro2::{Ident, Span, TokenStream};
+use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
 use crate::burn::ToTokens;
@@ -123,7 +123,7 @@ pub fn shape_to_native(input: TokenStream, dtype: &DType) -> TokenStream {
 
 /// Get the argument identifier
 pub fn arg_ident(arg: &Argument) -> Ident {
-    Ident::new(&arg.name, Span::call_site())
+    super::shadow_check::value_ident(&arg.name)
 }
 
 /// Generate function parameters from a slice of arguments

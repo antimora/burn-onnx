@@ -430,9 +430,12 @@ impl BurnGraph {
             for (local_pos, node) in chunk_nodes.iter().enumerate() {
                 let mut scope_at_pos = scope.at_position(local_pos);
                 let code = node_forward(node, &mut scope_at_pos, &self.hooks);
-                expect_unshadowed(shadow_check.check(node.name(), &code));
+                let site = format!("node `{}`", node.name());
+                expect_unshadowed(shadow_check.check(&site, &code));
                 forward_body.extend(code);
             }
+            let site = format!("the {struct_name}::forward() return");
+            expect_unshadowed(shadow_check.check(&site, &output_return));
 
             let submodule_def = quote! {
                 #[derive(Module, Debug)]
@@ -795,11 +798,18 @@ impl BurnGraph {
         for (index, node) in self.nodes.iter().enumerate() {
             let mut scope_at_pos = self.scope.at_position(index);
             let code = node_forward(node, &mut scope_at_pos, &self.hooks);
-            expect_unshadowed(shadow_check.check(node.name(), &code));
+            let site = format!("node `{}`", node.name());
+            expect_unshadowed(shadow_check.check(&site, &code));
             body.extend(code);
         }
 
         let boundary_conversions = self.codegen_boundary_output_conversions();
+        // The output conversions and the return read graph values too, after
+        // every node's function-scope temporaries are in place.
+        expect_unshadowed(shadow_check.check(
+            "the forward() return",
+            &quote! { #boundary_conversions #output_return_def },
+        ));
 
         // TODO Return the result without a `let` binding from a block,
         // otherwise let_and_return error will be triggered by clippy.
@@ -981,21 +991,21 @@ impl BurnGraph {
 
 type FieldTuple = (proc_macro2::Ident, TokenStream, Option<TokenStream>);
 
-/// Render a burnpack path as `&str` for embedding into generated source.
-///
-/// The path is baked into the generated code as a string literal (`from_file(#file)`,
-/// `include_bytes!(#file)`), so a non-UTF-8 path cannot be represented at all.
 /// Unwrap the shadow check at the codegen boundary.
 ///
 /// Like `expect_hook`, `BurnGraph::codegen` has no error channel, so a graph
 /// value read through a same-named temporary surfaces as a panic that names
-/// the node and the value.
+/// the site and the value.
 fn expect_unshadowed(result: Result<(), shadow_check::Shadowed>) {
     if let Err(shadowed) = result {
         panic!("{shadowed}");
     }
 }
 
+/// Render a burnpack path as `&str` for embedding into generated source.
+///
+/// The path is baked into the generated code as a string literal (`from_file(#file)`,
+/// `include_bytes!(#file)`), so a non-UTF-8 path cannot be represented at all.
 fn path_to_str(path: &std::path::Path) -> &str {
     path.to_str().unwrap_or_else(|| {
         panic!(
@@ -1613,7 +1623,7 @@ mod tests {
     /// A temporary declared at `forward()` scope by one node stays visible to
     /// every later node, so the check has to carry it across node boundaries.
     #[test]
-    #[should_panic(expected = "node `abs1` declares a local `actual_idx`")]
+    #[should_panic(expected = "node `abs1` reads the graph value `actual_idx`")]
     fn function_scope_temporary_shadowing_a_later_input_is_rejected() {
         use onnx_ir::gather::{GatherConfig, GatherNodeBuilder};
 
@@ -1643,6 +1653,44 @@ mod tests {
             vec!["dim".to_string(), "out".to_string()],
             &[],
             &[],
+        );
+
+        graph.codegen();
+    }
+
+    /// The return reads graph values after every node ran, so it is checked
+    /// against the function-scope temporaries too.
+    #[test]
+    #[should_panic(expected = "the forward() return reads the graph value `actual_idx`")]
+    fn function_scope_temporary_shadowing_a_returned_input_is_rejected() {
+        use onnx_ir::gather::{GatherConfig, GatherNodeBuilder};
+
+        let mut graph = BurnGraph::default();
+
+        let gather = GatherNodeBuilder::new("gather1")
+            .input_shape("shape", 4)
+            .input_scalar("idx", DType::I64)
+            .output_scalar("dim", DType::I64)
+            .config(GatherConfig { axis: 0 })
+            .build();
+        let (shape, idx) = (gather.inputs[0].clone(), gather.inputs[1].clone());
+        let dim = gather.outputs[0].clone();
+        graph.register(Node::Gather(gather));
+
+        // `actual_idx` is a graph input passed straight through to the outputs.
+        let passthrough = onnx_ir::Argument::new(
+            "actual_idx",
+            ArgType::Tensor(onnx_ir::TensorType::new(DType::F32, 2, None)),
+        );
+        graph.register_input_output(
+            vec![
+                "shape".to_string(),
+                "idx".to_string(),
+                "actual_idx".to_string(),
+            ],
+            vec!["dim".to_string(), "actual_idx".to_string()],
+            &[shape, idx, passthrough.clone()],
+            &[dim, passthrough],
         );
 
         graph.codegen();

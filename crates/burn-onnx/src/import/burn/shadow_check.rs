@@ -48,10 +48,11 @@ pub(crate) fn strip(tokens: TokenStream) -> TokenStream {
         .collect()
 }
 
-/// A graph value read through a temporary of the same name.
+/// A graph value read while a temporary of the same name is in scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Shadowed {
-    pub node: String,
+    /// Where the read happens, e.g. "node `topk1`" or "the forward() return".
+    pub site: String,
     pub name: String,
 }
 
@@ -59,36 +60,47 @@ impl fmt::Display for Shadowed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "generated code for node `{}` declares a local `{}` and then reads the graph \
-             value `{}` through it. Rename the temporary in the node's codegen, or rename \
-             the ONNX value.",
-            self.node, self.name, self.name
+            "generated code for {} reads the graph value `{}` while a local named `{}` is \
+             in scope. Rename the temporary in the node's codegen, or rename the ONNX value.",
+            self.site, self.name, self.name
         )
     }
 }
 
-/// Walks each node's forward code in order, carrying the locals declared at
-/// `forward()` scope from one node to the next.
+/// What a name in scope currently resolves to.
+///
+/// A tagged binding (`let __arg_x = ...`) is a graph value; a plain one is a
+/// temporary. Later bindings shadow earlier ones, so a graph value bound after
+/// a same-named temporary makes the name safe to read again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Binding {
+    Value,
+    Temporary,
+}
+
+/// Walks each slice of a forward body in order, carrying the bindings made at
+/// `forward()` scope from one slice to the next.
 #[derive(Debug, Default)]
 pub(crate) struct Checker {
-    function_scope: Vec<String>,
+    function_scope: Vec<(String, Binding)>,
 }
 
 impl Checker {
-    /// Check one node's forward statements, which follow every node checked before.
+    /// Check the statements of one site (a node, or the trailing output code),
+    /// which follow every site checked before.
     ///
     /// Tokens that do not parse as statements are skipped: they will fail to
     /// compile with a better message than this check could give.
-    pub(crate) fn check(&mut self, node: &str, body: &TokenStream) -> Result<(), Shadowed> {
+    pub(crate) fn check(&mut self, site: &str, body: &TokenStream) -> Result<(), Shadowed> {
         let block: syn::Block = match syn::parse2(quote! { { #body } }) {
             Ok(block) => block,
             Err(err) => {
-                log::debug!("Skipping shadow check for node '{node}': {err}");
+                log::debug!("Skipping shadow check for {site}: {err}");
                 return Ok(());
             }
         };
         let mut walk = Walk {
-            node,
+            site,
             function_scope: &mut self.function_scope,
             scopes: Vec::new(),
             shadowed: None,
@@ -103,23 +115,33 @@ impl Checker {
 }
 
 struct Walk<'a> {
-    node: &'a str,
-    function_scope: &'a mut Vec<String>,
-    scopes: Vec<Vec<String>>,
+    site: &'a str,
+    function_scope: &'a mut Vec<(String, Binding)>,
+    scopes: Vec<Vec<(String, Binding)>>,
     shadowed: Option<Shadowed>,
 }
 
 impl Walk<'_> {
-    fn declare(&mut self, name: String) {
+    fn declare(&mut self, name: String, binding: Binding) {
         match self.scopes.last_mut() {
-            Some(scope) => scope.push(name),
-            None => self.function_scope.push(name),
+            Some(scope) => scope.push((name, binding)),
+            None => self.function_scope.push((name, binding)),
         }
     }
 
-    fn declared(&self, name: &str) -> bool {
-        self.function_scope.iter().any(|n| n == name)
-            || self.scopes.iter().flatten().any(|n| n == name)
+    /// The innermost, latest binding of `name`, as Rust would resolve it.
+    fn resolve(&self, name: &str) -> Option<Binding> {
+        self.scopes
+            .iter()
+            .rev()
+            .chain(core::iter::once(&*self.function_scope))
+            .find_map(|scope| {
+                scope
+                    .iter()
+                    .rev()
+                    .find(|(bound, _)| bound == name)
+                    .map(|(_, binding)| *binding)
+            })
     }
 
     fn read(&mut self, ident: &Ident) {
@@ -127,22 +149,21 @@ impl Walk<'_> {
             return;
         }
         if let Some(name) = tagged(ident)
-            && self.declared(&name)
+            && self.resolve(&name) == Some(Binding::Temporary)
         {
             self.shadowed = Some(Shadowed {
-                node: self.node.to_string(),
+                site: self.site.to_string(),
                 name,
             });
         }
     }
 
-    /// Declare every plain identifier the pattern binds. Tagged identifiers are
-    /// graph values being rebound (`let __arg_x = __arg_x;`), not temporaries.
+    /// Declare every identifier the pattern binds.
     fn bind(&mut self, pat: &syn::Pat) {
         let mut names = PatNames::default();
         names.visit_pat(pat);
-        for name in names.0 {
-            self.declare(name);
+        for (name, binding) in names.0 {
+            self.declare(name, binding);
         }
     }
 
@@ -243,15 +264,16 @@ impl<'ast> Visit<'ast> for Walk<'_> {
     }
 }
 
-/// Collects the plain identifiers a pattern binds.
+/// Collects the identifiers a pattern binds, tagged ones as graph values.
 #[derive(Default)]
-struct PatNames(Vec<String>);
+struct PatNames(Vec<(String, Binding)>);
 
 impl<'ast> Visit<'ast> for PatNames {
     fn visit_pat_ident(&mut self, pat: &'ast syn::PatIdent) {
-        if tagged(&pat.ident).is_none() {
-            self.0.push(pat.ident.to_string());
-        }
+        self.0.push(match tagged(&pat.ident) {
+            Some(name) => (name, Binding::Value),
+            None => (pat.ident.to_string(), Binding::Temporary),
+        });
         syn::visit::visit_pat_ident(self, pat);
     }
 }
@@ -270,7 +292,7 @@ mod tests {
 
     fn shadowed(name: &str) -> Result<(), Shadowed> {
         Err(Shadowed {
-            node: "node1".to_string(),
+            site: "node1".to_string(),
             name: name.to_string(),
         })
     }
@@ -359,10 +381,41 @@ mod tests {
         assert_eq!(
             checker.check("abs1", &second),
             Err(Shadowed {
-                node: "abs1".to_string(),
+                site: "abs1".to_string(),
                 name: "actual_idx".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn graph_value_bound_after_a_temporary_takes_the_name_back() {
+        let actual_idx = arg("actual_idx");
+        let mut checker = Checker::default();
+        let first = quote! {
+            let actual_idx = 1usize;
+            let out1 = shape[actual_idx];
+        };
+        assert_eq!(checker.check("gather1", &first), Ok(()));
+        let second = quote! {
+            let #actual_idx = out1.abs();
+            let out2 = #actual_idx.abs();
+        };
+        assert_eq!(checker.check("abs1", &second), Ok(()));
+    }
+
+    #[test]
+    fn reads_inside_match_guards_are_checked() {
+        let x = arg("x");
+        let body = quote! {
+            let out = {
+                let x = 1i64;
+                match Some(2i64) {
+                    Some(v) if v > #x => v,
+                    _ => x,
+                }
+            };
+        };
+        assert_eq!(check(body), shadowed("x"));
     }
 
     #[test]
