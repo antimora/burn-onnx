@@ -81,10 +81,12 @@ Key principles:
   inputs (it skips clone tracking)
 - Scope temporary variables in block expressions to avoid name collisions. Use plain names inside
   the block (`let axis_size = ...`), never `__`-prefixed ones (`__lhs`, `__gather_input`)
-- Graph inputs keep their ONNX names, so a temporary can shadow one that the same scope reads
+- Graph values keep their ONNX names, so a temporary can shadow one that the same scope reads
   later (`let k = ...; #input.topk(k)` with a data input named `k`). `shadow_check` fails codegen
-  for that, but only sees references made through `scope.arg()` / `arg_to_ident()`; a raw
-  `Ident::new(&arg.name)` bypasses it
+  for that. It tells the two apart by a tag on every ident from `scope.arg()` / `arg_to_ident()`:
+  splice those into `quote!` only, never `.to_string()` them or derive other names from them (use
+  `arg.name`). An `Ident::new(&arg.name)` or `format_ident!("{}", arg.name)` is untagged: as a
+  binding it counts as a temporary, as a read it is reported when the name is a graph value
 - Do not rebind an interpolated input just to give it a local name (`let __lhs = #lhs;`). Use
   `#lhs` directly. A binding is only warranted when the value is consumed by value more than once,
   needs `mut`, or changes type (e.g. a `.into_scalar()` readback or a cast), and it takes a plain

@@ -121,7 +121,8 @@ pub fn shape_to_native(input: TokenStream, dtype: &DType) -> TokenStream {
     quote! { #input[0] as #ty }
 }
 
-/// Get the argument identifier
+/// The tagged identifier for `arg` (see `shadow_check::value_ident`); splice
+/// it into tokens only, never stringify it.
 pub fn arg_ident(arg: &Argument) -> Ident {
     super::shadow_check::value_ident(&arg.name)
 }

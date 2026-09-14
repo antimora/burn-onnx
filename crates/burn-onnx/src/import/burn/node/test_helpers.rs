@@ -7,7 +7,7 @@ use super::NodeCodegen;
 use crate::burn::Scope;
 use crate::burn::argument_helpers::{codegen_fn_params, codegen_return_expr, codegen_return_type};
 use crate::burn::shadow_check;
-use onnx_ir::ir::ArgType;
+use onnx_ir::ir::{ArgType, Argument};
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -18,28 +18,13 @@ where
     T: NodeCodegen,
 {
     let mut scope = Scope::default();
-
-    // Register all inputs as variables
-    for input in node.inputs().iter() {
-        // Skip non-dynamic inputs (constants, initializers)
-        if !(input.is_dynamic() || input.is_constant()) {
-            continue;
-        }
-        if !matches!(
-            input.ty,
-            ArgType::Tensor(_)
-                | ArgType::ScalarTensor(_)
-                | ArgType::ScalarNative(_)
-                | ArgType::Shape(_)
-        ) {
-            continue;
-        }
-        scope.tensor_register_variable(input, 0);
+    for input in dynamic_inputs(node) {
+        scope.tensor_register_variable(&input, 0);
 
         if with_clone {
             // Register two future uses to trigger clone
-            scope.tensor_register_future_use(input, node_position);
-            scope.tensor_register_future_use(input, node_position + 1);
+            scope.tensor_register_future_use(&input, node_position);
+            scope.tensor_register_future_use(&input, node_position + 1);
         }
     }
 
@@ -47,13 +32,37 @@ where
     node.forward(&mut scope_at_pos)
 }
 
-/// The shadow check result for a node's forward codegen, for tests that give
-/// inputs names colliding with the node's temporaries.
-pub fn shadow_check_result<T>(node: &T) -> Result<(), shadow_check::Shadowed>
+/// The shadow check result for a node's forward codegen and return, for tests
+/// that give inputs names colliding with the node's temporaries.
+pub fn shadow_check_result<T>(node: &T) -> Result<(), shadow_check::CheckError>
 where
     T: NodeCodegen,
 {
-    shadow_check::Checker::default().check("the node under test", &forward_tokens(node, false, 1))
+    let body = forward_tokens(node, false, 1);
+    let return_expr = codegen_return_expr(node.outputs());
+    shadow_check::Checker::for_params(&dynamic_inputs(node))
+        .check("the node under test", &quote! { #body #return_expr })
+}
+
+/// The inputs that appear in the test forward() signature.
+fn dynamic_inputs<T>(node: &T) -> Vec<Argument>
+where
+    T: NodeCodegen,
+{
+    node.inputs()
+        .iter()
+        .filter(|arg| arg.is_dynamic() || arg.is_constant())
+        .filter(|arg| {
+            matches!(
+                arg.ty,
+                ArgType::Tensor(_)
+                    | ArgType::ScalarTensor(_)
+                    | ArgType::ScalarNative(_)
+                    | ArgType::Shape(_)
+            )
+        })
+        .cloned()
+        .collect()
 }
 
 /// Generate forward pass code for a node with optional clone behavior
@@ -87,32 +96,17 @@ where
     T: NodeCodegen,
 {
     let body = forward_tokens(node, with_clone, node_position);
-
-    // Filter inputs to only include dynamic inputs (not constants/initializers)
-    let dynamic_inputs: Vec<_> = node
-        .inputs()
-        .iter()
-        .filter(|arg| arg.is_dynamic() || arg.is_constant())
-        .filter(|arg| {
-            matches!(
-                arg.ty,
-                ArgType::Tensor(_)
-                    | ArgType::ScalarTensor(_)
-                    | ArgType::ScalarNative(_)
-                    | ArgType::Shape(_)
-            )
-        })
-        .cloned()
-        .collect();
+    let dynamic_inputs = dynamic_inputs(node);
 
     // Use shared helpers for generating function signature parts
     let input_def = codegen_fn_params(&dynamic_inputs);
     let return_type = codegen_return_type(node.outputs());
     let return_expr = codegen_return_expr(node.outputs());
 
-    let mut checker = shadow_check::Checker::default();
-    if let Err(shadowed) = checker.check("the node under test", &quote! { #body #return_expr }) {
-        panic!("{shadowed}");
+    if let Err(error) = shadow_check::Checker::for_params(&dynamic_inputs)
+        .check("the node under test", &quote! { #body #return_expr })
+    {
+        panic!("{error}");
     }
 
     // Generate the full forward function

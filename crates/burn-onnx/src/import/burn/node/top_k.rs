@@ -119,8 +119,8 @@ mod tests {
             .output_tensor("indices", 2, DType::I64)
             .config(config)
             .build();
-        let shadowed = shadow_check_result(&node).unwrap_err();
-        assert_eq!(shadowed.name, "k");
+        let error = shadow_check_result(&node).unwrap_err();
+        assert_eq!(error.name(), Some("k"));
     }
 
     #[test]
