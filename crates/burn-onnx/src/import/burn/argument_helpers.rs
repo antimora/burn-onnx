@@ -95,13 +95,13 @@ pub fn scalar_as_i64(arg: &Argument, value: TokenStream) -> TokenStream {
 
 /// Generate code to convert a ScalarTensor (Tensor<1>) to a Shape([i64; 1]).
 ///
-/// Produces: `{ let __v: T = <input>.into_scalar::<T>(); [__v as i64] }`
+/// Produces: `{ let v: T = <input>.into_scalar::<T>(); [v as i64] }`
 pub fn scalar_tensor_to_shape(input: TokenStream, dtype: &DType) -> TokenStream {
     let ty = scalar_type_tokens(dtype);
     quote! {
         {
-            let __v: #ty = #input.into_scalar::<#ty>();
-            [__v as i64]
+            let v: #ty = #input.into_scalar::<#ty>();
+            [v as i64]
         }
     }
 }

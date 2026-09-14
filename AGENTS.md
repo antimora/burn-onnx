@@ -79,7 +79,13 @@ Key principles:
   `ScalarTensor`) and bare idents for host values (`ScalarNative`, `Shape`)
 - Use `arg_to_ident()` only for outputs and host-side values. Never use it for `ScalarTensor`
   inputs (it skips clone tracking)
-- Scope temporary variables in block expressions to avoid name collisions
+- Scope temporary variables in block expressions to avoid name collisions. Use plain names inside
+  the block (`let axis_size = ...`), never `__`-prefixed ones (`__lhs`, `__gather_input`); the
+  block already isolates them
+- Do not rebind an interpolated input just to give it a local name (`let __lhs = #lhs;`). Use
+  `#lhs` directly. A binding is only warranted when the value is consumed by value more than once,
+  needs `mut`, or changes type (e.g. a `.into_scalar()` readback or a cast), and it takes a plain
+  name too
 - `insta` snapshot tests for ALL codegen branches (inline snapshots only:
   `assert_snapshot!(code, @r"...")`)
 - **Always specify explicit dtypes in generated code.** Never rely on the device's default

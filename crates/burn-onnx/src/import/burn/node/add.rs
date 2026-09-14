@@ -49,9 +49,9 @@ impl NodeCodegen for onnx_ir::node::arithmetic::AddNode {
                 quote! {
                     {
                         let mut result = #lhs;
-                        let __scalar = #scalar_expr;
+                        let scalar = #scalar_expr;
                         for result_item in result.iter_mut() {
-                            *result_item = result_item.saturating_add(__scalar);
+                            *result_item = result_item.saturating_add(scalar);
                         }
                         result
                     }
@@ -62,9 +62,9 @@ impl NodeCodegen for onnx_ir::node::arithmetic::AddNode {
                 quote! {
                     {
                         let mut result = #rhs;
-                        let __scalar = #scalar_expr;
+                        let scalar = #scalar_expr;
                         for result_item in result.iter_mut() {
-                            *result_item = result_item.saturating_add(__scalar);
+                            *result_item = result_item.saturating_add(scalar);
                         }
                         result
                     }
@@ -284,9 +284,9 @@ mod tests {
         pub fn forward(&self, lhs: [i64; 4], rhs: i64) -> [i64; 4] {
             let output = {
                 let mut result = lhs;
-                let __scalar = rhs as i64;
+                let scalar = rhs as i64;
                 for result_item in result.iter_mut() {
-                    *result_item = result_item.saturating_add(__scalar);
+                    *result_item = result_item.saturating_add(scalar);
                 }
                 result
             };
@@ -306,9 +306,9 @@ mod tests {
         pub fn forward(&self, lhs: [i64; 4], rhs: Tensor<1, Int>) -> [i64; 4] {
             let output = {
                 let mut result = lhs;
-                let __scalar = (rhs).into_scalar::<i64>() as i64;
+                let scalar = (rhs).into_scalar::<i64>() as i64;
                 for result_item in result.iter_mut() {
-                    *result_item = result_item.saturating_add(__scalar);
+                    *result_item = result_item.saturating_add(scalar);
                 }
                 result
             };
@@ -328,9 +328,9 @@ mod tests {
         pub fn forward(&self, lhs: i64, rhs: [i64; 4]) -> [i64; 4] {
             let output = {
                 let mut result = rhs;
-                let __scalar = lhs as i64;
+                let scalar = lhs as i64;
                 for result_item in result.iter_mut() {
-                    *result_item = result_item.saturating_add(__scalar);
+                    *result_item = result_item.saturating_add(scalar);
                 }
                 result
             };
@@ -350,9 +350,9 @@ mod tests {
         pub fn forward(&self, lhs: Tensor<1, Int>, rhs: [i64; 4]) -> [i64; 4] {
             let output = {
                 let mut result = rhs;
-                let __scalar = (lhs).into_scalar::<i64>() as i64;
+                let scalar = (lhs).into_scalar::<i64>() as i64;
                 for result_item in result.iter_mut() {
-                    *result_item = result_item.saturating_add(__scalar);
+                    *result_item = result_item.saturating_add(scalar);
                 }
                 result
             };
