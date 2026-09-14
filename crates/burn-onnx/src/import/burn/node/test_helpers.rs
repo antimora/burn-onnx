@@ -6,8 +6,55 @@
 use super::NodeCodegen;
 use crate::burn::Scope;
 use crate::burn::argument_helpers::{codegen_fn_params, codegen_return_expr, codegen_return_type};
+use crate::burn::shadow_check;
 use onnx_ir::ir::ArgType;
+use proc_macro2::TokenStream;
 use quote::quote;
+
+/// Run a node's forward codegen against a fresh scope, without the shadow
+/// check or tag stripping that `codegen_forward` applies.
+fn forward_tokens<T>(node: &T, with_clone: bool, node_position: usize) -> TokenStream
+where
+    T: NodeCodegen,
+{
+    let mut scope = Scope::default();
+
+    // Register all inputs as variables
+    for input in node.inputs().iter() {
+        // Skip non-dynamic inputs (constants, initializers)
+        if !(input.is_dynamic() || input.is_constant()) {
+            continue;
+        }
+        if !matches!(
+            input.ty,
+            ArgType::Tensor(_)
+                | ArgType::ScalarTensor(_)
+                | ArgType::ScalarNative(_)
+                | ArgType::Shape(_)
+        ) {
+            continue;
+        }
+        scope.tensor_register_variable(input, 0);
+
+        if with_clone {
+            // Register two future uses to trigger clone
+            scope.tensor_register_future_use(input, node_position);
+            scope.tensor_register_future_use(input, node_position + 1);
+        }
+    }
+
+    let mut scope_at_pos = scope.at_position(node_position);
+    node.forward(&mut scope_at_pos)
+}
+
+/// The shadow check result for a node's forward codegen, for tests that give
+/// inputs names colliding with the node's temporaries.
+pub fn shadow_check_result<T>(node: &T) -> Result<(), shadow_check::Shadowed>
+where
+    T: NodeCodegen,
+{
+    shadow_check::Checker::default().check("test", &forward_tokens(node, false, 1))
+}
 
 /// Generate forward pass code for a node with optional clone behavior
 ///
@@ -39,35 +86,11 @@ pub fn codegen_forward<T>(
 where
     T: NodeCodegen,
 {
-    let mut scope = Scope::default();
-
-    // Register all inputs as variables
-    for input in node.inputs().iter() {
-        // Skip non-dynamic inputs (constants, initializers)
-        if !(input.is_dynamic() || input.is_constant()) {
-            continue;
-        }
-        if !matches!(
-            input.ty,
-            ArgType::Tensor(_)
-                | ArgType::ScalarTensor(_)
-                | ArgType::ScalarNative(_)
-                | ArgType::Shape(_)
-        ) {
-            continue;
-        }
-        scope.tensor_register_variable(input, 0);
-
-        if with_clone {
-            // Register two future uses to trigger clone
-            scope.tensor_register_future_use(input, node_position);
-            scope.tensor_register_future_use(input, node_position + 1);
-        }
+    let body = forward_tokens(node, with_clone, node_position);
+    if let Err(shadowed) = shadow_check::Checker::default().check("test", &body) {
+        panic!("{shadowed}");
     }
-
-    // Generate code using the node's forward method with ScopeAtPosition
-    let mut scope_at_pos = scope.at_position(node_position);
-    let body = node.forward(&mut scope_at_pos);
+    let body = shadow_check::strip(body);
 
     // Filter inputs to only include dynamic inputs (not constants/initializers)
     let dynamic_inputs: Vec<_> = node

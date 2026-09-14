@@ -1,4 +1,4 @@
-use super::{BurnImports, Scope, ToTokens};
+use super::{BurnImports, Scope, ToTokens, shadow_check};
 use crate::LoadStrategy;
 use crate::burn::custom_op::HookRegistry;
 use crate::burn::node::NodeCodegen;
@@ -261,11 +261,12 @@ impl BurnGraph {
 
         let partition = self.compute_partition();
 
-        if let Some(partition) = partition {
+        let tokens = if let Some(partition) = partition {
             self.codegen_partitioned(partition)
         } else {
             self.codegen_flat()
-        }
+        };
+        shadow_check::strip(tokens)
     }
 
     /// Generate flat code (no submodules) for small graphs.
@@ -425,9 +426,11 @@ impl BurnGraph {
             let output_return = crate::burn::codegen_return_expr(chunk_outputs);
 
             let mut forward_body = quote! {};
+            let mut shadow_check = shadow_check::Checker::default();
             for (local_pos, node) in chunk_nodes.iter().enumerate() {
                 let mut scope_at_pos = scope.at_position(local_pos);
                 let code = node_forward(node, &mut scope_at_pos, &self.hooks);
+                expect_unshadowed(shadow_check.check(node.name(), &code));
                 forward_body.extend(code);
             }
 
@@ -788,9 +791,11 @@ impl BurnGraph {
         let input_conversions = self.codegen_boundary_input_conversions();
 
         let mut body = quote! {};
+        let mut shadow_check = shadow_check::Checker::default();
         for (index, node) in self.nodes.iter().enumerate() {
             let mut scope_at_pos = self.scope.at_position(index);
             let code = node_forward(node, &mut scope_at_pos, &self.hooks);
+            expect_unshadowed(shadow_check.check(node.name(), &code));
             body.extend(code);
         }
 
@@ -980,6 +985,17 @@ type FieldTuple = (proc_macro2::Ident, TokenStream, Option<TokenStream>);
 ///
 /// The path is baked into the generated code as a string literal (`from_file(#file)`,
 /// `include_bytes!(#file)`), so a non-UTF-8 path cannot be represented at all.
+/// Unwrap the shadow check at the codegen boundary.
+///
+/// Like `expect_hook`, `BurnGraph::codegen` has no error channel, so a graph
+/// value read through a same-named temporary surfaces as a panic that names
+/// the node and the value.
+fn expect_unshadowed(result: Result<(), shadow_check::Shadowed>) {
+    if let Err(shadowed) = result {
+        panic!("{shadowed}");
+    }
+}
+
 fn path_to_str(path: &std::path::Path) -> &str {
     path.to_str().unwrap_or_else(|| {
         panic!(
@@ -1592,6 +1608,44 @@ mod tests {
             code.contains("t0.clamp((min1 as f64), (max1 as f64))"),
             "second clip should clamp with its own bounds:\n{code}"
         );
+    }
+
+    /// A temporary declared at `forward()` scope by one node stays visible to
+    /// every later node, so the check has to carry it across node boundaries.
+    #[test]
+    #[should_panic(expected = "node `abs1` declares a local `actual_idx`")]
+    fn function_scope_temporary_shadowing_a_later_input_is_rejected() {
+        use onnx_ir::gather::{GatherConfig, GatherNodeBuilder};
+
+        let mut graph = BurnGraph::default();
+
+        // Shape-to-scalar gather binds `actual_idx` at function scope.
+        let gather = GatherNodeBuilder::new("gather1")
+            .input_shape("shape", 4)
+            .input_scalar("idx", DType::I64)
+            .output_scalar("dim", DType::I64)
+            .config(GatherConfig { axis: 0 })
+            .build();
+        graph.register(Node::Gather(gather));
+
+        let abs = AbsNodeBuilder::new("abs1")
+            .input_tensor("actual_idx", 2, DType::F32)
+            .output_tensor("out", 2, DType::F32)
+            .build();
+        graph.register(Node::Abs(abs));
+
+        graph.register_input_output(
+            vec![
+                "shape".to_string(),
+                "idx".to_string(),
+                "actual_idx".to_string(),
+            ],
+            vec!["dim".to_string(), "out".to_string()],
+            &[],
+            &[],
+        );
+
+        graph.codegen();
     }
 
     #[test]

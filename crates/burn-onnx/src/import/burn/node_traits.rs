@@ -173,7 +173,7 @@ pub fn extract_node_data(
 ///
 /// A proc_macro2::Ident with the argument's name
 pub fn arg_to_ident(arg: &Argument) -> proc_macro2::Ident {
-    proc_macro2::Ident::new(&arg.name, proc_macro2::Span::call_site())
+    super::shadow_check::value_ident(&arg.name)
 }
 
 // ============================================================================

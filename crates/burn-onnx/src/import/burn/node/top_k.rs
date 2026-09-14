@@ -105,6 +105,25 @@ mod tests {
     }
 
     #[test]
+    fn data_input_named_like_the_k_local_is_rejected() {
+        // `let k: usize = ...` precedes the read of the data input, so a data
+        // input named `k` would be read as the usize local.
+        let config = TopKConfig::new(
+            1,
+            TopKInput::Runtime(onnx_ir::ir::RuntimeInputRef::new("count".to_string(), 1)),
+        );
+        let node = TopKNodeBuilder::new("topk_rt")
+            .input_tensor("k", 2, DType::F32)
+            .input_tensor("count", 1, DType::I64)
+            .output_tensor("values", 2, DType::F32)
+            .output_tensor("indices", 2, DType::I64)
+            .config(config)
+            .build();
+        let shadowed = shadow_check_result(&node).unwrap_err();
+        assert_eq!(shadowed.name, "k");
+    }
+
+    #[test]
     fn test_top_k_runtime_k() {
         // Opset 10+ passes k as a runtime 1D single-element tensor.
         let config = TopKConfig::new(

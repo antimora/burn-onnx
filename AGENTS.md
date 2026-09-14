@@ -80,8 +80,11 @@ Key principles:
 - Use `arg_to_ident()` only for outputs and host-side values. Never use it for `ScalarTensor`
   inputs (it skips clone tracking)
 - Scope temporary variables in block expressions to avoid name collisions. Use plain names inside
-  the block (`let axis_size = ...`), never `__`-prefixed ones (`__lhs`, `__gather_input`); the
-  block already isolates them
+  the block (`let axis_size = ...`), never `__`-prefixed ones (`__lhs`, `__gather_input`)
+- Graph inputs keep their ONNX names, so a temporary can shadow one that the same scope reads
+  later (`let k = ...; #input.topk(k)` with a data input named `k`). `shadow_check` fails codegen
+  for that, but only sees references made through `scope.arg()` / `arg_to_ident()`; a raw
+  `Ident::new(&arg.name)` bypasses it
 - Do not rebind an interpolated input just to give it a local name (`let __lhs = #lhs;`). Use
   `#lhs` directly. A binding is only warranted when the value is consumed by value more than once,
   needs `mut`, or changes type (e.g. a `.into_scalar()` readback or a cast), and it takes a plain

@@ -76,6 +76,7 @@ impl<'a> Imports<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::burn::shadow_check::strip;
     use crate::burn::{BurnImports, Scope};
     use onnx_ir::ir::TensorType;
 
@@ -101,12 +102,12 @@ mod tests {
         // Two future uses remain after the first: expect a clone
         let mut at_pos = scope.at_position(1);
         let mut ctx = CodegenContext { inner: &mut at_pos };
-        assert_eq!(ctx.arg(&arg).to_string(), "input1 . clone ()");
+        assert_eq!(strip(ctx.arg(&arg)).to_string(), "input1 . clone ()");
 
         // Last use: moved, no clone
         let mut at_pos = scope.at_position(2);
         let mut ctx = CodegenContext { inner: &mut at_pos };
-        assert_eq!(ctx.arg(&arg).to_string(), "input1");
+        assert_eq!(strip(ctx.arg(&arg)).to_string(), "input1");
     }
 
     #[test]
@@ -115,7 +116,7 @@ mod tests {
         let mut scope = Scope::default();
         let mut at_pos = scope.at_position(0);
         let mut ctx = CodegenContext { inner: &mut at_pos };
-        assert_eq!(ctx.arg(&arg).to_string(), "alpha");
+        assert_eq!(strip(ctx.arg(&arg)).to_string(), "alpha");
     }
 
     #[test]
