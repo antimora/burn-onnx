@@ -1,5 +1,8 @@
+use onnx_ir::ir::ArgType;
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
+
+use crate::burn::ToTokens;
 
 /// Build the shape literal `[1, channels, 1, ..., 1]` of length `rank` used to
 /// broadcast a per-channel `[C]` tensor (gamma/beta/scale/bias) against an
@@ -30,6 +33,20 @@ pub(crate) fn leading_broadcast(
     let num_dims = target_rank - expr_rank;
     let dims: Vec<isize> = (0..num_dims).map(|i| i as isize).collect();
     quote! { (#expr).unsqueeze_dims(&[#(#dims),*]) }
+}
+
+/// Materializes a `Shape` operand (`[i64; N]`) as an Int tensor of shape `[N]` with the dtype of
+/// the on-device Int operand `other_ty`, then prepends unit dims so its rank matches
+/// `other_ty.rank()`. `N` stays on the last axis, per ONNX trailing-axis broadcasting.
+pub(crate) fn shape_operand_tensor(shape: TokenStream, other_ty: &ArgType) -> TokenStream {
+    let dtype = other_ty.elem_type().to_tokens();
+    let tensor = quote! {
+        Tensor::<1, burn::tensor::Int>::from_data(
+            burn::tensor::TensorData::from(&#shape as &[i64]),
+            (&self.device, #dtype)
+        )
+    };
+    leading_broadcast(tensor, 1, other_ty.rank())
 }
 
 /// Performs an element wise binary `op` over two `Shape` operands with numpy-style broadcasting of

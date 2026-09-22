@@ -71,22 +71,12 @@ impl NodeCodegen for onnx_ir::node::arithmetic::AddNode {
                 }
             }
             (ArgType::Shape(_), rhs_ty) if rhs_ty.is_on_device() => {
-                let dtype_tokens = rhs_ty.elem_type().to_tokens();
-                quote! {
-                    Tensor::<1, burn::tensor::Int>::from_data(
-                        burn::tensor::TensorData::from(&#lhs as &[i64]),
-                        (&self.device, #dtype_tokens)
-                    ).add(#rhs)
-                }
+                let lhs_bc = broadcast_helpers::shape_operand_tensor(quote! { #lhs }, rhs_ty);
+                quote! { #lhs_bc.add(#rhs) }
             }
             (lhs_ty, ArgType::Shape(_)) if lhs_ty.is_on_device() => {
-                let dtype_tokens = lhs_ty.elem_type().to_tokens();
-                quote! {
-                    #lhs.add(Tensor::<1, burn::tensor::Int>::from_data(
-                        burn::tensor::TensorData::from(&#rhs as &[i64]),
-                        (&self.device, #dtype_tokens)
-                    ))
-                }
+                let rhs_bc = broadcast_helpers::shape_operand_tensor(quote! { #rhs }, lhs_ty);
+                quote! { #lhs.add(#rhs_bc) }
             }
             _ => unreachable!(
                 "add: unsupported input types: {:?}, {:?}",
@@ -451,6 +441,54 @@ mod tests {
                         burn::tensor::TensorData::from(&rhs as &[i64]),
                         (&self.device, burn::tensor::DType::I64),
                     ),
+                );
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_shape_tensor_rank3() {
+        let node = AddNodeBuilder::new("add1")
+            .input_shape("lhs", 1)
+            .input_tensor("rhs", 3, DType::I64)
+            .output_tensor("output", 3, DType::I64)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: [i64; 1], rhs: Tensor<3, Int>) -> Tensor<3, Int> {
+            let output = (Tensor::<
+                1,
+                burn::tensor::Int,
+            >::from_data(
+                burn::tensor::TensorData::from(&lhs as &[i64]),
+                (&self.device, burn::tensor::DType::I64),
+            ))
+                .unsqueeze_dims(&[0isize, 1isize])
+                .add(rhs);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_tensor_rank3_shape() {
+        let node = AddNodeBuilder::new("add1")
+            .input_tensor("lhs", 3, DType::I64)
+            .input_shape("rhs", 1)
+            .output_tensor("output", 3, DType::I64)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: Tensor<3, Int>, rhs: [i64; 1]) -> Tensor<3, Int> {
+            let output = lhs
+                .add(
+                    (Tensor::<
+                        1,
+                        burn::tensor::Int,
+                    >::from_data(
+                        burn::tensor::TensorData::from(&rhs as &[i64]),
+                        (&self.device, burn::tensor::DType::I64),
+                    ))
+                        .unsqueeze_dims(&[0isize, 1isize]),
                 );
             output
         }
