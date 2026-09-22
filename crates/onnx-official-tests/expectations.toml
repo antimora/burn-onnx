@@ -5127,36 +5127,30 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): SplitToSequence (node 'splittosequence1')"
 
 [test_split_variable_parts_1d_opset13]
-status = "skip-codegen"
-reason = "Runtime split sizes are not supported in burn-onnx"
+status = "pass"
 
 [test_split_variable_parts_1d_opset18]
-status = "skip-codegen"
-reason = "Runtime split sizes are not supported in burn-onnx"
+status = "pass"
 
 [test_split_variable_parts_2d_opset13]
-status = "skip-codegen"
-reason = "Runtime split sizes are not supported in burn-onnx"
+status = "pass"
 
 [test_split_variable_parts_2d_opset18]
-status = "skip-codegen"
-reason = "Runtime split sizes are not supported in burn-onnx"
+status = "pass"
 
 [test_split_variable_parts_default_axis_opset13]
-status = "skip-codegen"
-reason = "Runtime split sizes are not supported in burn-onnx"
+status = "pass"
 
 [test_split_variable_parts_default_axis_opset18]
-status = "skip-codegen"
-reason = "Runtime split sizes are not supported in burn-onnx"
+status = "pass"
 
 [test_split_zero_size_splits_opset13]
-status = "skip-codegen"
-reason = "Runtime split sizes are not supported in burn-onnx"
+status = "fail-compare"
+reason = "empty input split into three zero-size parts; runtime split sizes are supported, this degenerate case is not yet triaged"
 
 [test_split_zero_size_splits_opset18]
-status = "skip-codegen"
-reason = "Runtime split sizes are not supported in burn-onnx"
+status = "fail-compare"
+reason = "empty input split into three zero-size parts; runtime split sizes are supported, this degenerate case is not yet triaged"
 
 [test_sqrt]
 status = "pass"
