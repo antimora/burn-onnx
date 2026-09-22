@@ -118,7 +118,7 @@ pub fn tensor_to_i64_vec(value: &TokenStream) -> TokenStream {
         #value
             .to_data()
             .convert::<i64>()
-            .into_vec::<i64>()
+            .try_into_vec::<i64>()
             .unwrap()
     }
 }

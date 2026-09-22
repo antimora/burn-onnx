@@ -37,7 +37,7 @@ impl NodeCodegen for onnx_ir::tile::TileNode {
                             #repeats_expr
                                 .to_data()
                                 .convert::<i64>()
-                                .into_vec::<i64>()
+                                .try_into_vec::<i64>()
                                 .unwrap()
                                 .into_iter()
                                 .map(|v| v as usize)
@@ -117,7 +117,7 @@ mod tests {
                 let repeats: alloc::vec::Vec<usize> = repeats
                     .to_data()
                     .convert::<i64>()
-                    .into_vec::<i64>()
+                    .try_into_vec::<i64>()
                     .unwrap()
                     .into_iter()
                     .map(|v| v as usize)

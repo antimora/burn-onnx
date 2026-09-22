@@ -441,7 +441,7 @@ mod tests {
                         let raw: alloc::vec::Vec<i64> = pads
                             .to_data()
                             .convert::<i64>()
-                            .into_vec::<i64>()
+                            .try_into_vec::<i64>()
                             .unwrap();
                         assert_eq!(
                             raw.len(), 4usize,
@@ -578,7 +578,7 @@ mod tests {
                         let raw: alloc::vec::Vec<i64> = pads
                             .to_data()
                             .convert::<i64>()
-                            .into_vec::<i64>()
+                            .try_into_vec::<i64>()
                             .unwrap();
                         assert_eq!(
                             raw.len(), 4usize,
@@ -718,7 +718,7 @@ mod tests {
                         let raw: alloc::vec::Vec<i64> = pads
                             .to_data()
                             .convert::<i64>()
-                            .into_vec::<i64>()
+                            .try_into_vec::<i64>()
                             .unwrap();
                         assert_eq!(
                             raw.len(), 6usize,
@@ -819,7 +819,7 @@ mod tests {
                         let raw_pads: alloc::vec::Vec<i64> = pads
                             .to_data()
                             .convert::<i64>()
-                            .into_vec::<i64>()
+                            .try_into_vec::<i64>()
                             .unwrap();
                         let raw_axes: alloc::vec::Vec<i64> = axes
                             .iter()
@@ -911,12 +911,12 @@ mod tests {
                         let raw_pads: alloc::vec::Vec<i64> = pads
                             .to_data()
                             .convert::<i64>()
-                            .into_vec::<i64>()
+                            .try_into_vec::<i64>()
                             .unwrap();
                         let raw_axes: alloc::vec::Vec<i64> = axes
                             .to_data()
                             .convert::<i64>()
-                            .into_vec::<i64>()
+                            .try_into_vec::<i64>()
                             .unwrap();
                         let n = raw_axes.len();
                         assert_eq!(
