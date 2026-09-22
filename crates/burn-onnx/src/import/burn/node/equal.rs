@@ -46,28 +46,12 @@ impl NodeCodegen for onnx_ir::comparison::EqualNode {
                 )
             }
             (ArgType::Shape(_), rhs_ty) if rhs_ty.is_on_device() => {
-                let dtype_tokens = rhs_ty.elem_type().to_tokens();
-                quote! {
-                    {
-                        let shape_tensor = Tensor::<1, Int>::from_data(
-                            burn::tensor::TensorData::from(#lhs.as_slice()),
-                            (&self.device, #dtype_tokens)
-                        );
-                        shape_tensor.equal(#rhs)
-                    }
-                }
+                let lhs_bc = broadcast_helpers::shape_operand_tensor(quote! { #lhs }, rhs_ty);
+                quote! { #lhs_bc.equal(#rhs) }
             }
             (lhs_ty, ArgType::Shape(_)) if lhs_ty.is_on_device() => {
-                let dtype_tokens = lhs_ty.elem_type().to_tokens();
-                quote! {
-                    {
-                        let shape_tensor = Tensor::<1, Int>::from_data(
-                            burn::tensor::TensorData::from(#rhs.as_slice()),
-                            (&self.device, #dtype_tokens)
-                        );
-                        #lhs.equal(shape_tensor)
-                    }
-                }
+                let rhs_bc = broadcast_helpers::shape_operand_tensor(quote! { #rhs }, lhs_ty);
+                quote! { #lhs.equal(#rhs_bc) }
             }
             _ => panic!(
                 "Comparison is supported for tensor, scalar, and shape operands in any combination"
@@ -310,16 +294,14 @@ mod tests {
             .build();
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, lhs: [i64; 4], rhs: Tensor<1, Int>) -> Tensor<1, Bool> {
-            let output = {
-                let shape_tensor = Tensor::<
-                    1,
-                    Int,
-                >::from_data(
-                    burn::tensor::TensorData::from(lhs.as_slice()),
+            let output = Tensor::<
+                1,
+                burn::tensor::Int,
+            >::from_data(
+                    burn::tensor::TensorData::from(&lhs as &[i64]),
                     (&self.device, burn::tensor::DType::I64),
-                );
-                shape_tensor.equal(rhs)
-            };
+                )
+                .equal(rhs);
             output
         }
         ");
@@ -334,16 +316,64 @@ mod tests {
             .build();
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, lhs: Tensor<1, Int>, rhs: [i64; 4]) -> Tensor<1, Bool> {
-            let output = {
-                let shape_tensor = Tensor::<
-                    1,
-                    Int,
-                >::from_data(
-                    burn::tensor::TensorData::from(rhs.as_slice()),
-                    (&self.device, burn::tensor::DType::I64),
+            let output = lhs
+                .equal(
+                    Tensor::<
+                        1,
+                        burn::tensor::Int,
+                    >::from_data(
+                        burn::tensor::TensorData::from(&rhs as &[i64]),
+                        (&self.device, burn::tensor::DType::I64),
+                    ),
                 );
-                lhs.equal(shape_tensor)
-            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_shape_tensor_rank3() {
+        let node = EqualNodeBuilder::new("equal1")
+            .input_shape("lhs", 1)
+            .input_tensor("rhs", 3, DType::I64)
+            .output_tensor("output", 3, DType::Bool(BoolStore::Native))
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: [i64; 1], rhs: Tensor<3, Int>) -> Tensor<3, Bool> {
+            let output = (Tensor::<
+                1,
+                burn::tensor::Int,
+            >::from_data(
+                burn::tensor::TensorData::from(&lhs as &[i64]),
+                (&self.device, burn::tensor::DType::I64),
+            ))
+                .unsqueeze_dims(&[0isize, 1isize])
+                .equal(rhs);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_tensor_rank3_shape() {
+        let node = EqualNodeBuilder::new("equal1")
+            .input_tensor("lhs", 3, DType::I64)
+            .input_shape("rhs", 1)
+            .output_tensor("output", 3, DType::Bool(BoolStore::Native))
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, lhs: Tensor<3, Int>, rhs: [i64; 1]) -> Tensor<3, Bool> {
+            let output = lhs
+                .equal(
+                    (Tensor::<
+                        1,
+                        burn::tensor::Int,
+                    >::from_data(
+                        burn::tensor::TensorData::from(&rhs as &[i64]),
+                        (&self.device, burn::tensor::DType::I64),
+                    ))
+                        .unsqueeze_dims(&[0isize, 1isize]),
+                );
             output
         }
         ");

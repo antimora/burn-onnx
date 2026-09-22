@@ -4,13 +4,15 @@ include_models!(
     greater,
     greater_scalar,
     greater_broadcast,
-    greater_shape_broadcast
+    greater_shape_broadcast,
+    greater_shape_rank_lift
 );
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::{Device, Tensor, TensorData};
+    use alloc::vec::Vec;
+    use burn::tensor::{Device, Int, Tensor, TensorData};
 
     #[test]
     fn greater() {
@@ -80,5 +82,32 @@ mod tests {
 
         assert_eq!(lhs_bc, [1i64, 0, 0, 0]);
         assert_eq!(rhs_bc, [0i64, 1, 1, 1]);
+    }
+
+    #[test]
+    fn greater_shape_operand_with_rank4_tensor() {
+        // dim0 of x's shape (B = 2) is a length 1 Shape, lifted to rank 4 before the comparison.
+        // Outputs are `x > 2` and `2 > x`.
+        let device = Default::default();
+        let model: greater_shape_rank_lift::Model = greater_shape_rank_lift::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/greater_shape_rank_lift.bpk"),
+            &device,
+        );
+
+        let values: Vec<i64> = (0..120).collect();
+        let x = Tensor::<4, Int>::from_data(
+            TensorData::new(values.clone(), [2, 3, 4, 5]),
+            (&device, burn::tensor::DType::I64),
+        );
+        let (tensor_shape, shape_tensor) = model.forward(x);
+
+        let expected1: Vec<bool> = values.iter().map(|&v| v > 2).collect();
+        let expected2: Vec<bool> = values.iter().map(|&v| 2 > v).collect();
+        tensor_shape
+            .to_data()
+            .assert_eq(&TensorData::new(expected1, [2, 3, 4, 5]), true);
+        shape_tensor
+            .to_data()
+            .assert_eq(&TensorData::new(expected2, [2, 3, 4, 5]), true);
     }
 }
