@@ -20,16 +20,23 @@ impl NodeCodegen for onnx_ir::split::SplitNode {
         };
 
         if let Some(split_sizes_input) = &self.config.split_sizes {
-            // Extract static split sizes from the enum wrapper
             let split_sizes = match split_sizes_input {
-                onnx_ir::split::SplitSizesInput::Static(sizes) => sizes,
-                onnx_ir::split::SplitSizesInput::Runtime(_) => {
-                    panic!("Runtime split sizes are not supported in burn-onnx")
+                onnx_ir::split::SplitSizesInput::Static(sizes) => {
+                    let sizes = sizes.iter().map(|s| s.to_tokens());
+                    quote! { [#(#sizes),*].into() }
+                }
+                // The output count is fixed by the graph; only the sizes wait for run
+                // time, and split_with_sizes takes them as a runtime Vec.
+                onnx_ir::split::SplitSizesInput::Runtime(runtime) => {
+                    let sizes = scope.arg(&self.inputs[runtime.input_index]);
+                    let to_vec = crate::burn::codegen::tensor_to_i64_vec(&sizes);
+                    quote! {
+                        #to_vec.into_iter().map(|size| size as usize).collect()
+                    }
                 }
             };
-            let split_sizes_tokens = split_sizes.iter().map(|s| s.to_tokens());
             quote! {
-                let split_tensors = #input.split_with_sizes([#(#split_sizes_tokens),*].into(), #axis);
+                let split_tensors = #input.split_with_sizes(#split_sizes, #axis);
                 #unpack_outputs
             }
         } else if let Some(split_size) = &self.config.split_size {
@@ -109,6 +116,49 @@ mod tests {
             let split_tensors = input.split_with_sizes([1, 3, 2].into(), 1);
             let [output0, output1, output2] = split_tensors.try_into().unwrap();
             (output0, output1, output2)
+        }
+        ");
+    }
+
+    #[test]
+    fn test_split_runtime_sizes() {
+        let config = SplitConfig {
+            axis: 0,
+            split_size: None,
+            split_sizes: Some(SplitSizesInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(
+                "split".to_string(),
+                1,
+            ))),
+            num_outputs: None,
+        };
+        let node = SplitNodeBuilder::new("split1")
+            .input_tensor("input", 1, DType::F32)
+            .input_tensor("split", 1, DType::I64)
+            .output_tensor("output0", 1, DType::F32)
+            .output_tensor("output1", 1, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            input: Tensor<1>,
+            split: Tensor<1, Int>,
+        ) -> (Tensor<1>, Tensor<1>) {
+            let split_tensors = input
+                .split_with_sizes(
+                    split
+                        .to_data()
+                        .convert::<i64>()
+                        .try_into_vec::<i64>()
+                        .unwrap()
+                        .into_iter()
+                        .map(|size| size as usize)
+                        .collect(),
+                    0,
+                );
+            let [output0, output1] = split_tensors.try_into().unwrap();
+            (output0, output1)
         }
         ");
     }
