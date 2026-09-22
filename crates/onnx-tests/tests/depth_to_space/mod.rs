@@ -1,6 +1,6 @@
 // Import the shared macro
 use crate::include_models;
-include_models!(depth_to_space_dcr, depth_to_space_crd);
+include_models!(depth_to_space_dcr, depth_to_space_crd, depth_to_space_multi);
 
 #[cfg(test)]
 mod tests {
@@ -91,5 +91,31 @@ mod tests {
         output
             .to_data()
             .assert_approx_eq::<f32>(&expected, Tolerance::default());
+    }
+
+    #[test]
+    fn depth_to_space_multi_channel() {
+        let device = Default::default();
+        let model: depth_to_space_multi::Model = depth_to_space_multi::Model::new(&device);
+        let input = Tensor::<1, burn::tensor::Int>::arange(0..16, &device)
+            .float()
+            .reshape([1, 8, 1, 2]);
+
+        let (dcr, crd) = model.forward(input);
+
+        dcr.to_data().assert_eq(
+            &TensorData::from([[
+                [[0.0f32, 4.0, 1.0, 5.0], [8.0, 12.0, 9.0, 13.0]],
+                [[2.0, 6.0, 3.0, 7.0], [10.0, 14.0, 11.0, 15.0]],
+            ]]),
+            true,
+        );
+        crd.to_data().assert_eq(
+            &TensorData::from([[
+                [[0.0f32, 2.0, 1.0, 3.0], [4.0, 6.0, 5.0, 7.0]],
+                [[8.0, 10.0, 9.0, 11.0], [12.0, 14.0, 13.0, 15.0]],
+            ]]),
+            true,
+        );
     }
 }
