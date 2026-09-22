@@ -486,6 +486,7 @@ fn max_pool(graph: &OnnxGraph) {
             ],
             ceil_mode: false,
             auto_pad: NotSet,
+            storage_order: 0,
         }
     "#);
 }

@@ -16,7 +16,6 @@
 //!
 //! ## Missing Test Coverage
 //! - TODO: No test for dilation > 1 with opset < 11 - Should reject dilation in older opsets
-//! - TODO: No test for storage_order != 0 - Non-row-major order should be validated/rejected
 //! - TODO: No test for int8/uint8 dtypes - Opset 12+ supports integer types
 //! - TODO: No test for kernel_shape validation - Missing kernel_shape attribute should be rejected
 //! - TODO: No test for negative padding values - Opset 12+ allows negative padding
@@ -26,7 +25,7 @@
 use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{Argument, Node, RawNode};
+use crate::ir::{ArgType, Argument, DType, Node, RawNode, TensorType};
 use crate::node::padding::{AutoPad, PaddingConfig2d, padding_config_2d};
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
@@ -47,6 +46,10 @@ pub struct MaxPool2dConfig {
     pub ceil_mode: bool,
     /// Auto padding mode
     pub auto_pad: AutoPad,
+    /// Layout of the optional Indices output: 0 flattens row-major (default), 1
+    /// column-major within each spatial plane.
+    #[new(default)]
+    pub storage_order: i64,
 }
 
 /// Node representation for MaxPool2d operation
@@ -106,9 +109,7 @@ impl NodeProcessor for MaxPool2dProcessor {
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
                 "kernel_shape" | "strides" | "pads" => {}
-                "storage_order" => {
-                    // TODO: Validate storage_order == 0 (row-major) - Non-zero values not supported - burn/crates/onnx-ir/src/node/max_pool2d.rs:114
-                }
+                "storage_order" => {}
                 "dilations" => {
                     // Dilation support requires opset 11+
                     let dilations = value.clone().into_i64s();
@@ -146,6 +147,16 @@ impl NodeProcessor for MaxPool2dProcessor {
         // Output type is same as input
         crate::processor::same_as_input(node);
 
+        // The optional Indices output holds int64 positions into the flattened input.
+        if let Some(indices) = node.outputs.get_mut(1) {
+            let rank = node.inputs[0].ty.rank();
+            indices.ty = ArgType::Tensor(TensorType {
+                dtype: DType::I64,
+                rank,
+                static_shape: None,
+            });
+        }
+
         Ok(())
     }
 
@@ -156,6 +167,7 @@ impl NodeProcessor for MaxPool2dProcessor {
         let mut dilations = vec![1, 1];
         let mut ceil_mode: i64 = 0;
         let mut auto_pad = AutoPad::NotSet;
+        let mut storage_order = 0;
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
@@ -165,14 +177,14 @@ impl NodeProcessor for MaxPool2dProcessor {
                 "dilations" => dilations = value.clone().into_i64s(),
                 "ceil_mode" => ceil_mode = value.clone().into_i64(),
                 "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string())?,
-                "storage_order" => {}
+                "storage_order" => storage_order = value.clone().into_i64(),
                 _ => {}
             }
         }
 
         let padding = padding_config_2d(&pads);
 
-        let config = MaxPool2dConfig::new(
+        let mut config = MaxPool2dConfig::new(
             [kernel_shape[0] as usize, kernel_shape[1] as usize],
             [strides[0] as usize, strides[1] as usize],
             padding,
@@ -180,6 +192,7 @@ impl NodeProcessor for MaxPool2dProcessor {
             ceil_mode == 1,
             auto_pad,
         );
+        config.storage_order = storage_order;
 
         Ok(config)
     }

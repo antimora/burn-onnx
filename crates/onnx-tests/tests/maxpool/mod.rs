@@ -3,6 +3,7 @@ use crate::include_models;
 include_models!(
     maxpool1d,
     maxpool1d_asymmetric_padding,
+    maxpool2d_indices,
     maxpool1d_ceil_mode,
     maxpool2d,
     maxpool2d_asymmetric_padding,
@@ -204,5 +205,85 @@ mod tests {
             [[32.0, 34.0, 35.0], [42.0, 44.0, 45.0], [47.0, 49.0, 50.0]],
         ]]);
         output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn maxpool2d_indices() {
+        let device = Default::default();
+        let model: maxpool2d_indices::Model = maxpool2d_indices::Model::new(&device);
+        let input = Tensor::<4>::from_data(
+            TensorData::from([
+                [
+                    [
+                        [30.0f32, 0., 22., 31., 18.],
+                        [28., 10., 70., 4., 12.],
+                        [49., 33., 67., 35., 68.],
+                        [45., 73., 61., 55., 40.],
+                    ],
+                    [
+                        [9., 64., 5., 47., 34.],
+                        [62., 42., 54., 16., 39.],
+                        [56., 79., 7., 50., 53.],
+                        [19., 66., 25., 44., 13.],
+                    ],
+                ],
+                [
+                    [
+                        [76., 3., 17., 38., 8.],
+                        [65., 6., 36., 72., 58.],
+                        [46., 78., 15., 27., 41.],
+                        [26., 48., 24., 43., 77.],
+                    ],
+                    [
+                        [57., 11., 32., 75., 59.],
+                        [63., 69., 37., 29., 1.],
+                        [52., 21., 2., 23., 74.],
+                        [20., 60., 71., 14., 51.],
+                    ],
+                ],
+            ]),
+            &device,
+        );
+
+        let (values, indices, values_col, indices_col) = model.forward(input);
+
+        let expected_values = TensorData::from([
+            [
+                [[30.0f32, 22., 31.], [49., 70., 68.], [45., 73., 55.]],
+                [[9., 64., 47.], [62., 79., 53.], [19., 66., 44.]],
+            ],
+            [
+                [[76., 17., 38.], [65., 78., 72.], [26., 48., 77.]],
+                [[57., 32., 75.], [63., 69., 74.], [20., 71., 51.]],
+            ],
+        ]);
+        values.to_data().assert_eq(&expected_values, true);
+        values_col.to_data().assert_eq(&expected_values, true);
+        indices.to_data().assert_eq(
+            &TensorData::from([
+                [
+                    [[0i64, 2, 3], [10, 7, 14], [15, 16, 18]],
+                    [[20, 21, 23], [25, 31, 34], [35, 36, 38]],
+                ],
+                [
+                    [[40, 42, 43], [45, 51, 48], [55, 56, 59]],
+                    [[60, 62, 63], [65, 66, 74], [75, 77, 79]],
+                ],
+            ]),
+            true,
+        );
+        indices_col.to_data().assert_eq(
+            &TensorData::from([
+                [
+                    [[0i64, 8, 12], [2, 9, 18], [3, 7, 15]],
+                    [[20, 24, 32], [21, 26, 38], [23, 27, 35]],
+                ],
+                [
+                    [[40, 48, 52], [41, 46, 53], [43, 47, 59]],
+                    [[60, 68, 72], [61, 65, 78], [63, 71, 79]],
+                ],
+            ]),
+            true,
+        );
     }
 }

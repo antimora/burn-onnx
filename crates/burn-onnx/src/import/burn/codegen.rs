@@ -289,19 +289,19 @@ pub fn resolve_auto_pad_2d(
     }
 }
 
-/// Per-axis `(begin, end)` padding for burn's functional conv ops, with `auto_pad`
-/// resolved against the static input size.
+/// Per-axis `(begin, end)` padding with `auto_pad` resolved against the static input
+/// size, for burn's functional conv and pool ops.
 ///
 /// `None` when SAME padding depends on a spatial size known only at run time.
-pub fn conv_padding_pairs(
+pub fn resolve_padding_pairs(
     auto_pad: &AutoPad,
     explicit: &[(usize, usize)],
     input_spatial: Option<&[usize]>,
     kernel: &[usize],
     stride: &[usize],
     dilation: &[usize],
-) -> Option<TokenStream> {
-    let pairs: Vec<(usize, usize)> = match auto_pad {
+) -> Option<Vec<(usize, usize)>> {
+    Some(match auto_pad {
         AutoPad::NotSet => explicit.to_vec(),
         AutoPad::Valid => vec![(0, 0); explicit.len()],
         AutoPad::SameUpper | AutoPad::SameLower => {
@@ -312,7 +312,19 @@ pub fn conv_padding_pairs(
                 })
                 .collect()
         }
-    };
+    })
+}
+
+/// [`resolve_padding_pairs`] as the `[(begin, end); N]` tokens `ConvOptions` takes.
+pub fn conv_padding_pairs(
+    auto_pad: &AutoPad,
+    explicit: &[(usize, usize)],
+    input_spatial: Option<&[usize]>,
+    kernel: &[usize],
+    stride: &[usize],
+    dilation: &[usize],
+) -> Option<TokenStream> {
+    let pairs = resolve_padding_pairs(auto_pad, explicit, input_spatial, kernel, stride, dilation)?;
     let pairs = pairs.iter().map(|(begin, end)| quote! { (#begin, #end) });
     Some(quote! { [#(#pairs),*] })
 }

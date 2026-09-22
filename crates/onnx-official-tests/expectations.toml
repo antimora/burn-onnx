@@ -3061,12 +3061,10 @@ status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D max pooling: Burn lacks a native MaxPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
 
 [test_maxpool_with_argmax_2d_precomputed_pads]
-status = "skip-compile"
-reason = "cannot find value `maxpool2d1_out2` in this scope"
+status = "pass"
 
 [test_maxpool_with_argmax_2d_precomputed_strides]
-status = "skip-compile"
-reason = "cannot find value `maxpool2d1_out2` in this scope"
+status = "pass"
 
 [test_maxunpool_export_with_output_shape]
 status = "skip-codegen"
