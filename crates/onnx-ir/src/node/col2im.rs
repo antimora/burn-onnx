@@ -191,8 +191,6 @@ impl NodeProcessor for Col2ImProcessor {
     }
 
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
-        use crate::ir::TensorDataExt;
-
         let image_shape = shape_input(node, 1, "image_shape")?;
         let block_shape = shape_input(node, 2, "block_shape")?;
         if image_shape.len() != block_shape.len() {
