@@ -3,28 +3,48 @@ use onnx_ir::ir::{ArgType, DType};
 use onnx_ir::node::range::RangeInput;
 use proc_macro2::Literal;
 
-/// A static bound as `f64` (for the codegen-time element count) and as a literal
-/// typed like the range element, so it mixes with runtime scalars of that type.
-/// Returns `None` for a runtime bound.
-fn static_bound(input: &RangeInput, dtype: &DType) -> Option<(f64, TokenStream)> {
+/// Literal for a static bound, typed like the range element so it mixes with
+/// runtime scalars of that type. Returns `None` for a runtime bound.
+fn static_literal(input: &RangeInput, dtype: &DType) -> Option<TokenStream> {
     match (input, dtype) {
         (RangeInput::StaticFloat(v), DType::F32) => {
-            Some((*v, super::super::codegen::f32_to_tokens(*v as f32)))
+            Some(super::super::codegen::f32_to_tokens(*v as f32))
         }
-        (RangeInput::StaticFloat(v), _) => Some((*v, super::super::codegen::f64_to_tokens(*v))),
+        (RangeInput::StaticFloat(v), _) => Some(super::super::codegen::f64_to_tokens(*v)),
         (RangeInput::Static(v), DType::I32) => {
             let lit = Literal::i32_suffixed(*v as i32);
-            Some((*v as f64, quote! { #lit }))
+            Some(quote! { #lit })
         }
         (RangeInput::Static(v), DType::I16) => {
             let lit = Literal::i16_suffixed(*v as i16);
-            Some((*v as f64, quote! { #lit }))
+            Some(quote! { #lit })
         }
         (RangeInput::Static(v), _) => {
             let lit = Literal::i64_suffixed(*v);
-            Some((*v as f64, quote! { #lit }))
+            Some(quote! { #lit })
         }
         (RangeInput::Runtime(_), _) => None,
+    }
+}
+
+/// Element count `max(ceil((limit - start) / delta), 0)` when all bounds are
+/// static. Integer bounds use exact integer arithmetic, since large `i64`
+/// values do not survive a round trip through `f64`.
+fn static_count(start: &RangeInput, limit: &RangeInput, delta: &RangeInput) -> Option<i64> {
+    match (start, limit, delta) {
+        (RangeInput::Static(s), RangeInput::Static(l), RangeInput::Static(d)) => {
+            let (diff, d) = (*l as i128 - *s as i128, *d as i128);
+            let mut n = diff / d;
+            let r = diff % d;
+            if r != 0 && (r > 0) == (d > 0) {
+                n += 1;
+            }
+            Some(n.max(0) as i64)
+        }
+        (RangeInput::StaticFloat(s), RangeInput::StaticFloat(l), RangeInput::StaticFloat(d)) => {
+            Some(((l - s) / d).ceil().max(0.0) as i64)
+        }
+        _ => None,
     }
 }
 
@@ -51,8 +71,8 @@ impl NodeCodegen for onnx_ir::node::range::RangeNode {
                                   local: &str|
          -> (TokenStream, TokenStream) {
             let local = Ident::new(local, Span::call_site());
-            match (config, static_bound(config, &elem_dtype)) {
-                (_, Some((_, literal))) => (quote! { let #local = #literal; }, quote! { #local }),
+            match (config, static_literal(config, &elem_dtype)) {
+                (_, Some(literal)) => (quote! { let #local = #literal; }, quote! { #local }),
                 (RangeInput::Runtime(runtime_ref), None) => {
                     let arg = &inputs[runtime_ref.input_index];
                     match &arg.ty {
@@ -90,13 +110,12 @@ impl NodeCodegen for onnx_ir::node::range::RangeNode {
         // where n = max(ceil((limit - start) / delta), 0)
         // This correctly handles both positive and negative delta.
         match (
-            static_bound(&self.config.start, &elem_dtype),
-            static_bound(&self.config.limit, &elem_dtype),
-            static_bound(&self.config.delta, &elem_dtype),
+            static_count(&self.config.start, &self.config.limit, &self.config.delta),
+            static_literal(&self.config.start, &elem_dtype),
+            static_literal(&self.config.delta, &elem_dtype),
         ) {
-            (Some((s, s_lit)), Some((l, _)), Some((d, d_lit))) => {
+            (Some(n), Some(s_lit), Some(d_lit)) => {
                 // All static: precompute n at codegen time
-                let n = ((l - s) / d).ceil().max(0.0) as i64;
                 let n_lit = Literal::i64_suffixed(n);
                 quote! {
                     let #output = Tensor::arange(0..#n_lit, &self.device)
@@ -435,6 +454,71 @@ mod tests {
                     .mul_scalar(delta)
                     .add_scalar(start)
             };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_range_static_large_i64() {
+        // 2^60 and 2^60 + 2 are the same f64, so the count must be computed exactly.
+        let start = 1i64 << 60;
+        let config = RangeConfig::new(
+            RangeInput::Static(start),
+            RangeInput::Static(start + 2),
+            RangeInput::Static(1),
+        );
+        let node = RangeNodeBuilder::new("range1")
+            .output_tensor("output", 1, DType::I64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self) -> Tensor<1, Int> {
+            let output = Tensor::arange(0..2i64, &self.device)
+                .cast(burn::tensor::DType::I64)
+                .mul_scalar(1i64)
+                .add_scalar(1152921504606846976i64);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_range_static_count_rounds_up() {
+        // (10 - 1) / 4 = 2.25 elements, rounded up to 3; (1 - 10) / -4 likewise.
+        let count = |s, l, d| {
+            super::static_count(
+                &RangeInput::Static(s),
+                &RangeInput::Static(l),
+                &RangeInput::Static(d),
+            )
+        };
+        assert_eq!(count(1, 10, 4), Some(3));
+        assert_eq!(count(10, 1, -4), Some(3));
+        assert_eq!(count(0, 8, 4), Some(2));
+        assert_eq!(count(10, 0, 2), Some(0));
+        assert_eq!(count(i64::MIN, i64::MAX, i64::MAX), Some(3));
+    }
+
+    #[test]
+    fn test_range_static_i16() {
+        let config = RangeConfig::new(
+            RangeInput::Static(-3),
+            RangeInput::Static(3),
+            RangeInput::Static(2),
+        );
+        let node = RangeNodeBuilder::new("range1")
+            .output_tensor("output", 1, DType::I16)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self) -> Tensor<1, Int> {
+            let output = Tensor::arange(0..3i64, &self.device)
+                .cast(burn::tensor::DType::I16)
+                .mul_scalar(2i16)
+                .add_scalar(-3i16);
             output
         }
         ");

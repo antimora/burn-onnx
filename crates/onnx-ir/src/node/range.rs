@@ -229,6 +229,7 @@ mod tests {
     use super::*;
     use crate::ir::DType;
     use crate::ir::NodeType;
+    use crate::ir::TensorData;
     use crate::node::test_utils::TestNodeBuilder;
 
     fn create_test_node() -> RawNode {
@@ -347,6 +348,21 @@ mod tests {
         assert!(matches!(config.start, RangeInput::StaticFloat(v) if v == 1.5));
         assert!(matches!(config.limit, RangeInput::StaticFloat(v) if v == 5.0));
         assert!(matches!(config.delta, RangeInput::StaticFloat(v) if v == 0.5));
+    }
+
+    #[test]
+    fn test_range_static_i16() {
+        let scalar = |v: i16| TensorData::new(vec![v], [0usize; 0]);
+        let node = TestNodeBuilder::new(NodeType::Range, "test_range")
+            .input_tensor_with_data("start", DType::I16, 0, scalar(-3))
+            .input_tensor_with_data("limit", DType::I16, 0, scalar(3))
+            .input_tensor_with_data("delta", DType::I16, 0, scalar(2))
+            .output_tensor_i64("output", 0, None)
+            .build_with_graph_data(16);
+        let config = RangeProcessor.extract_config(&node, 16).unwrap();
+        assert!(matches!(config.start, RangeInput::Static(-3)));
+        assert!(matches!(config.limit, RangeInput::Static(3)));
+        assert!(matches!(config.delta, RangeInput::Static(2)));
     }
 
     #[test]
