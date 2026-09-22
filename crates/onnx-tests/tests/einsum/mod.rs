@@ -52,18 +52,29 @@ mod tests {
         let device = Default::default();
         let model = einsum_general::Model::default();
 
-        let sq = Tensor::<1, Int>::arange(0..9, &device).float().reshape([3, 3]);
-        let batch = Tensor::<1, Int>::arange(0..18, &device).float().reshape([2, 3, 3]);
-        let a = Tensor::<1, Int>::arange(0..6, &device).float().reshape([2, 3]);
-        let b = Tensor::<1, Int>::arange(0..12, &device).float().reshape([3, 4]);
-        let c = Tensor::<1, Int>::arange(0..8, &device).float().reshape([4, 2]);
+        let sq = Tensor::<1, Int>::arange(0..9, &device)
+            .float()
+            .reshape([3, 3]);
+        let batch = Tensor::<1, Int>::arange(0..18, &device)
+            .float()
+            .reshape([2, 3, 3]);
+        let a = Tensor::<1, Int>::arange(0..6, &device)
+            .float()
+            .reshape([2, 3]);
+        let b = Tensor::<1, Int>::arange(0..12, &device)
+            .float()
+            .reshape([3, 4]);
+        let c = Tensor::<1, Int>::arange(0..8, &device)
+            .float()
+            .reshape([4, 2]);
 
         let (transposed, diagonal, trace, batch_diagonal, chain, upper) =
             model.forward(sq, batch, a, b, c);
 
-        transposed
-            .to_data()
-            .assert_eq(&TensorData::from([[0.0f32, 3.0], [1.0, 4.0], [2.0, 5.0]]), true);
+        transposed.to_data().assert_eq(
+            &TensorData::from([[0.0f32, 3.0], [1.0, 4.0], [2.0, 5.0]]),
+            true,
+        );
         diagonal
             .to_data()
             .assert_eq(&TensorData::from([0.0f32, 4.0, 8.0]), true);

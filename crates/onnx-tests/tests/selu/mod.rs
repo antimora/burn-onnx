@@ -30,10 +30,8 @@ mod tests {
 
         let input = Tensor::<2>::from_floats([[-1.0, 0.0, 1.0], [2.0, -0.5, -2.0]], &device);
         let output = model.forward(input);
-        let expected = TensorData::from([
-            [-3.792_723_2f32, 0.0, 3.0],
-            [6.0, -2.360_816, -5.187_988_3],
-        ]);
+        let expected =
+            TensorData::from([[-3.792_723_2f32, 0.0, 3.0], [6.0, -2.360_816, -5.187_988_3]]);
 
         output
             .to_data()

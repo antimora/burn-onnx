@@ -107,7 +107,8 @@ mod tests {
         let sizes = |s: [i64; 2]| Tensor::<1, burn::tensor::Int>::from_ints(s, &device);
 
         let (a, b) = model.forward(input(), sizes([2, 4]));
-        a.to_data().assert_eq(&TensorData::from([0.0f32, 1.0]), true);
+        a.to_data()
+            .assert_eq(&TensorData::from([0.0f32, 1.0]), true);
         b.to_data()
             .assert_eq(&TensorData::from([2.0f32, 3.0, 4.0, 5.0]), true);
 

@@ -74,10 +74,8 @@ mod tests {
         let device = Default::default();
         let model: dft_length::Model = dft_length::Model::new(&device);
 
-        let input = burn::tensor::Tensor::<3>::from_floats(
-            [[[1.0], [2.0], [3.0], [4.0], [5.0]]],
-            &device,
-        );
+        let input =
+            burn::tensor::Tensor::<3>::from_floats([[[1.0], [2.0], [3.0], [4.0], [5.0]]], &device);
 
         let (padded, truncated) = model.forward(input);
 

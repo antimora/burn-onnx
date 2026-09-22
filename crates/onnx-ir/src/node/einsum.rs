@@ -359,7 +359,10 @@ fn infer_output_static_shape(
     resolved: &ResolvedEinsum,
     operands: &[EinsumOperand<'_>],
 ) -> Result<Option<Vec<Option<usize>>>, ProcessError> {
-    if operands.iter().all(|operand| operand.static_shape.is_none()) {
+    if operands
+        .iter()
+        .all(|operand| operand.static_shape.is_none())
+    {
         return Ok(None);
     }
 
@@ -697,10 +700,8 @@ mod tests {
     #[test]
     fn test_infer_types_ellipsis_broadcast_static_shape() {
         // The size-1 ellipsis axis of the first operand broadcasts against 3.
-        let mut node = create_test_node_with_shapes(
-            "...ij,...jk->...ik",
-            &[vec![1, 4, 5], vec![3, 5, 7]],
-        );
+        let mut node =
+            create_test_node_with_shapes("...ij,...jk->...ik", &[vec![1, 4, 5], vec![3, 5, 7]]);
         infer(&mut node).unwrap();
         assert_eq!(
             output_tensor(&node).static_shape,

@@ -141,9 +141,6 @@ mod tests {
     fn test_gelu_rejects_unknown_approximation() {
         let mut node = create_test_node(Some("sigmoid"));
         let result = GeluProcessor.infer_types(&mut node, 20, &OutputPreferences::new());
-        assert!(matches!(
-            result,
-            Err(ProcessError::InvalidAttribute { .. })
-        ));
+        assert!(matches!(result, Err(ProcessError::InvalidAttribute { .. })));
     }
 }
