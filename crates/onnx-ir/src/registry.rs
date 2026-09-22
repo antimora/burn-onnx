@@ -261,6 +261,10 @@ impl ProcessorRegistry {
             Box::new(crate::node::global_avg_pool::GlobalAveragePoolProcessor),
         );
         registry.register(
+            NodeType::GlobalMaxPool,
+            Box::new(crate::node::global_max_pool::GlobalMaxPoolProcessor),
+        );
+        registry.register(
             NodeType::GlobalLpPool,
             Box::new(crate::node::global_lp_pool::GlobalLpPoolProcessor),
         );
@@ -280,10 +284,6 @@ impl ProcessorRegistry {
         );
 
         // Unsupported/placeholder operations
-        registry.register(
-            NodeType::GlobalMaxPool,
-            Box::new(crate::node::unsupported::UnsupportedProcessor),
-        );
         registry.register(
             NodeType::GatherND,
             Box::new(crate::node::gathernd::GatherNDProcessor),

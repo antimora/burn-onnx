@@ -72,6 +72,7 @@ pub mod gelu;
 pub mod gemm;
 pub mod global_avr_pool;
 pub mod global_lp_pool;
+pub mod global_max_pool;
 pub mod graph_multiple_output_tracking;
 pub mod greater;
 pub mod greater_or_equal;
