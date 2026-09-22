@@ -51,6 +51,13 @@ impl NodeProcessor for GlobalAveragePoolProcessor {
                 });
             }
         };
+        // Matches ORT, which reports "Input dimension cannot be less than 3".
+        if input_tensor.rank <= 2 {
+            return Err(ProcessError::Custom(format!(
+                "input tensor requires rank at least 3, got rank {}",
+                input_tensor.rank
+            )));
+        }
 
         node.outputs[0].ty = ArgType::Tensor(global_pool_output_type(input_tensor));
 
@@ -180,5 +187,22 @@ mod tests {
             output_tensor.static_shape,
             Some(vec![None, Some(3), Some(1), Some(1)])
         );
+    }
+
+    /// The spec requires N x C x D1 ... Dn, so rank 2 and below have no spatial dims.
+    #[test]
+    fn test_global_avg_pool_rejects_rank_below_3() {
+        for rank in [1, 2] {
+            let mut node = TestNodeBuilder::new(NodeType::GlobalAveragePool, "test")
+                .input_tensor_f32("input", rank, None)
+                .output_tensor_f32("output", rank, None)
+                .build();
+            let result =
+                GlobalAveragePoolProcessor.infer_types(&mut node, 16, &OutputPreferences::new());
+            assert!(
+                matches!(result, Err(ProcessError::Custom(_))),
+                "rank {rank} should be rejected, got {result:?}"
+            );
+        }
     }
 }

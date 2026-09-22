@@ -1,6 +1,6 @@
 // Import the shared macro
 use crate::include_models;
-include_models!(global_avr_pool, global_avr_pool_squeeze);
+include_models!(global_avr_pool, global_avr_pool_3d, global_avr_pool_squeeze);
 
 #[cfg(test)]
 mod tests {
@@ -49,6 +49,28 @@ mod tests {
         let output: Tensor<2> = model.forward(input);
 
         let expected = TensorData::from([[9.5f32, 29.5, 49.5], [69.5, 89.5, 109.5]]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, Tolerance::default());
+    }
+
+    /// Rank 5 has no adaptive pool module and reduces the three spatial axes with
+    /// `mean_dims` instead.
+    #[test]
+    fn globalavrpool_3d() {
+        let model: global_avr_pool_3d::Model = global_avr_pool_3d::Model::default();
+
+        let device = Default::default();
+        let input = Tensor::<1, burn::tensor::Int>::arange(0..144, &device)
+            .float()
+            .reshape([2, 3, 2, 3, 4]);
+
+        let output = model.forward(input);
+
+        let expected = TensorData::from([
+            [[[[11.5f32]]], [[[35.5]]], [[[59.5]]]],
+            [[[[83.5]]], [[[107.5]]], [[[131.5]]]],
+        ]);
         output
             .to_data()
             .assert_approx_eq::<f32>(&expected, Tolerance::default());
