@@ -7,12 +7,14 @@ include_models!(
     add_shape,
     add_broadcast,
     add_shape_broadcast,
+    add_shape_rank_lift,
     add_shape_tensor
 );
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
     use burn::tensor::{Device, Int, Tensor, TensorData};
 
     #[test]
@@ -167,5 +169,32 @@ mod tests {
 
         assert_eq!(lhs_bc, [5i64, 33, 7, 8]);
         assert_eq!(rhs_bc, [5i64, 33, 7, 8]);
+    }
+
+    #[test]
+    fn add_shape_operand_with_rank4_tensor() {
+        // dim0 of x's shape (B = 2) is a length 1 Shape, lifted to rank 4 before the op.
+        // Outputs are `x + 2` and `2 + x`.
+        let device = Default::default();
+        let model: add_shape_rank_lift::Model = add_shape_rank_lift::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/add_shape_rank_lift.bpk"),
+            &device,
+        );
+
+        let values: Vec<i64> = (1..=120).collect();
+        let x = Tensor::<4, Int>::from_data(
+            TensorData::new(values.clone(), [2, 3, 4, 5]),
+            (&device, burn::tensor::DType::I64),
+        );
+        let (tensor_shape, shape_tensor) = model.forward(x);
+
+        let expected1: Vec<i64> = values.iter().map(|&v| v + 2).collect();
+        let expected2: Vec<i64> = values.iter().map(|&v| 2 + v).collect();
+        tensor_shape
+            .to_data()
+            .assert_eq(&TensorData::new(expected1, [2, 3, 4, 5]), true);
+        shape_tensor
+            .to_data()
+            .assert_eq(&TensorData::new(expected2, [2, 3, 4, 5]), true);
     }
 }
