@@ -7,7 +7,10 @@ include_models!(
     range_negative_delta,
     range_float_static,
     range_float_mixed,
-    range_int32_mixed
+    range_int32_mixed,
+    range_float_runtime,
+    range_double_mixed,
+    range_int16
 );
 
 #[cfg(test)]
@@ -149,6 +152,10 @@ mod tests {
         output
             .to_data()
             .assert_approx_eq::<f32>(&expected, Tolerance::default());
+
+        // limit below start: empty
+        let output = model.forward(0.2);
+        assert_eq!(output.dims(), [0]);
     }
 
     #[test]
@@ -160,6 +167,53 @@ mod tests {
         let output = model.forward(11);
 
         let expected = TensorData::from([1i32, 4, 7, 10]);
+        output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn range_float_runtime() {
+        let device = Default::default();
+        let model: range_float_runtime::Model = range_float_runtime::Model::new(&device);
+
+        // limit - start is 2.6 in f32, exactly 2 steps of 1.3, so 2 elements (as in ORT)
+        let output = model.forward(-1.5, 1.1, 1.3);
+        let expected = TensorData::from([-1.5f32, -0.2]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, Tolerance::default());
+
+        // Negative fractional delta
+        let output = model.forward(2.0, 0.4, -0.5);
+        let expected = TensorData::from([2.0f32, 1.5, 1.0, 0.5]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, Tolerance::default());
+
+        // Empty
+        let output = model.forward(1.0, 0.0, 0.5);
+        assert_eq!(output.dims(), [0]);
+    }
+
+    #[test]
+    fn range_double_mixed() {
+        let device = Default::default();
+        let model: range_double_mixed::Model = range_double_mixed::Model::new(&device);
+
+        // start=-0.5 and delta=0.125 are static, limit is runtime
+        let output = model.forward(0.0);
+
+        let expected = TensorData::from([-0.5f64, -0.375, -0.25, -0.125]);
+        output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn range_int16() {
+        let device = Default::default();
+        let model: range_int16::Model = range_int16::Model::new(&device);
+
+        let output = model.forward();
+
+        let expected = TensorData::from([-3i16, -1, 1]);
         output.to_data().assert_eq(&expected, true);
     }
 }

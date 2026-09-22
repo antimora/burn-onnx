@@ -3,8 +3,9 @@ use onnx_ir::ir::{ArgType, DType};
 use onnx_ir::node::range::RangeInput;
 use proc_macro2::Literal;
 
-/// Literal for a static bound, typed like the range element so it mixes with
-/// runtime scalars of that type. Returns `None` for a runtime bound.
+/// Literal for a static bound, suffixed with the range element type so it is
+/// well typed in the scalar ops and mixes with runtime scalars of that type.
+/// Returns `None` for a runtime bound.
 fn static_literal(input: &RangeInput, dtype: &DType) -> Option<TokenStream> {
     match (input, dtype) {
         (RangeInput::StaticFloat(v), DType::F32) => {
@@ -29,8 +30,15 @@ fn static_literal(input: &RangeInput, dtype: &DType) -> Option<TokenStream> {
 
 /// Element count `max(ceil((limit - start) / delta), 0)` when all bounds are
 /// static. Integer bounds use exact integer arithmetic, since large `i64`
-/// values do not survive a round trip through `f64`.
-fn static_count(start: &RangeInput, limit: &RangeInput, delta: &RangeInput) -> Option<i64> {
+/// values do not survive a round trip through `f64`. A count past `i64::MAX`
+/// saturates rather than wrapping to an empty range. Float bounds subtract in
+/// the element type before widening, like the ONNX function body and ORT.
+fn static_count(
+    start: &RangeInput,
+    limit: &RangeInput,
+    delta: &RangeInput,
+    dtype: &DType,
+) -> Option<i64> {
     match (start, limit, delta) {
         (RangeInput::Static(s), RangeInput::Static(l), RangeInput::Static(d)) => {
             let (diff, d) = (*l as i128 - *s as i128, *d as i128);
@@ -39,10 +47,15 @@ fn static_count(start: &RangeInput, limit: &RangeInput, delta: &RangeInput) -> O
             if r != 0 && (r > 0) == (d > 0) {
                 n += 1;
             }
-            Some(n.max(0) as i64)
+            Some(i64::try_from(n.max(0)).unwrap_or(i64::MAX))
         }
         (RangeInput::StaticFloat(s), RangeInput::StaticFloat(l), RangeInput::StaticFloat(d)) => {
-            Some(((l - s) / d).ceil().max(0.0) as i64)
+            let diff = if *dtype == DType::F32 {
+                (*l as f32 - *s as f32) as f64
+            } else {
+                l - s
+            };
+            Some((diff / d).ceil().max(0.0) as i64)
         }
         _ => None,
     }
@@ -60,11 +73,12 @@ impl NodeCodegen for onnx_ir::node::range::RangeNode {
     fn forward(&self, scope: &mut super::super::scope::ScopeAtPosition<'_>) -> TokenStream {
         let output = arg_to_ident(self.outputs.first().unwrap());
 
-        // Each parameter is used more than once below, so a static literal or a
-        // scalar tensor readback is bound to a local first. Native scalars are
+        let elem_dtype = self.outputs.first().unwrap().ty.elem_type();
+
+        // A static literal or a scalar tensor readback is bound to a local
+        // (start and delta are read more than once below). Native scalars are
         // plain `Copy` idents and are used directly. Returns the binding
         // statement (possibly empty) and the expression to use.
-        let elem_dtype = self.outputs.first().unwrap().ty.elem_type();
         let range_param_tokens = |config: &RangeInput,
                                   inputs: &[Argument],
                                   scope: &mut super::super::scope::ScopeAtPosition<'_>,
@@ -88,17 +102,20 @@ impl NodeCodegen for onnx_ir::node::range::RangeNode {
                         _ => panic!("Range parameter must be a scalar"),
                     }
                 }
-                _ => panic!("Range parameter must be a scalar"),
+                (_, None) => unreachable!("a static Range bound always has a literal"),
             }
         };
 
-        let output_dtype = elem_dtype.to_tokens();
-        // `arange` yields an Int tensor and `cast` keeps the kind, so a float
-        // range has to switch kind with `.float()` first.
-        let to_output = if elem_dtype.is_float() {
-            quote! { .float().cast(#output_dtype) }
-        } else {
-            quote! { .cast(#output_dtype) }
+        // `arange` yields an Int tensor. Casting it with a `FloatDType` converts
+        // straight to the target float type; `.float()` would first round the
+        // indices through the device's default float dtype.
+        let to_output = match elem_dtype {
+            DType::F64 => quote! { .cast(burn::tensor::FloatDType::F64) },
+            DType::F32 => quote! { .cast(burn::tensor::FloatDType::F32) },
+            _ => {
+                let output_dtype = elem_dtype.to_tokens();
+                quote! { .cast(#output_dtype) }
+            }
         };
         let zero = if elem_dtype.is_float() {
             Literal::f64_unsuffixed(0.0)
@@ -110,7 +127,12 @@ impl NodeCodegen for onnx_ir::node::range::RangeNode {
         // where n = max(ceil((limit - start) / delta), 0)
         // This correctly handles both positive and negative delta.
         match (
-            static_count(&self.config.start, &self.config.limit, &self.config.delta),
+            static_count(
+                &self.config.start,
+                &self.config.limit,
+                &self.config.delta,
+                &elem_dtype,
+            ),
             static_literal(&self.config.start, &elem_dtype),
             static_literal(&self.config.delta, &elem_dtype),
         ) {
@@ -132,13 +154,20 @@ impl NodeCodegen for onnx_ir::node::range::RangeNode {
                     range_param_tokens(&self.config.limit, &self.inputs, scope, "limit");
                 let (bind_delta, delta) =
                     range_param_tokens(&self.config.delta, &self.inputs, scope, "delta");
+                // Floats subtract in the element type, like the ONNX function body
+                // and ORT. Ints widen first so a narrow subtraction cannot overflow.
+                let diff = if elem_dtype.is_float() {
+                    quote! { ((#limit - #start) as f64) }
+                } else {
+                    quote! { ((#limit as i128 - #start as i128) as f64) }
+                };
                 quote! {
                     let #output = {
                         #bind_start
                         #bind_limit
                         #bind_delta
                         assert!(#delta != #zero);
-                        let n = ((#limit - #start) as f64 / #delta as f64)
+                        let n = (#diff / #delta as f64)
                             .ceil().max(0.0) as i64;
                         Tensor::arange(0..n, &self.device)
                             #to_output
@@ -233,7 +262,8 @@ mod tests {
         pub fn forward(&self, start: i64, limit: i64, delta: i64) -> Tensor<1, Int> {
             let output = {
                 assert!(delta != 0);
-                let n = ((limit - start) as f64 / delta as f64).ceil().max(0.0) as i64;
+                let n = (((limit as i128 - start as i128) as f64) / delta as f64).ceil().max(0.0)
+                    as i64;
                 Tensor::arange(0..n, &self.device)
                     .cast(burn::tensor::DType::I64)
                     .mul_scalar(delta)
@@ -272,7 +302,8 @@ mod tests {
                 let start = 0i64;
                 let limit = (limit).into_scalar::<i64>();
                 assert!(delta != 0);
-                let n = ((limit - start) as f64 / delta as f64).ceil().max(0.0) as i64;
+                let n = (((limit as i128 - start as i128) as f64) / delta as f64).ceil().max(0.0)
+                    as i64;
                 Tensor::arange(0..n, &self.device)
                     .cast(burn::tensor::DType::I64)
                     .mul_scalar(delta)
@@ -322,8 +353,7 @@ mod tests {
         assert_snapshot!(code, @r"
         pub fn forward(&self) -> Tensor<1> {
             let output = Tensor::arange(0..7i64, &self.device)
-                .float()
-                .cast(burn::tensor::DType::F32)
+                .cast(burn::tensor::FloatDType::F32)
                 .mul_scalar(0.5f32)
                 .add_scalar(1.5f32);
             output
@@ -346,8 +376,7 @@ mod tests {
         assert_snapshot!(code, @r"
         pub fn forward(&self) -> Tensor<1> {
             let output = Tensor::arange(0..10i64, &self.device)
-                .float()
-                .cast(burn::tensor::DType::F64)
+                .cast(burn::tensor::FloatDType::F64)
                 .mul_scalar(0.1f64)
                 .add_scalar(0f64);
             output
@@ -378,10 +407,9 @@ mod tests {
                 let start = 0f32;
                 let delta = 0.25f32;
                 assert!(delta != 0.0);
-                let n = ((limit - start) as f64 / delta as f64).ceil().max(0.0) as i64;
+                let n = (((limit - start) as f64) / delta as f64).ceil().max(0.0) as i64;
                 Tensor::arange(0..n, &self.device)
-                    .float()
-                    .cast(burn::tensor::DType::F32)
+                    .cast(burn::tensor::FloatDType::F32)
                     .mul_scalar(delta)
                     .add_scalar(start)
             };
@@ -413,10 +441,9 @@ mod tests {
                 let limit = 4f32;
                 let delta = 1f32;
                 assert!(delta != 0.0);
-                let n = ((limit - start) as f64 / delta as f64).ceil().max(0.0) as i64;
+                let n = (((limit - start) as f64) / delta as f64).ceil().max(0.0) as i64;
                 Tensor::arange(0..n, &self.device)
-                    .float()
-                    .cast(burn::tensor::DType::F32)
+                    .cast(burn::tensor::FloatDType::F32)
                     .mul_scalar(delta)
                     .add_scalar(start)
             };
@@ -448,7 +475,8 @@ mod tests {
                 let start = 1i32;
                 let delta = 3i32;
                 assert!(delta != 0);
-                let n = ((limit - start) as f64 / delta as f64).ceil().max(0.0) as i64;
+                let n = (((limit as i128 - start as i128) as f64) / delta as f64).ceil().max(0.0)
+                    as i64;
                 Tensor::arange(0..n, &self.device)
                     .cast(burn::tensor::DType::I32)
                     .mul_scalar(delta)
@@ -492,13 +520,26 @@ mod tests {
                 &RangeInput::Static(s),
                 &RangeInput::Static(l),
                 &RangeInput::Static(d),
+                &DType::I64,
             )
         };
         assert_eq!(count(1, 10, 4), Some(3));
         assert_eq!(count(10, 1, -4), Some(3));
         assert_eq!(count(0, 8, 4), Some(2));
         assert_eq!(count(10, 0, 2), Some(0));
+        // MIN..MAX overflows an i64 subtraction and needs the i128 widening.
         assert_eq!(count(i64::MIN, i64::MAX, i64::MAX), Some(3));
+        // A count past i64::MAX saturates instead of wrapping to an empty range.
+        assert_eq!(count(i64::MIN, i64::MAX, 1), Some(i64::MAX));
+    }
+
+    #[test]
+    fn test_range_static_count_f32_subtracts_in_f32() {
+        // f32 1.1 - (-1.5) rounds to exactly 2.6f32, which is 2 steps of 1.3f32.
+        // Subtracting in f64 would give 3 elements; ORT and the ONNX reference give 2.
+        let f = |v: f32| RangeInput::StaticFloat(v as f64);
+        let count = super::static_count(&f(-1.5), &f(1.1), &f(1.3), &DType::F32);
+        assert_eq!(count, Some(2));
     }
 
     #[test]

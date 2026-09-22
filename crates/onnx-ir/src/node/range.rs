@@ -180,10 +180,18 @@ impl NodeProcessor for RangeProcessor {
                     } else {
                         tensor_data.scalar_i64().map(RangeInput::Static)
                     };
-                    static_value.map_err(|_| ProcessError::TypeMismatch {
-                        expected: "scalar numeric value".to_string(),
-                        actual: format!("{} must be a scalar numeric value", param_name),
-                    })
+                    let static_value = static_value.map_err(|e| ProcessError::TypeMismatch {
+                        expected: "int16, int32, int64, float or double scalar".to_string(),
+                        actual: format!("{}: {}", param_name, e),
+                    })?;
+                    // numpy's arange (the ONNX reference) raises on NaN/inf bounds
+                    if matches!(static_value, RangeInput::StaticFloat(v) if !v.is_finite()) {
+                        return Err(ProcessError::InvalidAttribute {
+                            name: param_name.to_string(),
+                            reason: format!("{} must be finite", param_name),
+                        });
+                    }
+                    Ok(static_value)
                 }
             }
         }
@@ -192,7 +200,7 @@ impl NodeProcessor for RangeProcessor {
         let limit = get_range_input(node, 1, "limit")?;
         let delta = get_range_input(node, 2, "delta")?;
 
-        // Reject delta=0 (causes division by zero in element count formula)
+        // Reject delta=0 (the element count formula divides by delta)
         if matches!(delta, RangeInput::Static(0))
             || matches!(delta, RangeInput::StaticFloat(d) if d == 0.0)
         {
@@ -363,6 +371,22 @@ mod tests {
         assert!(matches!(config.start, RangeInput::Static(-3)));
         assert!(matches!(config.limit, RangeInput::Static(3)));
         assert!(matches!(config.delta, RangeInput::Static(2)));
+    }
+
+    #[test]
+    fn test_range_non_finite_bound() {
+        let node = TestNodeBuilder::new(NodeType::Range, "test_range")
+            .input_scalar_tensor_f32("start", Some(0.0))
+            .input_scalar_tensor_f32("limit", Some(f32::INFINITY))
+            .input_scalar_tensor_f32("delta", Some(1.0))
+            .output_tensor_f32("output", 0, None)
+            .build_with_graph_data(16);
+        let result = RangeProcessor.extract_config(&node, 16);
+        assert!(
+            matches!(&result, Err(ProcessError::InvalidAttribute { name, .. }) if name == "limit"),
+            "infinite limit should be rejected, got: {:?}",
+            result
+        );
     }
 
     #[test]
