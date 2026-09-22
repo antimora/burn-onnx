@@ -1591,24 +1591,20 @@ status = "pass"
 status = "pass"
 
 [test_col2im]
-status = "skip-codegen"
-reason = "Node 'col2im1' (Col2Im): Col2Im: image_shape (input[1]) must be a constant"
+status = "pass"
 
 [test_col2im_5d]
 status = "skip-codegen"
-reason = "Node 'col2im1' (Col2Im): Col2Im: image_shape (input[1]) must be a constant"
+reason = "Node 'col2im1' (Col2Im): Col2Im currently only supports 1D and 2D spatial dimensions, got 3"
 
 [test_col2im_dilations]
-status = "skip-codegen"
-reason = "Node 'col2im1' (Col2Im): Col2Im: image_shape (input[1]) must be a constant"
+status = "pass"
 
 [test_col2im_pads]
-status = "skip-codegen"
-reason = "Node 'col2im1' (Col2Im): Col2Im: image_shape (input[1]) must be a constant"
+status = "pass"
 
 [test_col2im_strides]
-status = "skip-codegen"
-reason = "Node 'col2im1' (Col2Im): Col2Im: image_shape (input[1]) must be a constant"
+status = "pass"
 
 [test_compress_0]
 status = "skip-codegen"
