@@ -1708,6 +1708,8 @@ fn top_k(graph: &OnnxGraph) {
             k: Static(
                 2,
             ),
+            largest: true,
+            sorted: true,
         }
     "#);
 }
