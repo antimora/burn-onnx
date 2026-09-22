@@ -56,7 +56,7 @@ impl NodeCodegen for onnx_ir::squeeze::SqueezeNode {
                                 let raw_axes: alloc::vec::Vec<i64> = #axes_expr
                                     .to_data()
                                     .convert::<i64>()
-                                    .into_vec::<i64>()
+                                    .try_into_vec::<i64>()
                                     .unwrap();
                             },
                         };
@@ -216,7 +216,7 @@ mod tests {
                 let raw_axes: alloc::vec::Vec<i64> = axes
                     .to_data()
                     .convert::<i64>()
-                    .into_vec::<i64>()
+                    .try_into_vec::<i64>()
                     .unwrap();
                 let rank: i64 = 3;
                 let axes: alloc::vec::Vec<isize> = raw_axes
