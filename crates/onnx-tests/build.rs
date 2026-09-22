@@ -201,6 +201,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/dropout/dropout.onnx")
         .input("tests/einsum/einsum.onnx")
         .input("tests/einsum/einsum_ellipsis.onnx")
+        .input("tests/einsum/einsum_general.onnx")
         .input("tests/einsum/einsum_implicit.onnx")
         .input("tests/einsum/einsum_outer_int.onnx")
         .input("tests/einsum/einsum_reduction.onnx")
