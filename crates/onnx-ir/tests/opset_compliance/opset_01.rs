@@ -474,7 +474,7 @@ fn global_average_pool(graph: &OnnxGraph) {
       Inputs:
         globalaveragepool_input: F32[1, 3, 8, 8]
       Outputs:
-        globalaveragepool1_out1: F32[1, 3, 8, 8]
+        globalaveragepool1_out1: F32[1, 3, 1, 1]
     "#);
 }
 

@@ -270,6 +270,8 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/gemm/gemm_no_c.onnx")
         .input("tests/gemm/gemm_non_unit_alpha_beta.onnx")
         .input("tests/global_avr_pool/global_avr_pool.onnx")
+        .input("tests/global_avr_pool/global_avr_pool_3d.onnx")
+        .input("tests/global_avr_pool/global_avr_pool_squeeze.onnx")
         .input("tests/global_lp_pool/global_lp_pool_default.onnx")
         .input("tests/global_lp_pool/global_lp_pool_l1.onnx")
         .input("tests/global_lp_pool/global_lp_pool_l2.onnx")
