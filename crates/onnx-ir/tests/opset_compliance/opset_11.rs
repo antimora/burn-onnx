@@ -719,14 +719,14 @@ fn range(graph: &OnnxGraph) {
         range1_out1: F32[?]
       Config:
         RangeConfig {
-            start: Static(
-                0,
+            start: StaticFloat(
+                0.0,
             ),
-            limit: Static(
-                10,
+            limit: StaticFloat(
+                10.0,
             ),
-            delta: Static(
-                2,
+            delta: StaticFloat(
+                2.0,
             ),
         }
     "#);

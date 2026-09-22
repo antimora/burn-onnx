@@ -4,13 +4,16 @@ include_models!(
     range_static,
     range_mixed,
     range_runtime,
-    range_negative_delta
+    range_negative_delta,
+    range_float_static,
+    range_float_mixed,
+    range_int32_mixed
 );
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::TensorData;
+    use burn::tensor::{TensorData, Tolerance};
 
     #[test]
     fn range() {
@@ -112,6 +115,51 @@ mod tests {
         let output = model.forward();
 
         let expected = TensorData::from([10i64, 8, 6, 4, 2]);
+        output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn range_float_static() {
+        let device = Default::default();
+        let model: range_float_static::Model = range_float_static::Model::new(&device);
+
+        // start=1.5, limit=5.0, delta=0.5: fractional bounds must not be truncated
+        let output = model.forward();
+
+        let expected = TensorData::from([1.5f32, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, Tolerance::default());
+    }
+
+    #[test]
+    fn range_float_mixed() {
+        let device = Default::default();
+        let model: range_float_mixed::Model = range_float_mixed::Model::new(&device);
+
+        // start=0.5 and delta=0.25 are static, limit is runtime
+        let output = model.forward(2.0);
+        let expected = TensorData::from([0.5f32, 0.75, 1.0, 1.25, 1.5, 1.75]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, Tolerance::default());
+
+        let output = model.forward(1.6);
+        let expected = TensorData::from([0.5f32, 0.75, 1.0, 1.25, 1.5]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, Tolerance::default());
+    }
+
+    #[test]
+    fn range_int32_mixed() {
+        let device = Default::default();
+        let model: range_int32_mixed::Model = range_int32_mixed::Model::new(&device);
+
+        // start=1 and delta=3 are static, limit is runtime
+        let output = model.forward(11);
+
+        let expected = TensorData::from([1i32, 4, 7, 10]);
         output.to_data().assert_eq(&expected, true);
     }
 }

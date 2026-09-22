@@ -44,8 +44,10 @@ pub struct RangeConfig {
 /// Represents either a static value or a runtime argument for range parameters.
 #[derive(Debug, Clone)]
 pub enum RangeInput {
-    /// Static value known at compile time.
+    /// Static integer value known at compile time (int16, int32, int64 ranges).
     Static(i64),
+    /// Static floating-point value known at compile time (float, double ranges).
+    StaticFloat(f64),
     /// Runtime argument determined during execution .
     Runtime(RuntimeInputRef),
 }
@@ -172,13 +174,17 @@ impl NodeProcessor for RangeProcessor {
                     input.name.clone(),
                     index,
                 ))),
-                Some(tensor_data) => match tensor_data.scalar_i64() {
-                    Ok(value) => Ok(RangeInput::Static(value)),
-                    Err(_) => Err(ProcessError::TypeMismatch {
-                        expected: "scalar int value".to_string(),
-                        actual: format!("{} must be a scalar int value", param_name),
-                    }),
-                },
+                Some(tensor_data) => {
+                    let static_value = if tensor_data.elem_type().is_float() {
+                        tensor_data.scalar_f64().map(RangeInput::StaticFloat)
+                    } else {
+                        tensor_data.scalar_i64().map(RangeInput::Static)
+                    };
+                    static_value.map_err(|_| ProcessError::TypeMismatch {
+                        expected: "scalar numeric value".to_string(),
+                        actual: format!("{} must be a scalar numeric value", param_name),
+                    })
+                }
             }
         }
 
@@ -187,7 +193,9 @@ impl NodeProcessor for RangeProcessor {
         let delta = get_range_input(node, 2, "delta")?;
 
         // Reject delta=0 (causes division by zero in element count formula)
-        if let RangeInput::Static(0) = &delta {
+        if matches!(delta, RangeInput::Static(0))
+            || matches!(delta, RangeInput::StaticFloat(d) if d == 0.0)
+        {
             return Err(ProcessError::InvalidAttribute {
                 name: "delta".to_string(),
                 reason: "delta must not be zero".to_string(),
@@ -323,6 +331,36 @@ mod tests {
         assert!(
             matches!(result, Err(ProcessError::InvalidAttribute { .. })),
             "delta=0 should be rejected, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_range_static_float_keeps_fraction() {
+        let node = TestNodeBuilder::new(NodeType::Range, "test_range")
+            .input_scalar_tensor_f32("start", Some(1.5))
+            .input_scalar_tensor_f32("limit", Some(5.0))
+            .input_scalar_tensor_f32("delta", Some(0.5))
+            .output_tensor_f32("output", 0, None)
+            .build_with_graph_data(16);
+        let config = RangeProcessor.extract_config(&node, 16).unwrap();
+        assert!(matches!(config.start, RangeInput::StaticFloat(v) if v == 1.5));
+        assert!(matches!(config.limit, RangeInput::StaticFloat(v) if v == 5.0));
+        assert!(matches!(config.delta, RangeInput::StaticFloat(v) if v == 0.5));
+    }
+
+    #[test]
+    fn test_range_float_delta_zero() {
+        let node = TestNodeBuilder::new(NodeType::Range, "test_range")
+            .input_scalar_tensor_f32("start", Some(0.0))
+            .input_scalar_tensor_f32("limit", Some(1.0))
+            .input_scalar_tensor_f32("delta", Some(0.0))
+            .output_tensor_f32("output", 0, None)
+            .build_with_graph_data(16);
+        let result = RangeProcessor.extract_config(&node, 16);
+        assert!(
+            matches!(result, Err(ProcessError::InvalidAttribute { .. })),
+            "delta=0.0 should be rejected, got: {:?}",
             result
         );
     }
