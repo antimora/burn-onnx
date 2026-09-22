@@ -656,6 +656,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/scatter_elements/scatter_elements_3d.onnx")
         .input("tests/scatter_elements/scatter_elements_1d.onnx")
         .input("tests/scatter_elements/scatter_elements_int.onnx")
+        .input("tests/scatter_elements/scatter_opset10.onnx")
         // ScatterND operator tests
         .input("tests/scatter_nd/scatter_nd.onnx")
         .input("tests/scatter_nd/scatter_nd_2d.onnx")

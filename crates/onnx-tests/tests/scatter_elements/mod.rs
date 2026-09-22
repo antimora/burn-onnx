@@ -10,7 +10,8 @@ include_models!(
     scatter_elements_bool,
     scatter_elements_3d,
     scatter_elements_1d,
-    scatter_elements_int
+    scatter_elements_int,
+    scatter_opset10
 );
 
 #[cfg(test)]
@@ -22,6 +23,23 @@ mod tests {
     fn scatter_elements_default() {
         let device = Default::default();
         let model: scatter_elements::Model = scatter_elements::Model::new(&device);
+
+        let data = Tensor::<2>::zeros([3, 3], &device);
+        let indices = Tensor::<2, Int>::from_ints([[1, 0, 2], [0, 2, 1]], &device);
+        let updates = Tensor::<2>::from_floats([[1.0, 1.1, 1.2], [2.0, 2.1, 2.2]], &device);
+
+        let output = model.forward(data, indices, updates);
+
+        let expected = TensorData::from([[2.0f32, 1.1, 0.0], [1.0, 0.0, 2.2], [0.0, 2.1, 1.2]]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, burn::tensor::Tolerance::default());
+    }
+
+    #[test]
+    fn scatter_opset10() {
+        let device = Default::default();
+        let model: scatter_opset10::Model = scatter_opset10::Model::new(&device);
 
         let data = Tensor::<2>::zeros([3, 3], &device);
         let indices = Tensor::<2, Int>::from_ints([[1, 0, 2], [0, 2, 1]], &device);

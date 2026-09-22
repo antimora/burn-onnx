@@ -326,7 +326,7 @@ define_node_enum! {
     Resize => resize::ResizeNode,
     /// Deprecated predecessor of Resize; shares its node and codegen.
     Upsample => resize::ResizeNode,
-    Scatter => unsupported::ScatterNode,
+    Scatter => scatter_elements::ScatterElementsNode,
     ScatterElements => scatter_elements::ScatterElementsNode,
     ScatterND => scatter_nd::ScatterNDNode,
     Shape => shape::ShapeNode,

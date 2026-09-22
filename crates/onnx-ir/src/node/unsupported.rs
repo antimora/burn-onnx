@@ -71,7 +71,6 @@ define_placeholder_node! {
     ReverseSequenceNode,
     RoiAlignNode,
     RotaryEmbeddingNode,
-    ScatterNode,
     SequenceAtNode,
     SequenceConstructNode,
     SequenceEmptyNode,
@@ -128,11 +127,6 @@ impl NodeProcessor for UnsupportedProcessor {
         use crate::ir::NodeType;
 
         match builder.node_type {
-            NodeType::Scatter => Node::Scatter(ScatterNode {
-                name: builder.name,
-                inputs: builder.inputs,
-                outputs: builder.outputs,
-            }),
             NodeType::Unique => Node::Unique(UniqueNode {
                 name: builder.name,
                 inputs: builder.inputs,

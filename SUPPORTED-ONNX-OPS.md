@@ -169,7 +169,7 @@ functionality.
 | [Round][147]                     | ✅             | ✅           |
 | [Scaler][206]                    | ✅             | ✅           |
 | [Scan][148]                      | ✅             | ✅           |
-| [Scatter][149]                   | ❌             | ✅           |
+| [Scatter][149]                   | ✅             | ✅           |
 | [ScatterElements][150]           | ✅             | ✅           |
 | [ScatterND][151]                 | ✅             | ✅           |
 | [Selu][152]                      | ✅             | ✅           |

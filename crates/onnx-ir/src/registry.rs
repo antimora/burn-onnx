@@ -289,12 +289,12 @@ impl ProcessorRegistry {
             Box::new(crate::node::gathernd::GatherNDProcessor),
         );
         registry.register(
-            NodeType::Scatter,
-            Box::new(crate::node::unsupported::UnsupportedProcessor),
-        );
-        registry.register(
             NodeType::ScatterElements,
             Box::new(crate::node::scatter_elements::ScatterElementsProcessor),
+        );
+        registry.register(
+            NodeType::Scatter,
+            Box::new(crate::node::scatter_elements::ScatterProcessor),
         );
         registry.register(
             NodeType::ScatterND,
