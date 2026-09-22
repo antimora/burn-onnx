@@ -3,6 +3,7 @@ include_models!(
     scatter_elements,
     scatter_elements_axis1,
     scatter_elements_add,
+    scatter_elements_add_partial,
     scatter_elements_mul,
     scatter_elements_max,
     scatter_elements_min,
@@ -83,6 +84,25 @@ mod tests {
         let output = model.forward(data, indices, updates);
 
         let expected = TensorData::from([[3.0f32, 2.1, 1.0], [2.0, 1.0, 3.2], [1.0, 3.1, 2.2]]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, burn::tensor::Tolerance::default());
+    }
+
+    #[test]
+    fn scatter_elements_add_partial_indices() {
+        let device = Default::default();
+        let model: scatter_elements_add_partial::Model =
+            scatter_elements_add_partial::Model::new(&device);
+
+        // Indices cover only the first two columns; the third passes through.
+        let data = Tensor::<2>::ones([3, 3], &device);
+        let indices = Tensor::<2, Int>::from_ints([[1, 0], [2, 1]], &device);
+        let updates = Tensor::<2>::from_floats([[1.0, 2.0], [3.0, 4.0]], &device);
+
+        let output = model.forward(data, indices, updates);
+
+        let expected = TensorData::from([[1.0f32, 3.0, 1.0], [2.0, 5.0, 1.0], [4.0, 1.0, 1.0]]);
         output
             .to_data()
             .assert_approx_eq::<f32>(&expected, burn::tensor::Tolerance::default());
