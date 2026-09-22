@@ -1853,9 +1853,7 @@ status = "skip-codegen"
 reason = "Node 'dequantizelinear1' (DequantizeLinear): Type mismatch: expected on-device tensor for x_scale, got ScalarNative(F32)"
 
 [test_det_2d]
-status = "fail-compare"
-reason = "det op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_det_nd]
 status = "pass"
@@ -1961,8 +1959,7 @@ reason = "use of moved value: `div1_out1`: value used here after move"
 status = "pass"
 
 [test_einsum_batch_diagonal]
-status = "skip-codegen"
-reason = "Invalid input count: expected 2, got 1"
+status = "pass"
 
 [test_einsum_batch_matmul]
 status = "pass"
@@ -1971,16 +1968,13 @@ status = "pass"
 status = "pass"
 
 [test_einsum_scalar]
-status = "skip-codegen"
-reason = "Invalid input count: expected 2, got 1"
+status = "pass"
 
 [test_einsum_sum]
-status = "skip-codegen"
-reason = "Invalid input count: expected 2, got 1"
+status = "pass"
 
 [test_einsum_transpose]
-status = "skip-codegen"
-reason = "Invalid input count: expected 2, got 1"
+status = "pass"
 
 [test_elu]
 status = "pass"
@@ -2139,9 +2133,7 @@ status = "pass"
 status = "pass"
 
 [test_gelu_tanh_2]
-status = "fail-compare"
-reason = "gelu op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_gelu_tanh_2_expanded]
 status = "skip-compile"
@@ -2187,12 +2179,10 @@ status = "pass"
 status = "pass"
 
 [test_globalmaxpool]
-status = "skip-codegen"
-reason = "Unsupported node type for inputs: GlobalMaxPool(GlobalMaxPoolNode { name: \"globalmaxpool1\", inputs: [Argument { name: \"x\", ty: Tensor(TensorType { dtype: F32, rank: 4, static_shape: Some([Some(1), Some(3), Some(5), So..."
+status = "pass"
 
 [test_globalmaxpool_precomputed]
-status = "skip-codegen"
-reason = "Unsupported node type for inputs: GlobalMaxPool(GlobalMaxPoolNode { name: \"globalmaxpool1\", inputs: [Argument { name: \"x\", ty: Tensor(TensorType { dtype: F32, rank: 4, static_shape: Some([Some(1), Some(1), Some(3), So..."
+status = "pass"
 
 [test_greater]
 status = "pass"
@@ -3090,11 +3080,11 @@ reason = "burn-onnx does not currently support 3D max pooling: Burn lacks a nati
 
 [test_maxpool_with_argmax_2d_precomputed_pads]
 status = "skip-compile"
-reason = "cannot find value `maxpool2d1_out2` in this scope: not found in this scope"
+reason = "cannot find value `maxpool2d1_out2` in this scope"
 
 [test_maxpool_with_argmax_2d_precomputed_strides]
 status = "skip-compile"
-reason = "cannot find value `maxpool2d1_out2` in this scope: not found in this scope"
+reason = "cannot find value `maxpool2d1_out2` in this scope"
 
 [test_maxunpool_export_with_output_shape]
 status = "skip-codegen"
@@ -3171,7 +3161,7 @@ status = "pass"
 
 [test_mod_int64_fmod]
 status = "skip-compile"
-reason = "no method named `fmod` found for struct `burn::Tensor<1, burn::prelude::Int>` in the current scope: method not found in `burn::Tensor<1, burn::prelude::Int>`"
+reason = "no method named `fmod` found for struct `burn::Tensor<1, burn::tensor::Int>` in the current scope: method not found in `burn::Tensor<1, burn::tensor::Int>`"
 
 [test_mod_mixed_sign_float16]
 status = "pass"
@@ -3559,14 +3549,14 @@ reason = "pow function requires RHS to be int or float type"
 
 [test_pow_types_int32_float32]
 status = "skip-compile"
-reason = "no method named `powf` found for struct `burn::Tensor<1, burn::prelude::Int>` in the current scope"
+reason = "no method named `powf` found for struct `burn::Tensor<1, burn::tensor::Int>` in the current scope"
 
 [test_pow_types_int32_int32]
 status = "pass"
 
 [test_pow_types_int64_float32]
 status = "skip-compile"
-reason = "no method named `powf` found for struct `burn::Tensor<1, burn::prelude::Int>` in the current scope"
+reason = "no method named `powf` found for struct `burn::Tensor<1, burn::tensor::Int>` in the current scope"
 
 [test_pow_types_int64_int64]
 status = "pass"
@@ -3661,8 +3651,7 @@ status = "skip-codegen"
 reason = "Node 'quantizelinear1' (QuantizeLinear): QuantizeLinear: output dtype F32 is not supported yet"
 
 [test_range_float_type_positive_delta]
-status = "skip-compile"
-reason = "can't compare `f32` with `{integer}`: no implementation for `f32 == {integer}`"
+status = "pass"
 
 [test_range_float_type_positive_delta_expanded]
 status = "skip-codegen"
@@ -4516,7 +4505,7 @@ status = "pass"
 
 [test_scan_sum]
 status = "skip-codegen"
-reason = "Ident is not allowed to be empty; use Option<Ident>"
+reason = "codegen referenced a graph value with an empty name; an optional input was read without an is_optional() guard"
 
 [test_scatter_elements_with_axis]
 status = "pass"
@@ -4537,12 +4526,10 @@ status = "pass"
 status = "pass"
 
 [test_scatter_with_axis]
-status = "skip-codegen"
-reason = "Unsupported node type for inputs: Scatter(ScatterNode { name: \"scatter1\", inputs: [Argument { name: \"data\", ty: Tensor(TensorType { dtype: F32, rank: 2, static_shape: Some([Some(1), Some(5)]) }), value_source: Dynamic..."
+status = "pass"
 
 [test_scatter_without_axis]
-status = "skip-codegen"
-reason = "Unsupported node type for inputs: Scatter(ScatterNode { name: \"scatter1\", inputs: [Argument { name: \"data\", ty: Tensor(TensorType { dtype: F32, rank: 2, static_shape: Some([Some(3), Some(3)]) }), value_source: Dynamic..."
+status = "pass"
 
 [test_scatternd]
 status = "pass"
@@ -4832,8 +4819,7 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): NegativeLogLikelihoodLoss (node 'negativeloglikelihoodloss1')"
 
 [test_selu]
-status = "skip-codegen"
-reason = "Selu: custom alpha (2) is not supported by Burn, only the default (1.6732631921768188) is supported"
+status = "pass"
 
 [test_selu_default]
 status = "pass"
@@ -4842,8 +4828,7 @@ status = "pass"
 status = "pass"
 
 [test_selu_example]
-status = "skip-codegen"
-reason = "Selu: custom alpha (2) is not supported by Burn, only the default (1.6732631921768188) is supported"
+status = "pass"
 
 [test_selu_example_expanded_ver18]
 status = "pass"
@@ -5395,8 +5380,7 @@ status = "pass"
 status = "pass"
 
 [test_top_k_smallest]
-status = "skip-codegen"
-reason = "Node 'topk1' (TopK): TopK: only largest elements is supported"
+status = "pass"
 
 [test_top_k_uint64]
 status = "pass"
@@ -5444,35 +5428,25 @@ status = "pass"
 status = "pass"
 
 [test_tril_neg]
-status = "fail-compare"
-reason = "tril op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_tril_one_row_neg]
 status = "pass"
 
 [test_tril_out_neg]
-status = "fail-compare"
-reason = "tril op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_tril_out_pos]
-status = "fail-compare"
-reason = "tril op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_tril_pos]
-status = "fail-compare"
-reason = "tril op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_tril_square]
 status = "pass"
 
 [test_tril_square_neg]
-status = "fail-compare"
-reason = "tril op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_tril_zero]
 status = "pass"
@@ -5481,37 +5455,25 @@ status = "pass"
 status = "pass"
 
 [test_triu_neg]
-status = "fail-compare"
-reason = "triu op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_triu_one_row]
-status = "fail-compare"
-reason = "triu op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_triu_out_neg_out]
-status = "fail-compare"
-reason = "triu op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_triu_out_pos]
-status = "fail-compare"
-reason = "triu op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_triu_pos]
-status = "fail-compare"
-reason = "triu op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_triu_square]
 status = "pass"
 
 [test_triu_square_neg]
-status = "fail-compare"
-reason = "triu op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_triu_zero]
 status = "pass"
