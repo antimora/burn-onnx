@@ -1,5 +1,5 @@
 use crate::include_models;
-include_models!(col2im_basic, col2im_complex);
+include_models!(col2im_basic, col2im_complex, col2im_asym, col2im_1d);
 
 #[cfg(test)]
 mod tests {
@@ -63,5 +63,45 @@ mod tests {
         output
             .into_data()
             .assert_approx_eq::<f32>(&expected, Tolerance::default());
+    }
+
+    #[test]
+    fn test_col2im_asymmetric_pads() {
+        let device = Default::default();
+        let model = col2im_asym::Model::new(&device);
+        let input = burn::tensor::Tensor::<1, burn::tensor::Int>::arange(0..40, &device)
+            .float()
+            .reshape([1, 4, 10]);
+
+        let output = model.forward(input);
+
+        output.to_data().assert_eq(
+            &burn::tensor::TensorData::from([[[
+                [20.0f32, 21.0, 52.0, 54.0, 56.0],
+                [5.0, 6.0, 22.0, 24.0, 26.0],
+                [25.0, 26.0, 62.0, 64.0, 66.0],
+                [0.0, 0.0, 0.0, 0.0, 0.0],
+            ]]]),
+            true,
+        );
+    }
+
+    #[test]
+    fn test_col2im_1d() {
+        let device = Default::default();
+        let model = col2im_1d::Model::new(&device);
+        let input = burn::tensor::Tensor::<1, burn::tensor::Int>::arange(0..24, &device)
+            .float()
+            .reshape([1, 6, 4]);
+
+        let output = model.forward(input);
+
+        output.to_data().assert_eq(
+            &burn::tensor::TensorData::from([[
+                [0.0f32, 5.0, 15.0, 18.0, 17.0, 11.0],
+                [12.0, 29.0, 51.0, 54.0, 41.0, 23.0],
+            ]]),
+            true,
+        );
     }
 }

@@ -130,6 +130,8 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/clip/clip.onnx")
         .input("tests/col2im/col2im_basic.onnx")
         .input("tests/col2im/col2im_complex.onnx")
+        .input("tests/col2im/col2im_asym.onnx")
+        .input("tests/col2im/col2im_1d.onnx")
         .input("tests/concat/concat.onnx")
         .input("tests/concat/concat_mixed_single_element.onnx")
         .input("tests/concat/concat_mixed_three_elements.onnx")
