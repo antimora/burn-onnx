@@ -119,8 +119,7 @@ mod tests {
         }
     }
 
-    /// N and C carry through, every spatial dim collapses to 1, instead of copying
-    /// the input's spatial dims.
+    /// N and C carry through, every spatial dim collapses to 1.
     #[test]
     fn test_global_avg_pool_output_static_shape() {
         let cases = [
@@ -155,5 +154,31 @@ mod tests {
                 "rank {rank}, input static_shape {input_shape:?}"
             );
         }
+    }
+
+    /// A partially known input shape keeps its unknown N as `None` and still
+    /// collapses the spatial dims.
+    #[test]
+    fn test_global_avg_pool_partial_static_shape() {
+        let mut node = TestNodeBuilder::new(NodeType::GlobalAveragePool, "test")
+            .input_tensor_f32("input", 4, None)
+            .output_tensor_f32("output", 4, None)
+            .build();
+        let ArgType::Tensor(input_ty) = &mut node.inputs[0].ty else {
+            panic!("Expected Tensor input");
+        };
+        input_ty.static_shape = Some(vec![None, Some(3), Some(8), Some(8)]);
+
+        GlobalAveragePoolProcessor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .unwrap();
+
+        let ArgType::Tensor(output_tensor) = &node.outputs[0].ty else {
+            panic!("Expected Tensor output");
+        };
+        assert_eq!(
+            output_tensor.static_shape,
+            Some(vec![None, Some(3), Some(1), Some(1)])
+        );
     }
 }

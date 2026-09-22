@@ -10,8 +10,8 @@
 # used to generate model: global_avr_pool_squeeze.onnx
 #
 # GlobalAveragePool followed by a Squeeze with no axes, the usual classifier head.
-# Squeeze without axes drops every dim of size 1, so its output rank depends on
-# GlobalAveragePool reporting its spatial dims as 1.
+# Squeeze without axes drops every dim of size 1, so burn-onnx can only infer its
+# output rank if GlobalAveragePool's static shape reports the spatial dims as 1.
 
 import numpy as np
 import onnx
