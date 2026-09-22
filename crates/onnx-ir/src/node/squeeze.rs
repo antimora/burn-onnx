@@ -138,13 +138,23 @@ impl NodeProcessor for SqueezeProcessor {
                                 "Squeeze: Cannot infer output rank when the number of runtime axes is unknown".to_string(),
                             ));
                         }
-                        // When axes is None, ONNX spec squeezes all dimensions of size 1
-                        if let Some(ref static_shape) = tensor.static_shape {
-                            static_shape.iter().filter(|dim| **dim != Some(1)).count()
-                        } else {
-                            return Err(ProcessError::Custom(
-                                "Squeeze: Cannot infer output rank when axes is None and input tensor static shape is unknown".to_string()
-                            ));
+                        // When axes is None, ONNX spec squeezes all dimensions of size 1.
+                        // An unknown dim may be 1 at runtime, so the rank is only known
+                        // when every dim is.
+                        match &tensor.static_shape {
+                            Some(static_shape) if static_shape.iter().all(Option::is_some) => {
+                                static_shape.iter().filter(|dim| **dim != Some(1)).count()
+                            }
+                            Some(_) => {
+                                return Err(ProcessError::Custom(
+                                    "Squeeze: Cannot infer output rank when axes is None and some input dims are unknown".to_string()
+                                ));
+                            }
+                            None => {
+                                return Err(ProcessError::Custom(
+                                    "Squeeze: Cannot infer output rank when axes is None and input tensor static shape is unknown".to_string()
+                                ));
+                            }
                         }
                     }
                     (Some(axes_vec), _) => {
@@ -500,6 +510,58 @@ mod tests {
             ArgType::Tensor(t) => {
                 assert_eq!(t.rank, 2);
                 assert_eq!(t.static_shape, Some(vec![Some(2), Some(3)]));
+            }
+            _ => panic!("Expected tensor output"),
+        }
+    }
+
+    #[test]
+    fn test_squeeze_no_axes_partial_shape_rejected() {
+        // [N, 64, 1, 1] with no axes: rank is 1 if N == 1 at runtime, 2 otherwise
+        let mut node = TestNodeBuilder::new(NodeType::Squeeze, "test_squeeze")
+            .add_input(
+                "data",
+                ArgType::Tensor(TensorType {
+                    dtype: crate::ir::DType::F32,
+                    rank: 4,
+                    static_shape: Some(vec![None, Some(64), Some(1), Some(1)]),
+                }),
+            )
+            .output_tensor_f32("squeezed", 2, None)
+            .build();
+
+        let processor = SqueezeProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 16, &prefs);
+        assert!(
+            matches!(result, Err(ProcessError::Custom(ref msg)) if msg.contains("some input dims are unknown"))
+        );
+    }
+
+    #[test]
+    fn test_squeeze_partial_shape_with_axes() {
+        // Explicit axes still work when other dims are unknown
+        let mut node = TestNodeBuilder::new(NodeType::Squeeze, "test_squeeze")
+            .add_input(
+                "data",
+                ArgType::Tensor(TensorType {
+                    dtype: crate::ir::DType::F32,
+                    rank: 4,
+                    static_shape: Some(vec![None, Some(64), Some(1), Some(1)]),
+                }),
+            )
+            .input_tensor_i64_data("axes", vec![2, 3], vec![2])
+            .output_tensor_f32("squeezed", 2, None)
+            .build_with_graph_data(16);
+
+        let processor = SqueezeProcessor;
+        let prefs = OutputPreferences::new();
+        processor.infer_types(&mut node, 16, &prefs).unwrap();
+
+        match &node.outputs[0].ty {
+            ArgType::Tensor(t) => {
+                assert_eq!(t.rank, 2);
+                assert_eq!(t.static_shape, Some(vec![None, Some(64)]));
             }
             _ => panic!("Expected tensor output"),
         }
