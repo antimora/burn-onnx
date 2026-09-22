@@ -54,13 +54,12 @@ fn forward_rfft(
     // squeeze_dims takes &[isize]
     let squeeze_dim = signal_rank as isize;
 
-    let dft_length_code = dft_length_adjustment(config, axis);
+    let n = dft_length_tokens(config);
 
     quote! {
         let #output = {
             let signal = #input.squeeze_dims::<#signal_rank>(&[#squeeze_dim]);
-            #dft_length_code
-            let (re, im) = rfft(signal, #axis, None);
+            let (re, im) = rfft(signal, #axis, #n);
             // Stack re and im along new last dim: [.., K] + [.., K] -> [.., K, 2]
             Tensor::<#signal_rank>::stack::<#out_rank>(
                 [re, im].to_vec(),
@@ -88,14 +87,17 @@ fn forward_rfft_full(
     let squeeze_dim = signal_rank as isize;
     let flip_axis = axis as isize; // flip() takes &[isize]
 
-    let dft_length_code = dft_length_adjustment(config, axis);
+    let dft_length = dft_length_tokens(config);
+    let n = match config.dft_length {
+        Some(dft_length) => quote! { #dft_length },
+        None => quote! { signal.dims()[#axis] },
+    };
 
     quote! {
         let #output = {
             let signal = #input.squeeze_dims::<#signal_rank>(&[#squeeze_dim]);
-            #dft_length_code
-            let n = signal.dims()[#axis];
-            let (re_half, im_half) = rfft(signal, #axis, None);
+            let n = #n;
+            let (re_half, im_half) = rfft(signal, #axis, #dft_length);
             let half_len = re_half.dims()[#axis];
             let mirror_len = n - half_len;
 
@@ -133,27 +135,11 @@ fn forward_rfft_full(
     }
 }
 
-/// Generate code for dft_length adjustment (zero-padding or truncation)
-fn dft_length_adjustment(config: &DftConfig, axis: usize) -> TokenStream {
+/// rfft's own length argument: it zero-pads or truncates the signal to `dft_length`.
+fn dft_length_tokens(config: &DftConfig) -> TokenStream {
     match config.dft_length {
-        Some(dft_length) => {
-            quote! {
-                let signal = {
-                    let current_len = signal.dims()[#axis];
-                    if current_len < #dft_length {
-                        let mut pad_shape = signal.dims();
-                        pad_shape[#axis] = #dft_length - current_len;
-                        let padding = Tensor::zeros(pad_shape, &signal.device());
-                        Tensor::cat([signal, padding].to_vec(), #axis)
-                    } else if current_len > #dft_length {
-                        signal.narrow(#axis, 0, #dft_length)
-                    } else {
-                        signal
-                    }
-                };
-            }
-        }
-        None => quote! {},
+        Some(dft_length) => quote! { Some(#dft_length) },
+        None => quote! { None },
     }
 }
 
@@ -252,20 +238,7 @@ mod tests {
         pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
             let output = {
                 let signal = input.squeeze_dims::<2usize>(&[2isize]);
-                let signal = {
-                    let current_len = signal.dims()[1usize];
-                    if current_len < 32usize {
-                        let mut pad_shape = signal.dims();
-                        pad_shape[1usize] = 32usize - current_len;
-                        let padding = Tensor::zeros(pad_shape, &signal.device());
-                        Tensor::cat([signal, padding].to_vec(), 1usize)
-                    } else if current_len > 32usize {
-                        signal.narrow(1usize, 0, 32usize)
-                    } else {
-                        signal
-                    }
-                };
-                let (re, im) = rfft(signal, 1usize, None);
+                let (re, im) = rfft(signal, 1usize, Some(32usize));
                 Tensor::<2usize>::stack::<3usize>([re, im].to_vec(), 2usize)
             };
             output

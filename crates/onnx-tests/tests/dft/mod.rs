@@ -1,5 +1,5 @@
 use crate::include_models;
-include_models!(dft_onesided, dft_full);
+include_models!(dft_onesided, dft_full, dft_length);
 
 #[cfg(test)]
 mod tests {
@@ -67,5 +67,42 @@ mod tests {
         output
             .to_data()
             .assert_approx_eq::<f32>(&expected.to_data(), burn::tensor::Tolerance::default());
+    }
+
+    #[test]
+    fn dft_length_pads_and_truncates() {
+        let device = Default::default();
+        let model: dft_length::Model = dft_length::Model::new(&device);
+
+        let input = burn::tensor::Tensor::<3>::from_floats(
+            [[[1.0], [2.0], [3.0], [4.0], [5.0]]],
+            &device,
+        );
+
+        let (padded, truncated) = model.forward(input);
+
+        let expected_padded = burn::tensor::Tensor::<3>::from_floats(
+            [[
+                [15.0f32, 0.0],
+                [-5.414_213_7, -7.242_640_5],
+                [3.0, 2.0],
+                [-2.585_786_3, -1.242_640_7],
+                [3.0, 0.0],
+            ]],
+            &device,
+        );
+        let expected_truncated = burn::tensor::Tensor::<3>::from_floats(
+            [[[10.0f32, 0.0], [-2.0, 2.0], [-2.0, 0.0], [-2.0, -2.0]]],
+            &device,
+        );
+
+        padded.to_data().assert_approx_eq::<f32>(
+            &expected_padded.to_data(),
+            burn::tensor::Tolerance::default(),
+        );
+        truncated.to_data().assert_approx_eq::<f32>(
+            &expected_truncated.to_data(),
+            burn::tensor::Tolerance::default(),
+        );
     }
 }
