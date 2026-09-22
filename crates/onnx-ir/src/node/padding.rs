@@ -413,6 +413,15 @@ pub(crate) fn padding_config_3d(pads: &[i64]) -> PaddingConfig3d {
     }
 }
 
+/// A conv weight's shape: from its constant value, or from a fully known static shape
+/// when the weight arrives at run time.
+pub(crate) fn known_weight_shape(weight: &crate::ir::Argument) -> Option<Vec<usize>> {
+    weight
+        .value()
+        .map(|data| data.shape.to_vec())
+        .or_else(|| weight.ty.static_shape_known())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

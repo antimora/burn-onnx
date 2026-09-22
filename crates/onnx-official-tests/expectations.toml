@@ -808,12 +808,10 @@ status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D average pooling: Burn lacks a native AvgPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
 
 [test_basic_conv_with_padding]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"Conv2d: weight tensor must be present\")"
+status = "pass"
 
 [test_basic_conv_without_padding]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"Conv2d: weight tensor must be present\")"
+status = "pass"
 
 [test_basic_deform_conv_with_padding]
 status = "pass"
@@ -1683,20 +1681,16 @@ status = "skip-compile"
 reason = "mismatched types: expected `[i64; 2]`, found `Tensor<1, Int>`"
 
 [test_conv_with_autopad_same]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"Conv2d: weight tensor must be present\")"
+status = "pass"
 
 [test_conv_with_strides_and_asymmetric_padding]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"Conv2d: weight tensor must be present\")"
+status = "pass"
 
 [test_conv_with_strides_no_padding]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"Conv2d: weight tensor must be present\")"
+status = "pass"
 
 [test_conv_with_strides_padding]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"Conv2d: weight tensor must be present\")"
+status = "pass"
 
 [test_convinteger_with_padding]
 status = "skip-codegen"
@@ -1707,32 +1701,26 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): ConvInteger (node 'convinteger1')"
 
 [test_convtranspose]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"ConvTranspose2d: weight tensor must be present\")"
+status = "pass"
 
 [test_convtranspose_1d]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"ConvTranspose1d: weight tensor must be present\")"
+status = "pass"
 
 [test_convtranspose_3d]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"ConvTranspose3d: weight tensor must be present\")"
+status = "pass"
 
 [test_convtranspose_autopad_same]
 status = "skip-codegen"
 reason = "Node 'convtranspose2d1' (ConvTranspose2d): Invalid attribute 'auto_pad': Unsupported 'auto_pad' value: SAME_UPPER"
 
 [test_convtranspose_dilations]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"ConvTranspose2d: weight tensor must be present\")"
+status = "pass"
 
 [test_convtranspose_group_2]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"ConvTranspose2d: weight tensor must be present\")"
+status = "pass"
 
 [test_convtranspose_group_2_image_3]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"ConvTranspose2d: weight tensor must be present\")"
+status = "pass"
 
 [test_convtranspose_kernel_shape]
 status = "skip-codegen"
@@ -1743,12 +1731,10 @@ status = "skip-codegen"
 reason = "Node 'convtranspose2d1' (ConvTranspose2d): Invalid attribute 'output_shape': Unexpected attribute for ConvTranspose2d: output_shape"
 
 [test_convtranspose_pad]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"ConvTranspose2d: weight tensor must be present\")"
+status = "pass"
 
 [test_convtranspose_pads]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"ConvTranspose2d: weight tensor must be present\")"
+status = "pass"
 
 [test_cos]
 status = "pass"

@@ -60,12 +60,14 @@ impl NodeProcessor for Conv2dProcessor {
     }
 
     fn lift_constants(&self, node: &mut RawNode, _opset: usize) -> Result<(), ProcessError> {
-        // Lift weight (input[1]) and optional bias (input[2])
+        // Lift weight (input[1]) and optional bias (input[2]) into the module. A bias
+        // next to a runtime weight stays a graph value: the functional conv that
+        // weight needs takes the bias as an ordinary input.
         if node.inputs.len() > 1 && node.inputs[1].is_constant() {
             node.inputs[1].to_static()?;
-        }
-        if node.inputs.len() > 2 && node.inputs[2].is_constant() {
-            node.inputs[2].to_static()?;
+            if node.inputs.len() > 2 && node.inputs[2].is_constant() {
+                node.inputs[2].to_static()?;
+            }
         }
 
         Ok(())
@@ -258,13 +260,7 @@ impl NodeProcessor for Conv2dProcessor {
         let mut group: usize = 1;
         let mut auto_pad = AutoPad::NotSet;
 
-        let weight_shape = node.inputs[1]
-            .value()
-            .ok_or_else(|| {
-                ProcessError::Custom("Conv2d: weight tensor must be present".to_string())
-            })?
-            .shape
-            .to_vec();
+        let weight_shape = crate::node::padding::known_weight_shape(&node.inputs[1]);
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
@@ -281,6 +277,11 @@ impl NodeProcessor for Conv2dProcessor {
         let padding = padding_config_2d(&pads);
 
         let kernel_size = if kernel_shape.is_empty() {
+            let weight_shape = weight_shape.ok_or_else(|| {
+                ProcessError::Custom(
+                    "Conv2d: kernel_shape is not set and the weight shape is not known".to_string(),
+                )
+            })?;
             if weight_shape.len() != 4 {
                 return Err(ProcessError::Custom(format!(
                     "Conv2d: expected to infer kernel shape from a weight tensor of rank 4 but got shape {:?}",

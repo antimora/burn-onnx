@@ -43,6 +43,7 @@ pub mod constant;
 pub mod constant_lifting_multiple;
 pub mod constant_of_shape;
 pub mod conv;
+pub mod conv_runtime_weight;
 pub mod conv_transpose;
 pub mod cos;
 pub mod cosh;

@@ -289,6 +289,34 @@ pub fn resolve_auto_pad_2d(
     }
 }
 
+/// Per-axis `(begin, end)` padding for burn's functional conv ops, with `auto_pad`
+/// resolved against the static input size.
+///
+/// `None` when SAME padding depends on a spatial size known only at run time.
+pub fn conv_padding_pairs(
+    auto_pad: &AutoPad,
+    explicit: &[(usize, usize)],
+    input_spatial: Option<&[usize]>,
+    kernel: &[usize],
+    stride: &[usize],
+    dilation: &[usize],
+) -> Option<TokenStream> {
+    let pairs: Vec<(usize, usize)> = match auto_pad {
+        AutoPad::NotSet => explicit.to_vec(),
+        AutoPad::Valid => vec![(0, 0); explicit.len()],
+        AutoPad::SameUpper | AutoPad::SameLower => {
+            let shape = input_spatial?;
+            (0..explicit.len())
+                .map(|i| {
+                    compute_auto_pad_1dim(auto_pad, shape[i], kernel[i], stride[i], dilation[i])
+                })
+                .collect()
+        }
+    };
+    let pairs = pairs.iter().map(|(begin, end)| quote! { (#begin, #end) });
+    Some(quote! { [#(#pairs),*] })
+}
+
 /// Resolve auto_pad to the tokens of a `PaddingConfig3d`.
 ///
 /// A dynamically shaped input has no fallback here: burn's 3D `Same` panics at forward time on
