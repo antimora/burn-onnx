@@ -744,26 +744,32 @@ status = "pass"
 [test_averagepool_3d_default]
 status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D average pooling: Burn lacks a native AvgPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
+tracking = "tracel-ai/burn#5785"
 
 [test_averagepool_3d_dilations_large_count_include_pad_is_0_ceil_mode_is_False]
 status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D average pooling: Burn lacks a native AvgPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
+tracking = "tracel-ai/burn#5785"
 
 [test_averagepool_3d_dilations_large_count_include_pad_is_0_ceil_mode_is_True]
 status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D average pooling: Burn lacks a native AvgPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
+tracking = "tracel-ai/burn#5785"
 
 [test_averagepool_3d_dilations_large_count_include_pad_is_1_ceil_mode_is_False]
 status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D average pooling: Burn lacks a native AvgPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
+tracking = "tracel-ai/burn#5785"
 
 [test_averagepool_3d_dilations_large_count_include_pad_is_1_ceil_mode_is_True]
 status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D average pooling: Burn lacks a native AvgPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
+tracking = "tracel-ai/burn#5785"
 
 [test_averagepool_3d_dilations_small]
 status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D average pooling: Burn lacks a native AvgPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
+tracking = "tracel-ai/burn#5785"
 
 [test_basic_conv_with_padding]
 status = "pass"
@@ -1801,31 +1807,32 @@ status = "pass"
 [test_dft]
 status = "fail-compare"
 reason = "Burn rfft requires power-of-2 signal dimension; test uses dim=10"
-tracking = "#161"
+tracking = "#549"
 
 [test_dft_axis]
 status = "fail-compare"
 reason = "Burn rfft requires power-of-2 signal dimension; test uses dim=10"
-tracking = "#161"
+tracking = "#549"
 
 [test_dft_axis_opset19]
 status = "fail-compare"
 reason = "Burn rfft requires power-of-2 signal dimension; test uses dim=10"
-tracking = "#161"
+tracking = "#549"
 
 [test_dft_inverse]
 status = "skip-codegen"
 reason = "Node 'dft1' (Dft): DFT: axis must be a compile-time constant"
+tracking = "#549"
 
 [test_dft_inverse_opset19]
 status = "fail-compare"
 reason = "Burn cfft requires power-of-2 signal dimension; test uses dim=10"
-tracking = "#161"
+tracking = "#549"
 
 [test_dft_opset19]
 status = "fail-compare"
 reason = "Burn rfft requires power-of-2 signal dimension; test uses dim=10"
-tracking = "#161"
+tracking = "#549"
 
 [test_div]
 status = "pass"
@@ -2987,18 +2994,22 @@ reason = "mismatched types: expected `Tensor<4>`, found `Tensor<4, Int>`"
 [test_maxpool_3d_default]
 status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D max pooling: Burn lacks a native MaxPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
+tracking = "tracel-ai/burn#5785"
 
 [test_maxpool_3d_dilations]
 status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D max pooling: Burn lacks a native MaxPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
+tracking = "tracel-ai/burn#5785"
 
 [test_maxpool_3d_dilations_use_ref_impl]
 status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D max pooling: Burn lacks a native MaxPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
+tracking = "tracel-ai/burn#5785"
 
 [test_maxpool_3d_dilations_use_ref_impl_large]
 status = "skip-codegen"
 reason = "burn-onnx does not currently support 3D max pooling: Burn lacks a native MaxPool3d primitive. Tracking issue: https://github.com/tracel-ai/burn-onnx/issues/343"
+tracking = "tracel-ai/burn#5785"
 
 [test_maxpool_with_argmax_2d_precomputed_pads]
 status = "pass"
@@ -4035,7 +4046,7 @@ status = "pass"
 [test_resize_downsample_scales_cubic]
 status = "fail-compare"
 reason = "resize op family comparison failure"
-tracking = "#311"
+tracking = "#546"
 
 [test_resize_downsample_scales_cubic_A_n0p5_exclude_outside]
 status = "skip-codegen"
@@ -4044,7 +4055,7 @@ reason = "Node 'resize1' (Resize): Invalid attribute 'exclude_outside': exclude_
 [test_resize_downsample_scales_cubic_align_corners]
 status = "fail-compare"
 reason = "resize op family comparison failure"
-tracking = "#311"
+tracking = "#546"
 
 [test_resize_downsample_scales_cubic_antialias]
 status = "skip-codegen"
@@ -4053,12 +4064,12 @@ reason = "Node 'resize1' (Resize): Invalid attribute 'antialias': antialias othe
 [test_resize_downsample_scales_linear]
 status = "fail-compare"
 reason = "resize op family comparison failure"
-tracking = "#311"
+tracking = "#546"
 
 [test_resize_downsample_scales_linear_align_corners]
 status = "fail-compare"
 reason = "resize op family comparison failure"
-tracking = "#311"
+tracking = "#546"
 
 [test_resize_downsample_scales_linear_antialias]
 status = "skip-codegen"
@@ -4085,12 +4096,12 @@ reason = "Node 'resize1' (Resize): Invalid attribute 'antialias': antialias othe
 [test_resize_downsample_sizes_linear_pytorch_half_pixel]
 status = "fail-compare"
 reason = "resize op family comparison failure"
-tracking = "#311"
+tracking = "#546"
 
 [test_resize_downsample_sizes_nearest]
 status = "fail-compare"
 reason = "resize op family comparison failure"
-tracking = "#311"
+tracking = "#546"
 
 [test_resize_downsample_sizes_nearest_not_larger]
 status = "skip-codegen"
@@ -4103,7 +4114,7 @@ reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribu
 [test_resize_tf_crop_and_resize]
 status = "fail-compare"
 reason = "resize op family comparison failure"
-tracking = "#311"
+tracking = "#546"
 
 [test_resize_tf_crop_and_resize_axes_2_3]
 status = "skip-codegen"
@@ -4130,7 +4141,7 @@ status = "pass"
 [test_resize_upsample_scales_cubic_asymmetric]
 status = "fail-compare"
 reason = "resize op family comparison failure"
-tracking = "#311"
+tracking = "#546"
 
 [test_resize_upsample_scales_linear]
 status = "pass"
@@ -4170,12 +4181,12 @@ reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribu
 [test_resize_upsample_sizes_nearest_ceil_half_pixel]
 status = "fail-compare"
 reason = "resize op family comparison failure"
-tracking = "#311"
+tracking = "#546"
 
 [test_resize_upsample_sizes_nearest_floor_align_corners]
 status = "fail-compare"
 reason = "resize op family comparison failure"
-tracking = "#311"
+tracking = "#546"
 
 [test_resize_upsample_sizes_nearest_not_larger]
 status = "skip-codegen"
@@ -4188,7 +4199,7 @@ reason = "Node 'resize1' (Resize): Invalid attribute 'axes': custom axes attribu
 [test_resize_upsample_sizes_nearest_round_prefer_ceil_asymmetric]
 status = "fail-compare"
 reason = "resize op family comparison failure"
-tracking = "#311"
+tracking = "#546"
 
 [test_reversesequence_batch]
 status = "skip-codegen"
@@ -5060,10 +5071,12 @@ status = "pass"
 [test_split_zero_size_splits_opset13]
 status = "fail-compare"
 reason = "empty input split into three zero-size parts; runtime split sizes are supported, this degenerate case is not yet triaged"
+tracking = "#547"
 
 [test_split_zero_size_splits_opset18]
 status = "fail-compare"
 reason = "empty input split into three zero-size parts; runtime split sizes are supported, this degenerate case is not yet triaged"
+tracking = "#547"
 
 [test_sqrt]
 status = "pass"
