@@ -34,14 +34,7 @@ impl NodeCodegen for onnx_ir::modulo::ModNode {
                 } else if self.config.fmod {
                     quote! { #lhs_bc.fmod(#rhs_bc) }
                 } else {
-                    // Burn's remainder does not broadcast internally
-                    let output_rank = lhs_rank.max(rhs_rank);
-                    broadcast_helpers::broadcast_binary_op(
-                        lhs_bc,
-                        rhs_bc,
-                        output_rank,
-                        quote! { remainder },
-                    )
+                    quote! { #lhs_bc.remainder(#rhs_bc) }
                 };
                 quote! {
                     let #output = #expr;
@@ -117,12 +110,7 @@ impl NodeCodegen for onnx_ir::modulo::ModNode {
                 let expr = if self.config.fmod {
                     quote! { #lhs_tensor.fmod(#rhs) }
                 } else {
-                    broadcast_helpers::broadcast_binary_op(
-                        lhs_tensor,
-                        quote! { #rhs },
-                        rhs_rank,
-                        quote! { remainder },
-                    )
+                    quote! { #lhs_tensor.remainder(#rhs) }
                 };
                 quote! {
                     let #output = #expr;
@@ -260,10 +248,9 @@ mod tests {
     use onnx_ir::modulo::{ModConfig, ModNodeBuilder};
 
     #[test]
-    fn swapped_operand_names_are_rejected() {
-        // `broadcast_binary_op` (broadcast_helpers.rs) emits `let lhs = #lhs;
-        // let rhs = #rhs;`, which reads `lhs` after rebinding it, so operands
-        // named `rhs` and `lhs` would make both sides the same tensor.
+    fn swapped_operand_names_are_accepted() {
+        // remainder is called on the operands directly, with no `lhs`/`rhs`
+        // temporaries that operands with those names could shadow.
         let config = ModConfig::new(false);
         let node = ModNodeBuilder::new("mod1")
             .input_tensor("rhs", 2, DType::F32)
@@ -271,8 +258,7 @@ mod tests {
             .output_tensor("output", 2, DType::F32)
             .config(config)
             .build();
-        let error = shadow_check_result(&node).unwrap_err();
-        assert_eq!(error.name(), Some("lhs"));
+        assert!(shadow_check_result(&node).is_ok());
     }
 
     // --- on_device + on_device (same rank) ---
@@ -288,18 +274,7 @@ mod tests {
             .build();
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: Tensor<2>, b: Tensor<2>) -> Tensor<2> {
-            let output = {
-                let lhs = a;
-                let rhs = b;
-                let lhs_dims: [usize; 2usize] = lhs.dims();
-                let rhs_dims: [usize; 2usize] = rhs.dims();
-                let mut shape = [0i64; 2usize];
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..2usize {
-                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
-                }
-                lhs.expand(shape).remainder(rhs.expand(shape))
-            };
+            let output = a.remainder(b);
             output
         }
         ");
@@ -335,18 +310,7 @@ mod tests {
             .build();
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: Tensor<2>, b: Tensor<3>) -> Tensor<3> {
-            let output = {
-                let lhs = (a).unsqueeze_dims(&[0isize]);
-                let rhs = b;
-                let lhs_dims: [usize; 3usize] = lhs.dims();
-                let rhs_dims: [usize; 3usize] = rhs.dims();
-                let mut shape = [0i64; 3usize];
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..3usize {
-                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
-                }
-                lhs.expand(shape).remainder(rhs.expand(shape))
-            };
+            let output = (a).unsqueeze_dims(&[0isize]).remainder(b);
             output
         }
         ");
@@ -363,18 +327,7 @@ mod tests {
             .build();
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: Tensor<3>, b: Tensor<2>) -> Tensor<3> {
-            let output = {
-                let lhs = a;
-                let rhs = (b).unsqueeze_dims(&[0isize]);
-                let lhs_dims: [usize; 3usize] = lhs.dims();
-                let rhs_dims: [usize; 3usize] = rhs.dims();
-                let mut shape = [0i64; 3usize];
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..3usize {
-                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
-                }
-                lhs.expand(shape).remainder(rhs.expand(shape))
-            };
+            let output = a.remainder((b).unsqueeze_dims(&[0isize]));
             output
         }
         ");
@@ -427,18 +380,7 @@ mod tests {
             .build();
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: Tensor<3>, b: Tensor<1>) -> Tensor<3> {
-            let output = {
-                let lhs = a;
-                let rhs = (b).unsqueeze_dims(&[0isize, 1isize]);
-                let lhs_dims: [usize; 3usize] = lhs.dims();
-                let rhs_dims: [usize; 3usize] = rhs.dims();
-                let mut shape = [0i64; 3usize];
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..3usize {
-                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
-                }
-                lhs.expand(shape).remainder(rhs.expand(shape))
-            };
+            let output = a.remainder((b).unsqueeze_dims(&[0isize, 1isize]));
             output
         }
         ");
@@ -472,18 +414,7 @@ mod tests {
             .build();
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: Tensor<1>, b: Tensor<1>) -> Tensor<1> {
-            let output = {
-                let lhs = a;
-                let rhs = b;
-                let lhs_dims: [usize; 1usize] = lhs.dims();
-                let rhs_dims: [usize; 1usize] = rhs.dims();
-                let mut shape = [0i64; 1usize];
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..1usize {
-                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
-                }
-                lhs.expand(shape).remainder(rhs.expand(shape))
-            };
+            let output = a.remainder(b);
             output
         }
         ");
@@ -607,24 +538,14 @@ mod tests {
             .build();
         assert_snapshot!(codegen_forward_default(&node), @r"
         pub fn forward(&self, a: f32, b: Tensor<2>) -> Tensor<2> {
-            let output = {
-                let lhs = Tensor::<
-                    1,
-                >::from_data(
-                        burn::tensor::TensorData::from([a as f64]),
-                        (&self.device, burn::tensor::DType::F32),
-                    )
-                    .unsqueeze_dims(&[0isize]);
-                let rhs = b;
-                let lhs_dims: [usize; 2usize] = lhs.dims();
-                let rhs_dims: [usize; 2usize] = rhs.dims();
-                let mut shape = [0i64; 2usize];
-                #[allow(clippy::needless_range_loop)]
-                for i in 0..2usize {
-                    shape[i] = core::cmp::max(lhs_dims[i] as i64, rhs_dims[i] as i64);
-                }
-                lhs.expand(shape).remainder(rhs.expand(shape))
-            };
+            let output = Tensor::<
+                1,
+            >::from_data(
+                    burn::tensor::TensorData::from([a as f64]),
+                    (&self.device, burn::tensor::DType::F32),
+                )
+                .unsqueeze_dims(&[0isize])
+                .remainder(b);
             output
         }
         ");

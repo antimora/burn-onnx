@@ -213,11 +213,22 @@ mod tests {
         let x = int64([7, -7, 7, -7, 6, -6, 0, 5]);
         let y = int64([3, 3, -3, -3, 3, -3, 4, 7]);
 
-        let (z, zs) = model.forward(x, y, -4);
+        let a = Tensor::<2, burn::tensor::Int>::from_data(
+            TensorData::from([[7i64], [-7]]),
+            (&device, burn::tensor::DType::I64),
+        );
+        let b = Tensor::<1, burn::tensor::Int>::from_data(
+            TensorData::from([3i64, -3, 4]),
+            (&device, burn::tensor::DType::I64),
+        );
+
+        let (z, zs, zb) = model.forward(x, y, -4, a, b);
 
         z.to_data()
             .assert_eq(&TensorData::from([1i64, -1, 1, -1, 0, 0, 0, 5]), true);
         zs.to_data()
             .assert_eq(&TensorData::from([3i64, -3, 3, -3, 2, -2, 0, 1]), true);
+        zb.to_data()
+            .assert_eq(&TensorData::from([[1i64, 1, 3], [-1, -1, -3]]), true);
     }
 }
