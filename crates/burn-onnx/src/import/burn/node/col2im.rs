@@ -55,78 +55,51 @@ impl NodeCodegen for onnx_ir::col2im::Col2ImNode {
             }
         };
 
-        match (
-            config.image_shape.as_static(),
-            config.block_shape.as_static(),
-        ) {
-            (Some(image), Some(kernel)) => {
-                let image = lift(image, 1);
-                let [kh, kw] = lift(kernel, 1);
-                let [fh, fw] = if symmetric {
-                    image
-                } else {
-                    [image[0] + pad_h, image[1] + pad_w]
-                };
-                let fold = quote! {
-                    burn::tensor::module::fold4d(#input, [#fh, #fw], [#kh, #kw], #options)
-                };
-                let folded = if symmetric {
-                    fold
-                } else {
-                    let (bottom, right) = (top + image[0], left + image[1]);
-                    quote! { #fold.slice(s![.., .., #top..#bottom, #left..#right]) }
-                };
-                let folded = reshape_1d(folded);
-                quote! {
-                    let #output = #folded;
+        // Static shapes become literals, so both kinds share one body.
+        let mut shape_tokens = |shape: &Col2ImShape| -> TokenStream {
+            let values = match shape {
+                Col2ImShape::Static(values) => {
+                    let [a, b] = lift(values, 1);
+                    return quote! { [#a, #b] };
                 }
-            }
-            _ => {
-                let mut runtime_shape = |shape: &Col2ImShape| -> TokenStream {
-                    let values = match shape {
-                        Col2ImShape::Static(values) => {
-                            let [a, b] = lift(values, 1);
-                            return quote! { [#a, #b] };
-                        }
-                        Col2ImShape::Runtime { input, .. } => {
-                            let arg = &self.inputs[input.input_index];
-                            let value = scope.arg(arg);
-                            match &arg.ty {
-                                ArgType::Shape(_) => quote! { #value },
-                                _ => crate::burn::codegen::tensor_to_i64_vec(&value),
-                            }
-                        }
-                    };
-                    if num_spatial_dims == 1 {
-                        quote! {{ let values = #values; [1, values[0] as usize] }}
-                    } else {
-                        quote! {{ let values = #values; [values[0] as usize, values[1] as usize] }}
+                Col2ImShape::Runtime { input, .. } => {
+                    let arg = &self.inputs[input.input_index];
+                    let value = scope.arg(arg);
+                    match &arg.ty {
+                        ArgType::Shape(_) => quote! { #value },
+                        _ => crate::burn::codegen::tensor_to_i64_vec(&value),
                     }
-                };
-                let image = runtime_shape(&config.image_shape);
-                let kernel = runtime_shape(&config.block_shape);
-                let fold_size = if symmetric {
-                    quote! { image }
-                } else {
-                    quote! { [image[0] + #pad_h, image[1] + #pad_w] }
-                };
-                let fold = quote! {
-                    burn::tensor::module::fold4d(#input, #fold_size, kernel, #options)
-                };
-                let folded = if symmetric {
-                    fold
-                } else {
-                    quote! { #fold.slice(s![.., .., #top..#top + image[0], #left..#left + image[1]]) }
-                };
-                let folded = reshape_1d(folded);
-                quote! {
-                    let #output = {
-                        let image: [usize; 2] = #image;
-                        let kernel: [usize; 2] = #kernel;
-                        #folded
-                    };
                 }
+            };
+            if num_spatial_dims == 1 {
+                quote! {{ let values = #values; [1, values[0] as usize] }}
+            } else {
+                quote! {{ let values = #values; [values[0] as usize, values[1] as usize] }}
             }
+        };
+        let image = shape_tokens(&config.image_shape);
+        let kernel = shape_tokens(&config.block_shape);
+        let fold_size = if symmetric {
+            quote! { image }
+        } else {
+            quote! { [image[0] + #pad_h, image[1] + #pad_w] }
+        };
+        let fold = quote! {
+            burn::tensor::module::fold4d(input, #fold_size, kernel, #options)
+        };
+        let folded = if symmetric {
+            fold
+        } else {
+            quote! { #fold.slice(s![.., .., #top..#top + image[0], #left..#left + image[1]]) }
+        };
+        let folded = reshape_1d(folded);
+        // One statement reads every graph value, so the locals cannot shadow one.
+        quote! {
+            let #output = {
+                let (input, image, kernel): (_, [usize; 2], [usize; 2]) =
+                    (#input, #image, #kernel);
+                #folded
+            };
         }
     }
 }
@@ -155,16 +128,23 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<3>) -> Tensor<4> {
-            let output = burn::tensor::module::fold4d(
-                input,
-                [5usize, 5usize],
-                [2usize, 2usize],
-                burn::tensor::ops::UnfoldOptions::new(
-                    [1usize, 1usize],
-                    [0usize, 0usize],
-                    [1usize, 1usize],
-                ),
-            );
+            let output = {
+                let (input, image, kernel): (_, [usize; 2], [usize; 2]) = (
+                    input,
+                    [5usize, 5usize],
+                    [2usize, 2usize],
+                );
+                burn::tensor::module::fold4d(
+                    input,
+                    image,
+                    kernel,
+                    burn::tensor::ops::UnfoldOptions::new(
+                        [1usize, 1usize],
+                        [0usize, 0usize],
+                        [1usize, 1usize],
+                    ),
+                )
+            };
             output
         }
         ");
@@ -187,16 +167,23 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<3>) -> Tensor<4> {
-            let output = burn::tensor::module::fold4d(
-                input,
-                [5usize, 5usize],
-                [2usize, 2usize],
-                burn::tensor::ops::UnfoldOptions::new(
-                    [1usize, 1usize],
-                    [1usize, 1usize],
-                    [1usize, 1usize],
-                ),
-            );
+            let output = {
+                let (input, image, kernel): (_, [usize; 2], [usize; 2]) = (
+                    input,
+                    [5usize, 5usize],
+                    [2usize, 2usize],
+                );
+                burn::tensor::module::fold4d(
+                    input,
+                    image,
+                    kernel,
+                    burn::tensor::ops::UnfoldOptions::new(
+                        [1usize, 1usize],
+                        [1usize, 1usize],
+                        [1usize, 1usize],
+                    ),
+                )
+            };
             output
         }
         ");
@@ -219,17 +206,24 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<3>) -> Tensor<4> {
-            let output = burn::tensor::module::fold4d(
+            let output = {
+                let (input, image, kernel): (_, [usize; 2], [usize; 2]) = (
                     input,
-                    [6usize, 6usize],
+                    [5usize, 5usize],
                     [2usize, 2usize],
-                    burn::tensor::ops::UnfoldOptions::new(
-                        [1usize, 1usize],
-                        [0usize, 0usize],
-                        [1usize, 1usize],
-                    ),
-                )
-                .slice(s![.., .., 0usize..5usize, 1usize..6usize]);
+                );
+                burn::tensor::module::fold4d(
+                        input,
+                        [image[0] + 1usize, image[1] + 1usize],
+                        kernel,
+                        burn::tensor::ops::UnfoldOptions::new(
+                            [1usize, 1usize],
+                            [0usize, 0usize],
+                            [1usize, 1usize],
+                        ),
+                    )
+                    .slice(s![.., .., 0usize..0usize + image[0], 1usize..1usize + image[1]])
+            };
             output
         }
         ");
@@ -252,16 +246,23 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<3>) -> Tensor<4> {
-            let output = burn::tensor::module::fold4d(
-                input,
-                [6usize, 6usize],
-                [2usize, 2usize],
-                burn::tensor::ops::UnfoldOptions::new(
+            let output = {
+                let (input, image, kernel): (_, [usize; 2], [usize; 2]) = (
+                    input,
+                    [6usize, 6usize],
                     [2usize, 2usize],
-                    [0usize, 0usize],
-                    [1usize, 1usize],
-                ),
-            );
+                );
+                burn::tensor::module::fold4d(
+                    input,
+                    image,
+                    kernel,
+                    burn::tensor::ops::UnfoldOptions::new(
+                        [2usize, 2usize],
+                        [0usize, 0usize],
+                        [1usize, 1usize],
+                    ),
+                )
+            };
             output
         }
         ");
@@ -284,16 +285,23 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<3>) -> Tensor<4> {
-            let output = burn::tensor::module::fold4d(
-                input,
-                [5usize, 5usize],
-                [2usize, 2usize],
-                burn::tensor::ops::UnfoldOptions::new(
-                    [1usize, 1usize],
-                    [0usize, 0usize],
+            let output = {
+                let (input, image, kernel): (_, [usize; 2], [usize; 2]) = (
+                    input,
+                    [5usize, 5usize],
                     [2usize, 2usize],
-                ),
-            );
+                );
+                burn::tensor::module::fold4d(
+                    input,
+                    image,
+                    kernel,
+                    burn::tensor::ops::UnfoldOptions::new(
+                        [1usize, 1usize],
+                        [0usize, 0usize],
+                        [2usize, 2usize],
+                    ),
+                )
+            };
             output
         }
         ");
@@ -317,18 +325,25 @@ mod tests {
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
             let output = {
-                let folded: Tensor<4> = burn::tensor::module::fold4d(
+                let (input, image, kernel): (_, [usize; 2], [usize; 2]) = (
                     input,
                     [1usize, 10usize],
                     [1usize, 3usize],
-                    burn::tensor::ops::UnfoldOptions::new(
-                        [1usize, 1usize],
-                        [0usize, 0usize],
-                        [1usize, 1usize],
-                    ),
                 );
-                let [batch, channels, _, width] = folded.dims();
-                folded.reshape([batch, channels, width])
+                {
+                    let folded: Tensor<4> = burn::tensor::module::fold4d(
+                        input,
+                        image,
+                        kernel,
+                        burn::tensor::ops::UnfoldOptions::new(
+                            [1usize, 1usize],
+                            [0usize, 0usize],
+                            [1usize, 1usize],
+                        ),
+                    );
+                    let [batch, channels, _, width] = folded.dims();
+                    folded.reshape([batch, channels, width])
+                }
             };
             output
         }
@@ -366,22 +381,25 @@ mod tests {
             block_shape: Tensor<1, Int>,
         ) -> Tensor<4> {
             let output = {
-                let image: [usize; 2] = {
-                    let values = image_shape
-                        .to_data()
-                        .convert::<i64>()
-                        .try_into_vec::<i64>()
-                        .unwrap();
-                    [values[0] as usize, values[1] as usize]
-                };
-                let kernel: [usize; 2] = {
-                    let values = block_shape
-                        .to_data()
-                        .convert::<i64>()
-                        .try_into_vec::<i64>()
-                        .unwrap();
-                    [values[0] as usize, values[1] as usize]
-                };
+                let (input, image, kernel): (_, [usize; 2], [usize; 2]) = (
+                    input,
+                    {
+                        let values = image_shape
+                            .to_data()
+                            .convert::<i64>()
+                            .try_into_vec::<i64>()
+                            .unwrap();
+                        [values[0] as usize, values[1] as usize]
+                    },
+                    {
+                        let values = block_shape
+                            .to_data()
+                            .convert::<i64>()
+                            .try_into_vec::<i64>()
+                            .unwrap();
+                        [values[0] as usize, values[1] as usize]
+                    },
+                );
                 burn::tensor::module::fold4d(
                     input,
                     image,
@@ -426,11 +444,14 @@ mod tests {
             block_shape: Tensor<1, Int>,
         ) -> Tensor<3> {
             let output = {
-                let image: [usize; 2] = {
-                    let values = image_shape;
-                    [1, values[0] as usize]
-                };
-                let kernel: [usize; 2] = [1usize, 3usize];
+                let (input, image, kernel): (_, [usize; 2], [usize; 2]) = (
+                    input,
+                    {
+                        let values = image_shape;
+                        [1, values[0] as usize]
+                    },
+                    [1usize, 3usize],
+                );
                 {
                     let folded: Tensor<4> = burn::tensor::module::fold4d(
                         input,
@@ -479,15 +500,18 @@ mod tests {
             block_shape: Tensor<1, Int>,
         ) -> Tensor<4> {
             let output = {
-                let image: [usize; 2] = {
-                    let values = image_shape
-                        .to_data()
-                        .convert::<i64>()
-                        .try_into_vec::<i64>()
-                        .unwrap();
-                    [values[0] as usize, values[1] as usize]
-                };
-                let kernel: [usize; 2] = [2usize, 2usize];
+                let (input, image, kernel): (_, [usize; 2], [usize; 2]) = (
+                    input,
+                    {
+                        let values = image_shape
+                            .to_data()
+                            .convert::<i64>()
+                            .try_into_vec::<i64>()
+                            .unwrap();
+                        [values[0] as usize, values[1] as usize]
+                    },
+                    [2usize, 2usize],
+                );
                 burn::tensor::module::fold4d(
                         input,
                         [image[0] + 1usize, image[1] + 2usize],
