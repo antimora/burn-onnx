@@ -73,4 +73,19 @@ mod tests {
         }
         ");
     }
+
+    #[test]
+    fn test_det_4d_forward() {
+        let node = DetNodeBuilder::new("det1")
+            .input_tensor("input", 4, DType::F32)
+            .output_tensor("output", 2, DType::F32)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<4>) -> Tensor<2> {
+            let output = burn::tensor::linalg::det::<4, 3, 2>(input);
+            output
+        }
+        ");
+    }
 }

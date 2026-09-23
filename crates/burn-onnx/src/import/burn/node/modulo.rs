@@ -969,4 +969,21 @@ mod tests {
         }
         ");
     }
+
+    #[test]
+    fn test_int_fmod_unsigned() {
+        // Unsigned values never differ in sign, so remainder is already fmod.
+        let node = ModNodeBuilder::new("mod1")
+            .input_tensor("x", 2, DType::U32)
+            .input_tensor("y", 1, DType::U32)
+            .output_tensor("output", 2, DType::U32)
+            .config(ModConfig::new(true))
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, x: Tensor<2, Int>, y: Tensor<1, Int>) -> Tensor<2, Int> {
+            let output = x.remainder((y).unsqueeze_dims(&[0isize]));
+            output
+        }
+        ");
+    }
 }

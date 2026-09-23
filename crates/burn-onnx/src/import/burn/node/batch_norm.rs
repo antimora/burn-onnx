@@ -289,4 +289,30 @@ mod tests {
         }
         ");
     }
+
+    #[test]
+    fn test_batch_norm_runtime_forward_rank2() {
+        let node = create_runtime_batch_norm_node("batch_norm1", 2);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            input: Tensor<2>,
+            scale: Tensor<1>,
+            bias: Tensor<1>,
+            mean: Tensor<1>,
+            var: Tensor<1>,
+        ) -> Tensor<2> {
+            let output = burn::tensor::module::batch_norm(
+                input,
+                scale,
+                bias,
+                mean,
+                var,
+                0.00001f64,
+            );
+            output
+        }
+        ");
+    }
 }
