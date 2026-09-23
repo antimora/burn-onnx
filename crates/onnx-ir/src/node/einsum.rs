@@ -372,6 +372,24 @@ fn infer_output_static_shape(
 
     let mut evidence = std::collections::BTreeMap::<Label, Evidence>::new();
     for (labels, operand) in resolved.inputs.iter().zip(operands) {
+        // A label repeated within one term takes a diagonal, so its axes must be equal
+        // exactly: a size of 1 only broadcasts against other operands.
+        let mut in_term = std::collections::BTreeMap::<Label, usize>::new();
+        for (axis, &label) in labels.iter().enumerate() {
+            let Some(dim) = operand.static_shape.and_then(|shape| shape[axis]) else {
+                continue;
+            };
+            if let Some(&first) = in_term.get(&label)
+                && first != dim
+            {
+                return Err(ProcessError::Custom(format!(
+                    "Einsum equation '{equation}' repeats {label:?} within one operand \
+                     over axes of sizes {first} and {dim}"
+                )));
+            }
+            in_term.insert(label, dim);
+        }
+
         for (axis, &label) in labels.iter().enumerate() {
             let entry = evidence.entry(label).or_default();
             match operand.static_shape.and_then(|shape| shape[axis]) {
@@ -703,6 +721,24 @@ mod tests {
             output_tensor(&node).static_shape,
             Some(vec![Some(3), Some(4), Some(7)])
         );
+    }
+
+    #[test]
+    fn test_infer_types_rejects_diagonal_size_mismatch() {
+        // Both axes of a diagonal must match; a size of 1 does not broadcast within one
+        // operand.
+        let mut node = create_test_node_with_shapes("ii->i", &[vec![1, 3]]);
+        assert!(matches!(
+            infer(&mut node),
+            Err(ProcessError::Custom(msg)) if msg.contains("repeats")
+        ));
+    }
+
+    #[test]
+    fn test_infer_types_repeated_label_still_broadcasts_across_operands() {
+        let mut node = create_test_node_with_shapes("ii,i->i", &[vec![3, 3], vec![1]]);
+        infer(&mut node).unwrap();
+        assert_eq!(output_tensor(&node).static_shape, Some(vec![Some(3)]));
     }
 
     #[test]
