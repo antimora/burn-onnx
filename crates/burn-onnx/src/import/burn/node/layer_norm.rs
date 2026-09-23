@@ -118,11 +118,26 @@ fn forward_functional(
 
     let input = scope.arg(input_arg);
     let scale = scope.arg(&node.inputs[1]);
+    // Scale and bias broadcast against the normalized axes, so lower ranks gain
+    // leading axes before they are expanded and flattened.
+    let normalized_rank = rank - axis;
+    let lift = |arg: &Argument, value: TokenStream| {
+        if arg.ty.rank() < normalized_rank {
+            let r = normalized_rank.to_tokens();
+            quote! { #value.unsqueeze::<#r>() }
+        } else {
+            value
+        }
+    };
+    let scale = lift(&node.inputs[1], scale);
     let bias = node
         .inputs
         .get(2)
         .filter(|arg| !arg.is_optional())
-        .map(|arg| scope.arg(arg));
+        .map(|arg| {
+            let value = scope.arg(arg);
+            lift(arg, value)
+        });
 
     // stash_type=1 computes in float32 and casts Y back.
     let (to_f32, to_input_dtype) = if config.full_precision {
@@ -136,8 +151,10 @@ fn forward_functional(
     let dtype_binding = config
         .full_precision
         .then(|| quote! { let dtype = #input.dtype(); });
+    let normalized_dims = (axis..rank).map(|i| quote! { dims[#i] });
+    let normalized = quote! { [#(#normalized_dims),*] };
     let bias = match bias {
-        Some(bias) => quote! { Some(#bias.reshape([inner])#to_f32) },
+        Some(bias) => quote! { Some(#bias.expand(#normalized).reshape([inner])#to_f32) },
         None => quote! { None },
     };
 
@@ -151,15 +168,15 @@ fn forward_functional(
     let (mean, inv_std) = (stat(1), stat(2));
     let needs_stats = mean.is_some() || inv_std.is_some();
 
-    let normalized = if needs_stats {
+    let flat = if needs_stats {
         quote! { flat.clone() }
     } else {
         quote! { flat }
     };
     let compute_y = quote! {
         burn::tensor::module::layer_norm(
-            #normalized,
-            #scale.reshape([inner])#to_f32,
+            #flat,
+            #scale.expand(#normalized).reshape([inner])#to_f32,
             #bias,
             #epsilon,
         )
@@ -309,8 +326,16 @@ mod tests {
                 let flat = input.reshape([outer, inner]).cast(burn::tensor::DType::F32);
                 burn::tensor::module::layer_norm(
                         flat,
-                        scale.reshape([inner]).cast(burn::tensor::DType::F32),
-                        Some(bias.reshape([inner]).cast(burn::tensor::DType::F32)),
+                        scale
+                            .expand([dims[2usize]])
+                            .reshape([inner])
+                            .cast(burn::tensor::DType::F32),
+                        Some(
+                            bias
+                                .expand([dims[2usize]])
+                                .reshape([inner])
+                                .cast(burn::tensor::DType::F32),
+                        ),
                         0.00001f64,
                     )
                     .reshape(dims)
@@ -339,8 +364,16 @@ mod tests {
                 let flat = input.reshape([outer, inner]).cast(burn::tensor::DType::F32);
                 let y = burn::tensor::module::layer_norm(
                         flat.clone(),
-                        scale.reshape([inner]).cast(burn::tensor::DType::F32),
-                        Some(bias.reshape([inner]).cast(burn::tensor::DType::F32)),
+                        scale
+                            .expand([dims[1usize], dims[2usize]])
+                            .reshape([inner])
+                            .cast(burn::tensor::DType::F32),
+                        Some(
+                            bias
+                                .expand([dims[1usize], dims[2usize]])
+                                .reshape([inner])
+                                .cast(burn::tensor::DType::F32),
+                        ),
                         0.00001f64,
                     )
                     .reshape(dims)

@@ -5,7 +5,8 @@ include_models!(
     layer_norm_no_bias,
     layer_norm_custom_epsilon,
     layer_norm_4d,
-    layer_norm_runtime_mean
+    layer_norm_runtime_mean,
+    layer_norm_broadcast
 );
 
 #[cfg(test)]
@@ -220,6 +221,35 @@ mod tests {
         mean.to_data().assert_approx_eq::<f32>(
             &burn::tensor::TensorData::from([[[4.700_819_5f32]], [[25.158_377]]]),
             tolerance,
+        );
+    }
+
+    #[test]
+    fn layer_norm_broadcast_scale_and_bias() {
+        let device = Default::default();
+        let model = layer_norm_broadcast::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/layer_norm_broadcast.bpk"),
+            &device,
+        );
+        let x = burn::tensor::Tensor::<1, burn::tensor::Int>::arange(0..12, &device)
+            .float()
+            .powf_scalar(1.5)
+            .reshape([2, 2, 3]);
+
+        let y = model.forward(x);
+
+        y.to_data().assert_approx_eq::<f32>(
+            &burn::tensor::TensorData::from([
+                [
+                    [-0.697_79f32, -1.885_971, -0.022_906],
+                    [0.626_213, 1.681_292, -2.151_011],
+                ],
+                [
+                    [-0.903_543, -1.781_186, -0.160_438],
+                    [0.747_079, 1.734_572, -2.019_334],
+                ],
+            ]),
+            burn::tensor::Tolerance::absolute(1e-4),
         );
     }
 }

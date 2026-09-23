@@ -10,7 +10,7 @@
 //!
 //! **Implementation Note**: Requires at least 2 inputs (X and Scale; Bias is optional).
 //! Accepts 1-3 outputs (Y required, optional Mean and InvStdDev). Scale and Bias are
-//! lifted into a module only when Scale is a constant over the last axis alone, Bias
+//! lifted into a module only when Scale is a 1-D constant, `axis` is the last axis, Bias
 //! is absent or constant, and neither optional output is used; otherwise both stay
 //! graph values.
 
@@ -90,7 +90,14 @@ impl NodeProcessor for LayerNormProcessor {
             .value()
             .is_some_and(|data| data.shape.len() == 1);
         let bias_constant = node.get_input(2).is_none_or(|bias| bias.is_constant());
-        if !scale_is_1d || !bias_constant || uses_statistics(node) {
+        // The module normalizes the last axis only.
+        let rank = node.inputs[0].ty.rank() as i64;
+        let axis = node
+            .attrs
+            .get("axis")
+            .map_or(-1, |value| value.clone().into_i64());
+        let axis_is_last = rank > 0 && axis.rem_euclid(rank) == rank - 1;
+        if !scale_is_1d || !axis_is_last || !bias_constant || uses_statistics(node) {
             return Ok(());
         }
         node.inputs[1].to_static()?;
@@ -139,14 +146,14 @@ impl NodeProcessor for LayerNormProcessor {
         }
         let axis = config.axis.rem_euclid(rank) as usize;
 
-        // Scale (and Bias) cover exactly the normalized axes X.shape[axis..].
+        // Scale (and Bias) broadcast against the normalized axes X.shape[axis..].
         let normalized_rank = input.rank - axis;
         for (index, name) in [(1, "scale"), (2, "bias")] {
             if let Some(arg) = node.get_input(index)
-                && arg.ty.rank() != normalized_rank
+                && arg.ty.rank() > normalized_rank
             {
                 return Err(ProcessError::Custom(format!(
-                    "LayerNorm: {name} must have rank {normalized_rank} for axis {}, got rank {}",
+                    "LayerNorm: {name} must have at most rank {normalized_rank} for axis {}, got rank {}",
                     config.axis,
                     arg.ty.rank()
                 )));
@@ -262,30 +269,20 @@ mod tests {
     }
 
     #[test]
-    fn test_layer_norm_config_invalid_axis() {
-        // For a 1D weight tensor with shape [num_features],
-        // both axis=0 (the first and only dim) and axis=-1 (the last dim) are valid
-        // So we need to use a 2D weight tensor to test the invalid axis case
-
-        // Create a custom node with a 2D weight tensor
-        let weight_data = vec![1.0; 32 * 64]; // 2D weight tensor
-        let bias_data = vec![0.0; 32 * 64];
-
+    fn test_layer_norm_rejects_scale_above_normalized_rank() {
+        // axis=-1 normalizes a single axis, so a rank-2 scale cannot broadcast to it.
         let node = TestNodeBuilder::new(NodeType::LayerNormalization, "test_layernorm_invalid")
             .input_tensor_f32("X", 3, None)
-            .input_tensor_f32_data("scale", weight_data, vec![32, 64]) // 2D shape
-            .input_tensor_f32_data("bias", bias_data, vec![32, 64])
+            .input_tensor_f32_data("scale", vec![1.0; 32 * 64], vec![32, 64])
+            .input_tensor_f32_data("bias", vec![0.0; 32 * 64], vec![32, 64])
             .output_tensor_f32("output", 3, None)
             .attr_float("epsilon", 1e-5)
-            .attr_int("axis", 0) // axis=0 is NOT the last dimension for 2D weight
+            .attr_int("axis", -1)
             .attr_int("stash_type", 1)
             .build_with_graph_data(17);
 
-        // Now axis=0 should trigger an error since it's not the last dimension (1)
         let mut node = node;
-        let processor = LayerNormProcessor;
-        let prefs = OutputPreferences::new();
-        let result = processor.infer_types(&mut node, 17, &prefs);
+        let result = LayerNormProcessor.infer_types(&mut node, 17, &OutputPreferences::new());
         assert!(matches!(result, Err(ProcessError::Custom(_))));
     }
 }
