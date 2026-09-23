@@ -35,7 +35,10 @@ impl NodeCodegen for onnx_ir::node::dft::DftNode {
     }
 
     fn register_imports(&self, imports: &mut BurnImports) {
-        imports.register("burn::tensor::signal::rfft");
+        // The cfft path spells its call out in full.
+        if !self.config.inverse && self.config.is_real_input {
+            imports.register("burn::tensor::signal::rfft");
+        }
     }
 }
 
