@@ -170,7 +170,11 @@ fn gqa_expand(node: &onnx_ir::attention::AttentionNode, rank: usize) -> TokenStr
 /// equally long.
 fn native_causal(node: &onnx_ir::attention::AttentionNode, rank: usize) -> bool {
     let seq_axis = if rank == 3 { 1 } else { 2 };
+    // With a user mask the causal mask is built explicitly, so the fully hidden row
+    // guard sees both: a row can be hidden by the two together.
+    let has_user_mask = node.inputs.get(3).is_some_and(|mask| !mask.is_optional());
     node.config.is_causal
+        && !has_user_mask
         && matches!(
             (static_dim(&node.inputs[0], seq_axis), static_dim(&node.inputs[1], seq_axis)),
             (Some(q), Some(k)) if q == k
@@ -1692,6 +1696,76 @@ mod tests {
                         is_causal: true,
                     },
                 );
+                (output,)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_attention_equal_static_lengths_with_mask_builds_causal() {
+        // The row guard has to see the causal mask too, so it is not left to burn.
+        let node = AttentionNodeBuilder::new("attn1")
+            .input_tensor_shape("query", vec![1, 2, 3, 4], DType::F32)
+            .input_tensor_shape("key", vec![1, 2, 3, 4], DType::F32)
+            .input_tensor_shape("value", vec![1, 2, 3, 4], DType::F32)
+            .input_tensor("attn_mask", 2, DType::Bool(BoolStore::Native))
+            .output_tensor("output", 4, DType::F32)
+            .config(causal_config())
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            query: Tensor<4>,
+            key: Tensor<4>,
+            value: Tensor<4>,
+            attn_mask: Tensor<2, Bool>,
+        ) -> Tensor<4> {
+            let (output,) = {
+                let q = query;
+                let k = key;
+                let v = value;
+                let causal = {
+                    let [batch, heads, q_len, _] = q.dims();
+                    let k_len = k.dims()[2];
+                    let rows = Tensor::<
+                        1,
+                        Int,
+                    >::arange(0..q_len as i64, (&self.device, burn::tensor::DType::I64))
+                        .reshape([q_len, 1])
+                        .expand([q_len, k_len]);
+                    let cols = Tensor::<
+                        1,
+                        Int,
+                    >::arange(0..k_len as i64, (&self.device, burn::tensor::DType::I64))
+                        .reshape([1, k_len])
+                        .expand([q_len, k_len]);
+                    cols.greater(rows).unsqueeze::<4>().expand([batch, heads, q_len, k_len])
+                };
+                let hide = attn_mask
+                    .bool_not()
+                    .unsqueeze::<4>()
+                    .expand(causal.dims())
+                    .bool_or(causal);
+                let hidden_rows = hide.clone().all_dim(3);
+                let output = burn::tensor::module::attention(
+                    q,
+                    k,
+                    v,
+                    Some(hide),
+                    None,
+                    burn::tensor::ops::AttentionModuleOptions {
+                        scale: None,
+                        softcap: None,
+                        is_causal: false,
+                    },
+                );
+                let output = {
+                    let dims = output.dims();
+                    output.mask_fill(hidden_rows.expand(dims), 0.0)
+                };
                 (output,)
             };
             output

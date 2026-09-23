@@ -968,4 +968,29 @@ mod tests {
         }
         ");
     }
+
+    #[test]
+    fn test_int_fmod_scalar_native_tensor() {
+        let node = ModNodeBuilder::new("mod1")
+            .input_scalar("a", DType::I64)
+            .input_tensor("b", 1, DType::I64)
+            .output_tensor("output", 1, DType::I64)
+            .config(ModConfig::new(true))
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, a: i64, b: Tensor<1, Int>) -> Tensor<1, Int> {
+            let output = {
+                let dividend = Tensor::<
+                    1,
+                    burn::tensor::Int,
+                >::from_data(
+                    burn::tensor::TensorData::from([a as i64]),
+                    (&self.device, burn::tensor::DType::I64),
+                );
+                dividend.clone().abs().remainder(b.abs()) * dividend.sign()
+            };
+            output
+        }
+        ");
+    }
 }

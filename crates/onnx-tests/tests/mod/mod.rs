@@ -222,7 +222,7 @@ mod tests {
             (&device, burn::tensor::DType::I64),
         );
 
-        let (z, zs, zb) = model.forward(x, y, -4, a, b);
+        let (z, zs, zb, zd) = model.forward(x, y, -4, a, b);
 
         z.to_data()
             .assert_eq(&TensorData::from([1i64, -1, 1, -1, 0, 0, 0, 5]), true);
@@ -230,5 +230,7 @@ mod tests {
             .assert_eq(&TensorData::from([3i64, -3, 3, -3, 2, -2, 0, 1]), true);
         zb.to_data()
             .assert_eq(&TensorData::from([[1i64, 1, 3], [-1, -1, -3]]), true);
+        zd.to_data()
+            .assert_eq(&TensorData::from([-1i64, -1, -1, -1, -1, -1, 0, -4]), true);
     }
 }
