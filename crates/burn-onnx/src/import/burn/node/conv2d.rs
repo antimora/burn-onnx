@@ -103,30 +103,45 @@ impl NodeCodegen for onnx_ir::conv2d::Conv2dNode {
             let kernel = self.config.kernel_size;
             let stride = self.config.stride;
             let dilation = self.config.dilation;
-            let Some(padding) = crate::burn::codegen::conv_padding_pairs(
+            let static_padding = crate::burn::codegen::conv_padding_pairs(
                 &self.config.auto_pad,
                 &explicit,
                 input_spatial.as_deref(),
                 &kernel,
                 &stride,
                 &dilation,
-            ) else {
-                let msg = format!(
-                    "Conv2d node '{}': SAME auto_pad with a runtime weight needs a static input size",
-                    self.name
-                );
-                return quote! { let #output = { compile_error!(#msg); unreachable!() }; };
-            };
+            );
+            // SAME padding on an input sized only at run time is computed from it
+            // before the input moves into the call.
+            let runtime_padding = static_padding.is_none().then(|| {
+                crate::burn::codegen::runtime_same_padding(
+                    &self.config.auto_pad,
+                    &input,
+                    &kernel,
+                    &stride,
+                    &dilation,
+                )
+            });
+            let padding = static_padding.unwrap_or_else(|| quote! { padding });
             let stride = stride.to_tokens();
             let dilation = dilation.to_tokens();
             let groups = self.config.groups.to_tokens();
-            return quote! {
-                let #output = burn::tensor::module::conv2d(
+            let call = quote! {
+                burn::tensor::module::conv2d(
                     #input,
                     #weight,
                     #bias,
                     burn::tensor::ops::ConvOptions::new_with_padding(#stride, #padding, #dilation, #groups),
-                );
+                )
+            };
+            return match runtime_padding {
+                None => quote! { let #output = #call; },
+                Some(runtime_padding) => quote! {
+                    let #output = {
+                        let padding = #runtime_padding;
+                        #call
+                    };
+                },
             };
         }
         let field = Ident::new(&self.name, Span::call_site());
@@ -351,6 +366,61 @@ mod tests {
                     1,
                 ),
             );
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_conv2d_runtime_weight_dynamic_same_padding() {
+        let config = Conv2dConfig::new(
+            [2, 2],
+            [1, 1],
+            PaddingConfig2d::Valid,
+            [1, 1],
+            1,
+            AutoPad::SameUpper,
+        );
+        let node = Conv2dNodeBuilder::new("conv1")
+            .input_tensor("input", 4, DType::F32)
+            .input_tensor("weight", 4, DType::F32)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<4>, weight: Tensor<4>) -> Tensor<4> {
+            let output = {
+                let padding = {
+                    let dims = input.dims();
+                    [
+                        {
+                            let size = dims[2usize];
+                            let total = (size.div_ceil(1usize).saturating_sub(1) * 1usize
+                                + 2usize)
+                                .saturating_sub(size);
+                            let small = total / 2;
+                            let big = total - small;
+                            (small, big)
+                        },
+                        {
+                            let size = dims[3usize];
+                            let total = (size.div_ceil(1usize).saturating_sub(1) * 1usize
+                                + 2usize)
+                                .saturating_sub(size);
+                            let small = total / 2;
+                            let big = total - small;
+                            (small, big)
+                        },
+                    ]
+                };
+                burn::tensor::module::conv2d(
+                    input,
+                    weight,
+                    None,
+                    burn::tensor::ops::ConvOptions::new_with_padding([1, 1], padding, [1, 1], 1),
+                )
+            };
             output
         }
         ");

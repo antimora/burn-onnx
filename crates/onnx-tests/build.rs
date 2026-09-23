@@ -393,6 +393,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/maxpool/maxpool1d_asymmetric_padding.onnx")
         .input("tests/maxpool/maxpool2d_asymmetric_padding.onnx")
         .input("tests/maxpool/maxpool2d_indices.onnx")
+        .input("tests/maxpool/maxpool2d_indices_same.onnx")
         .input("tests/maxpool/maxpool2d_same_upper_dynamic.onnx")
         .input("tests/maxpool1d/maxpool1d.onnx")
         .input("tests/maxpool1d_ceil_mode/maxpool1d_ceil_mode.onnx")

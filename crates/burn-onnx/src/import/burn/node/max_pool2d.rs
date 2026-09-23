@@ -78,6 +78,10 @@ fn wants_indices(node: &onnx_ir::max_pool2d::MaxPool2dNode) -> bool {
 /// within one `H x W` plane. ONNX counts them across the whole flattened input, so
 /// each plane's offset is added, after transposing the in-plane position for
 /// column-major `storage_order`.
+///
+/// burn pads both sides of an axis equally. Other padding (asymmetric, or SAME on an
+/// input sized only at run time) is applied beforehand with -inf, which never wins
+/// the max, and the indices are mapped back from the padded plane to the input's.
 fn forward_with_indices(
     node: &onnx_ir::max_pool2d::MaxPool2dNode,
     input: TokenStream,
@@ -96,53 +100,87 @@ fn forward_with_indices(
         &config.strides,
         &config.dilation,
     );
-    // burn's max_pool2d_with_indices pads symmetrically; pre-padding the input would
-    // shift the indices off the ONNX input's coordinates.
-    let [ph, pw] = match padding.as_deref() {
-        Some(&[(t, b), (l, r)]) if t == b && l == r => [t, l],
-        _ => {
-            let msg = format!(
-                "MaxPool2d node '{}': the Indices output needs symmetric padding known at build time",
-                node.name
-            );
-            return quote! {
-                let (#output, #indices_out) = { compile_error!(#msg); unreachable!() };
-            };
-        }
-    };
 
     let kernel = config.kernel_size.to_tokens();
     let strides = config.strides.to_tokens();
     let dilation = config.dilation.to_tokens();
     let ceil_mode = config.ceil_mode;
     let in_plane = if config.storage_order == 1 {
-        quote! {
-            indices.clone().remainder_scalar(width as i64).mul_scalar(height as i64)
-                + indices.div_scalar(width as i64)
-        }
+        quote! { col.mul_scalar(height as i64) + row }
     } else {
-        quote! { indices }
+        quote! { row.mul_scalar(width as i64) + col }
+    };
+    let planes = quote! {
+        Tensor::<1, Int>::arange(
+            0..(batch * channels) as i64,
+            (&self.device, burn::tensor::DType::I64),
+        )
+        .mul_scalar((height * width) as i64)
+        .reshape([batch, channels, 1, 1])
+    };
+
+    // Symmetric padding known at build time: burn pads, and its indices already
+    // address the input plane.
+    if let Some(&[(t, b), (l, r)]) = padding.as_deref()
+        && t == b
+        && l == r
+    {
+        return quote! {
+            let (#output, #indices_out) = {
+                let [batch, channels, height, width] = #input.dims();
+                let (values, indices) = burn::tensor::module::max_pool2d_with_indices(
+                    #input,
+                    #kernel,
+                    #strides,
+                    [#t, #l],
+                    #dilation,
+                    #ceil_mode,
+                );
+                let indices = indices.cast(burn::tensor::DType::I64);
+                let row = indices.clone().div_scalar(width as i64);
+                let col = indices.remainder_scalar(width as i64);
+                (values, #in_plane + #planes)
+            };
+        };
+    }
+
+    let padding = match padding {
+        Some(pairs) => {
+            let pairs = pairs.iter().map(|(begin, end)| quote! { (#begin, #end) });
+            quote! { [#(#pairs),*] }
+        }
+        None => crate::burn::codegen::runtime_same_padding(
+            &config.auto_pad,
+            &input,
+            &config.kernel_size,
+            &config.strides,
+            &config.dilation,
+        ),
     };
 
     quote! {
         let (#output, #indices_out) = {
             let [batch, channels, height, width] = #input.dims();
+            let [(top, bottom), (left, right)] = #padding;
+            let padded = #input.pad(
+                [(0, 0), (0, 0), (top, bottom), (left, right)],
+                burn::tensor::ops::PadMode::Constant(f32::NEG_INFINITY),
+            );
+            let padded_width = width + left + right;
             let (values, indices) = burn::tensor::module::max_pool2d_with_indices(
-                #input,
+                padded,
                 #kernel,
                 #strides,
-                [#ph, #pw],
+                [0, 0],
                 #dilation,
                 #ceil_mode,
             );
             let indices = indices.cast(burn::tensor::DType::I64);
-            let planes = Tensor::<1, Int>::arange(
-                0..(batch * channels) as i64,
-                (&self.device, burn::tensor::DType::I64),
-            )
-            .mul_scalar((height * width) as i64)
-            .reshape([batch, channels, 1, 1]);
-            (values, #in_plane + planes)
+            let row = indices.clone().div_scalar(padded_width as i64).sub_scalar(top as i64);
+            let col = indices
+                .remainder_scalar(padded_width as i64)
+                .sub_scalar(left as i64);
+            (values, #in_plane + #planes)
         };
     }
 }
@@ -357,13 +395,21 @@ mod tests {
                     false,
                 );
                 let indices = indices.cast(burn::tensor::DType::I64);
-                let planes = Tensor::<
-                    1,
-                    Int,
-                >::arange(0..(batch * channels) as i64, (&self.device, burn::tensor::DType::I64))
-                    .mul_scalar((height * width) as i64)
-                    .reshape([batch, channels, 1, 1]);
-                (values, indices + planes)
+                let row = indices.clone().div_scalar(width as i64);
+                let col = indices.remainder_scalar(width as i64);
+                (
+                    values,
+                    row.mul_scalar(width as i64) + col
+                        + Tensor::<
+                            1,
+                            Int,
+                        >::arange(
+                                0..(batch * channels) as i64,
+                                (&self.device, burn::tensor::DType::I64),
+                            )
+                            .mul_scalar((height * width) as i64)
+                            .reshape([batch, channels, 1, 1]),
+                )
             };
             (output, indices)
         }
@@ -386,16 +432,78 @@ mod tests {
                     false,
                 );
                 let indices = indices.cast(burn::tensor::DType::I64);
-                let planes = Tensor::<
-                    1,
-                    Int,
-                >::arange(0..(batch * channels) as i64, (&self.device, burn::tensor::DType::I64))
-                    .mul_scalar((height * width) as i64)
-                    .reshape([batch, channels, 1, 1]);
+                let row = indices.clone().div_scalar(width as i64);
+                let col = indices.remainder_scalar(width as i64);
                 (
                     values,
-                    indices.clone().remainder_scalar(width as i64).mul_scalar(height as i64)
-                        + indices.div_scalar(width as i64) + planes,
+                    col.mul_scalar(height as i64) + row
+                        + Tensor::<
+                            1,
+                            Int,
+                        >::arange(
+                                0..(batch * channels) as i64,
+                                (&self.device, burn::tensor::DType::I64),
+                            )
+                            .mul_scalar((height * width) as i64)
+                            .reshape([batch, channels, 1, 1]),
+                )
+            };
+            (output, indices)
+        }
+        ");
+    }
+
+    #[test]
+    fn test_max_pool2d_indices_asymmetric_padding() {
+        let config = MaxPool2dConfig::new(
+            [2, 2],
+            [1, 1],
+            PaddingConfig2d::Explicit(0, 0, 1, 1),
+            [1, 1],
+            false,
+            AutoPad::NotSet,
+        );
+        let node = MaxPool2dNodeBuilder::new("pool1")
+            .input_tensor("input", 4, DType::F32)
+            .output_tensor("output", 4, DType::F32)
+            .output_tensor("indices", 4, DType::I64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<4>) -> (Tensor<4>, Tensor<4, Int>) {
+            let (output, indices) = {
+                let [batch, channels, height, width] = input.dims();
+                let [(top, bottom), (left, right)] = [(0usize, 1usize), (0usize, 1usize)];
+                let padded = input
+                    .pad(
+                        [(0, 0), (0, 0), (top, bottom), (left, right)],
+                        burn::tensor::ops::PadMode::Constant(f32::NEG_INFINITY),
+                    );
+                let padded_width = width + left + right;
+                let (values, indices) = burn::tensor::module::max_pool2d_with_indices(
+                    padded,
+                    [2, 2],
+                    [1, 1],
+                    [0, 0],
+                    [1, 1],
+                    false,
+                );
+                let indices = indices.cast(burn::tensor::DType::I64);
+                let row = indices.clone().div_scalar(padded_width as i64).sub_scalar(top as i64);
+                let col = indices.remainder_scalar(padded_width as i64).sub_scalar(left as i64);
+                (
+                    values,
+                    row.mul_scalar(width as i64) + col
+                        + Tensor::<
+                            1,
+                            Int,
+                        >::arange(
+                                0..(batch * channels) as i64,
+                                (&self.device, burn::tensor::DType::I64),
+                            )
+                            .mul_scalar((height * width) as i64)
+                            .reshape([batch, channels, 1, 1]),
                 )
             };
             (output, indices)

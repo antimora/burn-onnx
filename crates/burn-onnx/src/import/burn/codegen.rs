@@ -315,6 +315,39 @@ pub fn resolve_padding_pairs(
     })
 }
 
+/// SAME padding computed at run time from the spatial dimensions of `input`
+/// (`[batch, channels, spatial..]`), as `[(begin, end); N]` tokens. For inputs
+/// whose spatial size is only known then; mirrors [`compute_auto_pad_1dim`].
+pub fn runtime_same_padding(
+    auto_pad: &AutoPad,
+    input: &TokenStream,
+    kernel: &[usize],
+    stride: &[usize],
+    dilation: &[usize],
+) -> TokenStream {
+    let pairs = (0..kernel.len()).map(|i| {
+        let axis = i + 2;
+        let stride = stride[i];
+        let effective_kernel = (kernel[i] - 1) * dilation[i] + 1;
+        let pair = match auto_pad {
+            AutoPad::SameLower => quote! { (big, small) },
+            _ => quote! { (small, big) },
+        };
+        quote! {{
+            let size = dims[#axis];
+            let total = (size.div_ceil(#stride).saturating_sub(1) * #stride + #effective_kernel)
+                .saturating_sub(size);
+            let small = total / 2;
+            let big = total - small;
+            #pair
+        }}
+    });
+    quote! {{
+        let dims = #input.dims();
+        [#(#pairs),*]
+    }}
+}
+
 /// [`resolve_padding_pairs`] as the `[(begin, end); N]` tokens `ConvOptions` takes.
 pub fn conv_padding_pairs(
     auto_pad: &AutoPad,

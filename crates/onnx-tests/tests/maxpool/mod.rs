@@ -4,6 +4,7 @@ include_models!(
     maxpool1d,
     maxpool1d_asymmetric_padding,
     maxpool2d_indices,
+    maxpool2d_indices_same,
     maxpool1d_ceil_mode,
     maxpool2d,
     maxpool2d_asymmetric_padding,
@@ -284,6 +285,78 @@ mod tests {
                 ],
             ]),
             true,
+        );
+    }
+
+    #[test]
+    fn maxpool2d_indices_same_padding() {
+        // SAME_UPPER with a 2x2 kernel pads unevenly; the dynamic input takes the
+        // run-time padding path for both MaxPool and the runtime-weight Conv.
+        let device = Default::default();
+        let model: maxpool2d_indices_same::Model = maxpool2d_indices_same::Model::new(&device);
+        let x = || {
+            Tensor::<4>::from_data(
+                TensorData::from([[
+                    [
+                        [8.0f32, 16., 0., 18.],
+                        [11., 9., 13., 1.],
+                        [21., 5., 2., 12.],
+                    ],
+                    [[15., 3., 4., 22.], [17., 20., 23., 7.], [10., 14., 19., 6.]],
+                ]]),
+                &device,
+            )
+        };
+        let w = Tensor::<1, Int>::arange(0..16, &device)
+            .float()
+            .reshape([2, 2, 2, 2])
+            .mul_scalar(0.1)
+            .sub_scalar(0.7);
+
+        let (values, indices, dynamic_values, dynamic_indices, conv) = model.forward(x(), x(), w);
+
+        let expected_values = TensorData::from([[
+            [
+                [16.0f32, 16., 18., 18.],
+                [21., 13., 13., 12.],
+                [21., 5., 12., 12.],
+            ],
+            [
+                [20., 23., 23., 22.],
+                [20., 23., 23., 7.],
+                [14., 19., 19., 6.],
+            ],
+        ]]);
+        values.to_data().assert_eq(&expected_values, true);
+        dynamic_values.to_data().assert_eq(&expected_values, true);
+        indices.to_data().assert_eq(
+            &TensorData::from([[
+                [[1i64, 1, 3, 3], [8, 6, 6, 11], [8, 9, 11, 11]],
+                [[17, 18, 18, 15], [17, 18, 18, 19], [21, 22, 22, 23]],
+            ]]),
+            true,
+        );
+        dynamic_indices.to_data().assert_eq(
+            &TensorData::from([[
+                [[3i64, 3, 9, 9], [2, 7, 7, 11], [2, 5, 11, 11]],
+                [[16, 19, 19, 21], [16, 19, 19, 22], [17, 20, 20, 23]],
+            ]]),
+            true,
+        );
+        conv.to_data().assert_approx_eq::<f32>(
+            &TensorData::from([[
+                [
+                    [-31.1f32, -24.6, -25.6, -20.4],
+                    [-35.7, -29.4, -25.7, -9.4],
+                    [-23.5, -12.7, -15.5, -10.2],
+                ],
+                [
+                    [48.1, 45.8, 44.8, 18.0],
+                    [49.9, 54.6, 40.7, 11.4],
+                    [16.5, 19.3, 15.7, 4.2],
+                ],
+            ]]),
+            burn::tensor::Tolerance::absolute(1e-3),
         );
     }
 }

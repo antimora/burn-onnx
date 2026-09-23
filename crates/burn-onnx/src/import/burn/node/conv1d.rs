@@ -76,30 +76,45 @@ impl NodeCodegen for onnx_ir::conv1d::Conv1dNode {
             let kernel = [self.config.kernel_size];
             let stride = [self.config.stride];
             let dilation = [self.config.dilation];
-            let Some(padding) = crate::burn::codegen::conv_padding_pairs(
+            let static_padding = crate::burn::codegen::conv_padding_pairs(
                 &self.config.auto_pad,
                 &explicit,
                 input_spatial.as_deref(),
                 &kernel,
                 &stride,
                 &dilation,
-            ) else {
-                let msg = format!(
-                    "Conv1d node '{}': SAME auto_pad with a runtime weight needs a static input size",
-                    self.name
-                );
-                return quote! { let #output = { compile_error!(#msg); unreachable!() }; };
-            };
+            );
+            // SAME padding on an input sized only at run time is computed from it
+            // before the input moves into the call.
+            let runtime_padding = static_padding.is_none().then(|| {
+                crate::burn::codegen::runtime_same_padding(
+                    &self.config.auto_pad,
+                    &input,
+                    &kernel,
+                    &stride,
+                    &dilation,
+                )
+            });
+            let padding = static_padding.unwrap_or_else(|| quote! { padding });
             let stride = stride.to_tokens();
             let dilation = dilation.to_tokens();
             let groups = self.config.groups.to_tokens();
-            return quote! {
-                let #output = burn::tensor::module::conv1d(
+            let call = quote! {
+                burn::tensor::module::conv1d(
                     #input,
                     #weight,
                     #bias,
                     burn::tensor::ops::ConvOptions::new_with_padding(#stride, #padding, #dilation, #groups),
-                );
+                )
+            };
+            return match runtime_padding {
+                None => quote! { let #output = #call; },
+                Some(runtime_padding) => quote! {
+                    let #output = {
+                        let padding = #runtime_padding;
+                        #call
+                    };
+                },
             };
         }
         let field = Ident::new(&self.name, Span::call_site());
