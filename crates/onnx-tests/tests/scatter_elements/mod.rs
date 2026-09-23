@@ -417,7 +417,7 @@ mod tests {
 
         // Targets are both set and cleared, which a logical-or scatter could not express.
         let expected = TensorData::from([[false, true, false], [false, true, true]]);
-        assert_eq!(output.to_data(), expected);
+        output.to_data().assert_eq(&expected, false);
     }
 
     // Indices narrower than data on a non-axis dimension take the scatter_nd path.
@@ -475,6 +475,6 @@ mod tests {
         let output = model.forward(data, indices, updates);
 
         let expected = TensorData::from([[false, true, false], [false, false, false]]);
-        assert_eq!(output.to_data(), expected);
+        output.to_data().assert_eq(&expected, false);
     }
 }

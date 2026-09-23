@@ -195,8 +195,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "test-metal", ignore = "Metal has no f64")]
     fn range_double_mixed() {
-        let device = Default::default();
+        let device = burn::tensor::Device::default();
+        // f64 support on wgpu depends on the adapter.
+        if !device.supports_dtype(burn::tensor::DType::F64) {
+            return;
+        }
         let model: range_double_mixed::Model = range_double_mixed::Model::new(&device);
 
         // start=-0.5 and delta=0.125 are static, limit is runtime

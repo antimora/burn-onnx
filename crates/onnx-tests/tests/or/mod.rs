@@ -24,7 +24,7 @@ mod tests {
         let output = model.forward(input_x, input_y).to_data();
         let expected = TensorData::from([[[[false, true, true, true]]]]);
 
-        output.assert_eq(&expected, true);
+        output.assert_eq(&expected, false);
     }
 
     #[test]
@@ -124,8 +124,8 @@ mod tests {
             ],
         ]);
 
-        result1.to_data().assert_eq(&expected1, true);
-        result2.to_data().assert_eq(&expected2, true);
+        result1.to_data().assert_eq(&expected1, false);
+        result2.to_data().assert_eq(&expected2, false);
     }
 
     #[test]

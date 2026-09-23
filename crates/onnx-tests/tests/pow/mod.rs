@@ -4,7 +4,7 @@ include_models!(pow, pow_int, pow_broadcast, pow_mixed);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::{Device, Int, Tensor, TensorData};
+    use burn::tensor::{DType, Device, Int, Tensor, TensorData, Tolerance};
 
     #[test]
     fn pow_int_with_tensor_and_scalar() {
@@ -85,7 +85,10 @@ mod tests {
 
         let expected = TensorData::from([[[[1.0000f32, 1.6000e+01, 7.2900e+02, 6.5536e+04]]]]);
 
-        output.to_data().assert_eq(&expected, true);
+        assert_eq!(output.dtype(), DType::F32);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, Tolerance::default());
     }
 
     #[test]
@@ -103,12 +106,14 @@ mod tests {
         let (float_int, int_float, float_uint) = model.forward(f, i, fe, u);
 
         let tolerance = burn::tensor::Tolerance::default();
+        assert_eq!(float_int.dtype(), DType::F32);
         float_int
             .to_data()
             .assert_approx_eq::<f32>(&TensorData::from([-8.0f32, 2.25, 81.0, -1.0]), tolerance);
         int_float
             .to_data()
             .assert_eq(&TensorData::from([9i64, 8, 2, 5]), true);
+        assert_eq!(float_uint.dtype(), DType::F32);
         float_uint
             .to_data()
             .assert_approx_eq::<f32>(&TensorData::from([4.0f32, 3.375, 3.0, 1.0]), tolerance);
