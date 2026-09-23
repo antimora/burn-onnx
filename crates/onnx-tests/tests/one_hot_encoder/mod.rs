@@ -1,6 +1,7 @@
 use crate::include_models;
 include_models!(
     one_hot_encoder_f32,
+    one_hot_encoder_f32_large_cats,
     one_hot_encoder_f64,
     one_hot_encoder_i64,
     one_hot_encoder_2d
@@ -28,6 +29,23 @@ mod tests {
             [0.0, 1.0, 0.0],
             [1.0, 0.0, 0.0],
         ]);
+        output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn one_hot_encoder_f32_large_categories() {
+        // Categories above 2^24 are not exact in f32. The spec casts float input
+        // to integers, so 16777216.0 matches 16777216 but not 16777217.
+        let device = Default::default();
+        let model = one_hot_encoder_f32_large_cats::Model::new(&device);
+
+        let input: Tensor<1> = Tensor::from_data(
+            TensorData::from([16777216.0f32, 5.0]),
+            (&device, DType::F32),
+        );
+        let output: Tensor<2> = model.forward(input);
+
+        let expected = TensorData::from([[1.0f32, 0.0], [0.0, 0.0]]);
         output.to_data().assert_eq(&expected, true);
     }
 
