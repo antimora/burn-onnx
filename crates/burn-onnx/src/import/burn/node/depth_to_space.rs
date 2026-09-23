@@ -18,17 +18,15 @@ impl NodeCodegen for onnx_ir::depth_to_space::DepthToSpaceNode {
         // burn's PixelShuffle takes float tensors only; other kinds are rearranged
         // directly.
         if !self.inputs[0].ty.elem_type().is_float() {
-            let permutation = match self.config.mode {
-                DepthToSpaceMode::Dcr => quote! { [0, 3, 4, 1, 5, 2] },
-                DepthToSpaceMode::Crd => quote! { [0, 1, 4, 2, 5, 3] },
-            };
-            let split = match self.config.mode {
-                DepthToSpaceMode::Dcr => {
-                    quote! { [b, #block_size, #block_size, c / (#block_size * #block_size), h, w] }
-                }
-                DepthToSpaceMode::Crd => {
-                    quote! { [b, c / (#block_size * #block_size), #block_size, #block_size, h, w] }
-                }
+            let (split, permutation) = match self.config.mode {
+                DepthToSpaceMode::Dcr => (
+                    quote! { [b, #block_size, #block_size, c / (#block_size * #block_size), h, w] },
+                    quote! { [0, 3, 4, 1, 5, 2] },
+                ),
+                DepthToSpaceMode::Crd => (
+                    quote! { [b, c / (#block_size * #block_size), #block_size, #block_size, h, w] },
+                    quote! { [0, 1, 4, 2, 5, 3] },
+                ),
             };
             return quote! {
                 let #output = {
