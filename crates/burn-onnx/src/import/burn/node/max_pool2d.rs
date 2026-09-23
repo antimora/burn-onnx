@@ -120,11 +120,20 @@ fn forward_with_indices(
     };
 
     // Symmetric padding known at build time: burn pads, and its indices already
-    // address the input plane.
+    // address the input plane in row-major order.
     if let Some(&[(t, b), (l, r)]) = padding.as_deref()
         && t == b
         && l == r
     {
+        let in_plane = if config.storage_order == 1 {
+            quote! {{
+                let row = indices.clone().div_scalar(width as i64);
+                let col = indices.remainder_scalar(width as i64);
+                #in_plane
+            }}
+        } else {
+            quote! { indices }
+        };
         return quote! {
             let (#output, #indices_out) = {
                 let [batch, channels, height, width] = #input.dims();
@@ -137,18 +146,13 @@ fn forward_with_indices(
                     #ceil_mode,
                 );
                 let indices = indices.cast(burn::tensor::DType::I64);
-                let row = indices.clone().div_scalar(width as i64);
-                let col = indices.remainder_scalar(width as i64);
                 (values, #in_plane + #planes)
             };
         };
     }
 
     let padding = match padding {
-        Some(pairs) => {
-            let pairs = pairs.iter().map(|(begin, end)| quote! { (#begin, #end) });
-            quote! { [#(#pairs),*] }
-        }
+        Some(pairs) => crate::burn::codegen::padding_pairs_tokens(&pairs),
         None => crate::burn::codegen::runtime_same_padding(
             &config.auto_pad,
             &input,
@@ -395,11 +399,9 @@ mod tests {
                     false,
                 );
                 let indices = indices.cast(burn::tensor::DType::I64);
-                let row = indices.clone().div_scalar(width as i64);
-                let col = indices.remainder_scalar(width as i64);
                 (
                     values,
-                    row.mul_scalar(width as i64) + col
+                    indices
                         + Tensor::<
                             1,
                             Int,
@@ -432,11 +434,13 @@ mod tests {
                     false,
                 );
                 let indices = indices.cast(burn::tensor::DType::I64);
-                let row = indices.clone().div_scalar(width as i64);
-                let col = indices.remainder_scalar(width as i64);
                 (
                     values,
-                    col.mul_scalar(height as i64) + row
+                    {
+                        let row = indices.clone().div_scalar(width as i64);
+                        let col = indices.remainder_scalar(width as i64);
+                        col.mul_scalar(height as i64) + row
+                    }
                         + Tensor::<
                             1,
                             Int,

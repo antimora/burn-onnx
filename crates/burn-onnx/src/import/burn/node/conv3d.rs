@@ -56,66 +56,28 @@ impl NodeCodegen for onnx_ir::conv3d::Conv3dNode {
     }
 
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
-        let input = scope.arg(self.inputs.first().unwrap());
-        let output = arg_to_ident(self.outputs.first().unwrap());
-
         // A runtime weight has no module to live in, so the functional op takes it.
         if !self.inputs[1].is_static() {
-            let weight = scope.arg(&self.inputs[1]);
-            let bias = match self.inputs.get(2) {
-                Some(arg) if !arg.is_optional() => {
-                    let bias = scope.arg(arg);
-                    quote! { Some(#bias) }
-                }
-                _ => quote! { None },
-            };
             let (front, top, left, back, bottom, right) = self.config.padding.as_tuple();
             let explicit = [(front, back), (top, bottom), (left, right)];
-            let input_spatial = onnx_ir::node::padding::static_spatial_dims(&self.inputs[0].ty);
-            let kernel = self.config.kernel_size;
-            let stride = self.config.stride;
-            let dilation = self.config.dilation;
-            let static_padding = crate::burn::codegen::conv_padding_pairs(
-                &self.config.auto_pad,
-                &explicit,
-                input_spatial.as_deref(),
-                &kernel,
-                &stride,
-                &dilation,
+            let geometry = super::conv_helpers::ConvGeometry {
+                auto_pad: &self.config.auto_pad,
+                explicit: &explicit,
+                kernel: &self.config.kernel_size,
+                stride: &self.config.stride,
+                dilation: &self.config.dilation,
+                groups: self.config.groups,
+            };
+            return super::conv_helpers::functional_conv(
+                scope,
+                &self.inputs,
+                &self.outputs[0],
+                "conv3d",
+                geometry,
             );
-            // SAME padding on an input sized only at run time is computed from it
-            // before the input moves into the call.
-            let runtime_padding = static_padding.is_none().then(|| {
-                crate::burn::codegen::runtime_same_padding(
-                    &self.config.auto_pad,
-                    &input,
-                    &kernel,
-                    &stride,
-                    &dilation,
-                )
-            });
-            let padding = static_padding.unwrap_or_else(|| quote! { padding });
-            let stride = stride.to_tokens();
-            let dilation = dilation.to_tokens();
-            let groups = self.config.groups.to_tokens();
-            let call = quote! {
-                burn::tensor::module::conv3d(
-                    #input,
-                    #weight,
-                    #bias,
-                    burn::tensor::ops::ConvOptions::new_with_padding(#stride, #padding, #dilation, #groups),
-                )
-            };
-            return match runtime_padding {
-                None => quote! { let #output = #call; },
-                Some(runtime_padding) => quote! {
-                    let #output = {
-                        let padding = #runtime_padding;
-                        #call
-                    };
-                },
-            };
         }
+        let input = scope.arg(self.inputs.first().unwrap());
+        let output = arg_to_ident(self.outputs.first().unwrap());
         let field = Ident::new(&self.name, Span::call_site());
 
         quote! {

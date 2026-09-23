@@ -5,6 +5,7 @@
 pub(crate) mod prelude;
 
 pub(crate) mod broadcast_helpers;
+pub(crate) mod conv_helpers;
 pub(crate) mod indexing_helpers;
 pub(crate) mod rnn_common;
 mod subgraph_helper;

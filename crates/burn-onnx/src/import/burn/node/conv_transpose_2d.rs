@@ -55,13 +55,7 @@ impl NodeCodegen for onnx_ir::node::conv_transpose2d::ConvTranspose2dNode {
         // A runtime weight has no module to live in, so the functional op takes it.
         if !self.inputs[1].is_static() {
             let weight = scope.arg(&self.inputs[1]);
-            let bias = match self.inputs.get(2) {
-                Some(arg) if !arg.is_optional() => {
-                    let bias = scope.arg(arg);
-                    quote! { Some(#bias) }
-                }
-                _ => quote! { None },
-            };
+            let bias = super::conv_helpers::optional_input(scope, self.inputs.get(2));
             let stride = self.config.stride.to_tokens();
             let padding = self.config.padding.to_tokens();
             let padding_out = self.config.padding_out.to_tokens();

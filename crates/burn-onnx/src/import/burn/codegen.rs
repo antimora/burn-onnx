@@ -358,8 +358,13 @@ pub fn conv_padding_pairs(
     dilation: &[usize],
 ) -> Option<TokenStream> {
     let pairs = resolve_padding_pairs(auto_pad, explicit, input_spatial, kernel, stride, dilation)?;
+    Some(padding_pairs_tokens(&pairs))
+}
+
+/// `(begin, end)` pads as `[(begin, end); N]` tokens.
+pub fn padding_pairs_tokens(pairs: &[(usize, usize)]) -> TokenStream {
     let pairs = pairs.iter().map(|(begin, end)| quote! { (#begin, #end) });
-    Some(quote! { [#(#pairs),*] })
+    quote! { [#(#pairs),*] }
 }
 
 /// Resolve auto_pad to the tokens of a `PaddingConfig3d`.
