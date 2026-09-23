@@ -1,5 +1,11 @@
 use crate::include_models;
-include_models!(col2im_basic, col2im_complex, col2im_asym, col2im_1d);
+include_models!(
+    col2im_basic,
+    col2im_complex,
+    col2im_asym,
+    col2im_1d,
+    col2im_runtime
+);
 
 #[cfg(test)]
 mod tests {
@@ -102,6 +108,47 @@ mod tests {
                 [12.0, 29.0, 51.0, 54.0, 41.0, 23.0],
             ]]),
             true,
+        );
+    }
+
+    #[test]
+    fn test_col2im_runtime_image_shape() {
+        // Expected values from col2im_runtime.py (onnx ReferenceEvaluator).
+        let device = Default::default();
+        let model = col2im_runtime::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/col2im_runtime.bpk"),
+            &device,
+        );
+        let x2d = Tensor::<3>::from_data(
+            TensorData::new(
+                (0..48).map(|v| v as f32).collect::<alloc::vec::Vec<_>>(),
+                [1, 4, 12],
+            ),
+            &device,
+        );
+        let x1d = Tensor::<3>::from_data(
+            TensorData::new(
+                (0..9).map(|v| v as f32).collect::<alloc::vec::Vec<_>>(),
+                [1, 3, 3],
+            ),
+            &device,
+        );
+        let image2d = Tensor::<1, Int>::from_ints([3, 3], &device);
+        let image1d = Tensor::<1, Int>::from_ints([5], &device);
+
+        let (y2d, y1d) = model.forward(x2d, image2d, x1d, image1d);
+
+        y2d.to_data().assert_approx_eq::<f32>(
+            &TensorData::from([[[
+                [28.0f32, 82.0, 86.0],
+                [36.0, 98.0, 102.0],
+                [32.0, 77.0, 79.0],
+            ]]]),
+            Tolerance::default(),
+        );
+        y1d.to_data().assert_approx_eq::<f32>(
+            &TensorData::from([[[0.0f32, 4.0, 12.0, 12.0, 8.0]]]),
+            Tolerance::default(),
         );
     }
 }

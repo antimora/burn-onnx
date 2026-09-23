@@ -397,4 +397,111 @@ mod tests {
         }
         ");
     }
+
+    #[test]
+    fn test_col2im_1d_runtime_image_shape() {
+        let config = Col2ImConfig::new(
+            Col2ImShape::Runtime {
+                input: onnx_ir::ir::RuntimeInputRef::new("image_shape".to_string(), 1),
+                len: 1,
+            },
+            Col2ImShape::Static(vec![3]),
+            vec![1],    // dilations
+            vec![0, 0], // pads
+            vec![1],    // strides
+        );
+        let node = Col2ImNodeBuilder::new("col2im_runtime")
+            .input_tensor("input", 3, DType::F32)
+            .input_shape("image_shape", 1)
+            .input_tensor("block_shape", 1, DType::I64)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            input: Tensor<3>,
+            image_shape: [i64; 1],
+            block_shape: Tensor<1, Int>,
+        ) -> Tensor<3> {
+            let output = {
+                let image: [usize; 2] = {
+                    let values = image_shape;
+                    [1, values[0] as usize]
+                };
+                let kernel: [usize; 2] = [1usize, 3usize];
+                {
+                    let folded: Tensor<4> = burn::tensor::module::fold4d(
+                        input,
+                        image,
+                        kernel,
+                        burn::tensor::ops::UnfoldOptions::new(
+                            [1usize, 1usize],
+                            [0usize, 0usize],
+                            [1usize, 1usize],
+                        ),
+                    );
+                    let [batch, channels, _, width] = folded.dims();
+                    folded.reshape([batch, channels, width])
+                }
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_col2im_2d_runtime_asymmetric_padding() {
+        let config = Col2ImConfig::new(
+            Col2ImShape::Runtime {
+                input: onnx_ir::ir::RuntimeInputRef::new("image_shape".to_string(), 1),
+                len: 2,
+            },
+            Col2ImShape::Static(vec![2, 2]),
+            vec![1, 1],       // dilations
+            vec![1, 0, 0, 2], // pads [t, l, b, r]
+            vec![1, 1],       // strides
+        );
+        let node = Col2ImNodeBuilder::new("col2im_runtime")
+            .input_tensor("input", 3, DType::F32)
+            .input_tensor("image_shape", 1, DType::I64)
+            .input_tensor("block_shape", 1, DType::I64)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            input: Tensor<3>,
+            image_shape: Tensor<1, Int>,
+            block_shape: Tensor<1, Int>,
+        ) -> Tensor<4> {
+            let output = {
+                let image: [usize; 2] = {
+                    let values = image_shape
+                        .to_data()
+                        .convert::<i64>()
+                        .try_into_vec::<i64>()
+                        .unwrap();
+                    [values[0] as usize, values[1] as usize]
+                };
+                let kernel: [usize; 2] = [2usize, 2usize];
+                burn::tensor::module::fold4d(
+                        input,
+                        [image[0] + 1usize, image[1] + 2usize],
+                        kernel,
+                        burn::tensor::ops::UnfoldOptions::new(
+                            [1usize, 1usize],
+                            [0usize, 0usize],
+                            [1usize, 1usize],
+                        ),
+                    )
+                    .slice(s![.., .., 1usize..1usize + image[0], 0usize..0usize + image[1]])
+            };
+            output
+        }
+        ");
+    }
 }
