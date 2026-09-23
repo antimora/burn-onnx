@@ -633,6 +633,86 @@ mod tests {
     }
 
     #[test]
+    fn test_scatter_elements_bool_rank2() {
+        let config = ScatterElementsConfig::new(1, ScatterElementsReduction::None);
+        let node = ScatterElementsNodeBuilder::new("scatter1")
+            .input_tensor("data", 2, DType::Bool(BoolStore::Native))
+            .input_tensor("indices", 2, DType::I64)
+            .input_tensor("updates", 2, DType::Bool(BoolStore::Native))
+            .output_tensor("output", 2, DType::Bool(BoolStore::Native))
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            data: Tensor<2, Bool>,
+            indices: Tensor<2, Int>,
+            updates: Tensor<2, Bool>,
+        ) -> Tensor<2, Bool> {
+            let output = {
+                let axis_size = data.dims()[1] as i64;
+                let indices = indices.cast(burn::tensor::DType::I64);
+                let negative = indices.clone().lower_elem(0i64);
+                let corrected = indices.clone() + axis_size;
+                let indices = indices.mask_where(negative, corrected);
+                let idx_dims = indices.dims();
+                let data_dims = data.dims();
+                let n: usize = idx_dims.iter().product();
+                if n == 0 {
+                    data
+                } else if (0..2).all(|d| d == 1 || idx_dims[d] == data_dims[d]) {
+                    data.int()
+                        .cast(burn::tensor::DType::I64)
+                        .scatter(
+                            1,
+                            indices,
+                            updates.int().cast(burn::tensor::DType::I64),
+                            burn::tensor::IndexingUpdateOp::Assign,
+                        )
+                        .bool()
+                } else {
+                    let mut strides = [1usize; 2];
+                    for d in (0..2 - 1).rev() {
+                        strides[d] = strides[d + 1] * idx_dims[d + 1];
+                    }
+                    let flat = Tensor::<
+                        1,
+                        Int,
+                    >::arange(0..n as i64, (&self.device, burn::tensor::DType::I64));
+                    let mut columns: alloc::vec::Vec<Tensor<2, Int>> = alloc::vec::Vec::with_capacity(
+                        2,
+                    );
+                    for d in 0..2 {
+                        columns
+                            .push(
+                                if d == 1 {
+                                    indices.clone().reshape([n, 1])
+                                } else {
+                                    flat.clone()
+                                        .div_scalar(strides[d] as i64)
+                                        .remainder_scalar(idx_dims[d] as i64)
+                                        .reshape([n, 1])
+                                },
+                            );
+                    }
+                    let coordinates = Tensor::cat(columns, 1);
+                    data.int()
+                        .cast(burn::tensor::DType::I64)
+                        .scatter_nd(
+                            coordinates,
+                            updates.int().cast(burn::tensor::DType::I64).reshape([n]),
+                            burn::tensor::IndexingUpdateOp::Assign,
+                        )
+                        .bool()
+                }
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
     fn test_scatter_elements_bool_add_emits_compile_error() {
         let config = ScatterElementsConfig::new(0, ScatterElementsReduction::Add);
         let node = ScatterElementsNodeBuilder::new("scatter1")
