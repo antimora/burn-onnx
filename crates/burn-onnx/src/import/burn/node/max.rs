@@ -350,7 +350,7 @@ mod tests {
         pub fn forward(&self, lhs: [i64; 4], rhs: i64) -> [i64; 4] {
             let output = {
                 let mut result = lhs;
-                let scalar = rhs as i64;
+                let scalar = rhs;
                 for result_item in result.iter_mut() {
                     *result_item = (*result_item).max(scalar);
                 }
@@ -372,7 +372,7 @@ mod tests {
         pub fn forward(&self, lhs: [i64; 4], rhs: Tensor<1, Int>) -> [i64; 4] {
             let output = {
                 let mut result = lhs;
-                let scalar = (rhs).into_scalar::<i64>() as i64;
+                let scalar = (rhs).into_scalar::<i64>();
                 for result_item in result.iter_mut() {
                     *result_item = (*result_item).max(scalar);
                 }
@@ -394,7 +394,7 @@ mod tests {
         pub fn forward(&self, lhs: i64, rhs: [i64; 4]) -> [i64; 4] {
             let output = {
                 let mut result = rhs;
-                let scalar = lhs as i64;
+                let scalar = lhs;
                 for result_item in result.iter_mut() {
                     *result_item = (*result_item).max(scalar);
                 }
@@ -416,7 +416,7 @@ mod tests {
         pub fn forward(&self, lhs: Tensor<1, Int>, rhs: [i64; 4]) -> [i64; 4] {
             let output = {
                 let mut result = rhs;
-                let scalar = (lhs).into_scalar::<i64>() as i64;
+                let scalar = (lhs).into_scalar::<i64>();
                 for result_item in result.iter_mut() {
                     *result_item = (*result_item).max(scalar);
                 }

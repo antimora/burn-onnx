@@ -15,10 +15,7 @@ fn use_burn_attention(node: &onnx_ir::attention::AttentionNode) -> bool {
 
 /// Known size of `axis` of a tensor argument.
 fn static_dim(arg: &Argument, axis: usize) -> Option<usize> {
-    match &arg.ty {
-        ArgType::Tensor(t) => t.static_shape.as_ref().and_then(|shape| shape[axis]),
-        _ => None,
-    }
+    arg.ty.static_shape()?.get(axis).copied().flatten()
 }
 
 /// Setup shared by both paths: `q`, `k` and `v` bound as `[batch, heads, seq, dim]`,

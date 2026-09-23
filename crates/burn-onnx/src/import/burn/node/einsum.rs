@@ -52,36 +52,25 @@ fn scalar_native_to_tensor(expr: TokenStream, dtype: DType) -> TokenStream {
 /// would claim that axis, so the `...` is dropped from scalar terms (and from the
 /// output when no other term keeps one).
 fn burn_equation(equation: &str, inputs: &[Argument]) -> String {
-    let is_scalar = |input: &Argument| input.ty.is_scalar();
     let (terms, output) = match equation.split_once("->") {
         Some((terms, output)) => (terms, Some(output)),
         None => (equation, None),
     };
-    let terms: Vec<&str> = terms.split(',').collect();
-    if !terms
-        .iter()
-        .zip(inputs)
-        .any(|(term, input)| is_scalar(input) && term.contains("..."))
-    {
-        return equation.to_string();
-    }
-
     let terms: Vec<String> = terms
-        .iter()
+        .split(',')
         .zip(inputs)
         .map(|(term, input)| {
-            if is_scalar(input) {
+            if input.ty.is_scalar() {
                 term.replace("...", "")
             } else {
                 term.to_string()
             }
         })
         .collect();
-    let keeps_ellipsis = terms.iter().any(|term| term.contains("..."));
     let mut rewritten = terms.join(",");
     if let Some(output) = output {
         rewritten.push_str("->");
-        if keeps_ellipsis {
+        if terms.iter().any(|term| term.contains("...")) {
             rewritten.push_str(output);
         } else {
             rewritten.push_str(&output.replace("...", ""));

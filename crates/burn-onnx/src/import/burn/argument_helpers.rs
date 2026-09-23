@@ -84,12 +84,14 @@ pub fn on_device_to_native(input: TokenStream, dtype: &DType) -> TokenStream {
 /// where every value is converted to i64. A `ScalarTensor` lives on device, so
 /// it is read back rather than named directly.
 pub fn scalar_as_i64(arg: &Argument, value: TokenStream) -> TokenStream {
-    match &arg.ty {
-        ArgType::ScalarTensor(dtype) => {
-            let native = on_device_to_native(value, dtype);
-            quote! { #native as i64 }
-        }
-        _ => quote! { #value as i64 },
+    let value = match &arg.ty {
+        ArgType::ScalarTensor(dtype) => on_device_to_native(value, dtype),
+        _ => value,
+    };
+    if arg.ty.elem_type() == DType::I64 {
+        value
+    } else {
+        quote! { #value as i64 }
     }
 }
 

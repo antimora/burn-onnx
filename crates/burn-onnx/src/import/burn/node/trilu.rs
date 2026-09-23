@@ -20,18 +20,7 @@ impl NodeCodegen for onnx_ir::trilu::TriluNode {
             TriluDiagonal::Runtime(runtime) => {
                 let arg = &self.inputs[runtime.input_index];
                 let value = scope.arg(arg);
-                let (native, dtype) = match &arg.ty {
-                    ArgType::ScalarNative(dtype) => (value, dtype),
-                    ArgType::ScalarTensor(dtype) => (on_device_to_native(value, dtype), dtype),
-                    other => {
-                        unreachable!("Trilu diagonal validated as scalar in onnx-ir, got {other:?}")
-                    }
-                };
-                if *dtype == DType::I64 {
-                    native
-                } else {
-                    quote! { #native as i64 }
-                }
+                scalar_as_i64(arg, value)
             }
         };
 
