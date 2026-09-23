@@ -4,10 +4,64 @@ use onnx_ir::node::attention::AttentionQkMatmulOutputMode;
 /// Whether this attention node can use `burn::tensor::module::attention()`.
 ///
 /// Burn's attention natively supports scale, softcap, is_causal, bool masks,
-/// and float additive biases. The only feature requiring custom codegen is
-/// qk_matmul intermediate output.
+/// and float additive biases. Custom codegen is needed for the qk_matmul
+/// intermediate output, and for softcap with an additive mask: ONNX adds the
+/// mask before the softcap, burn after.
 fn use_burn_attention(node: &onnx_ir::attention::AttentionNode) -> bool {
-    node.outputs.get(3).is_none()
+    let additive_mask = node
+        .inputs
+        .get(3)
+        .is_some_and(|mask| !mask.is_optional() && !mask.ty.elem_type().is_bool());
+    node.outputs.get(3).is_none() && !(node.config.softcap != 0.0 && additive_mask)
+}
+
+/// Known size of `axis` of a tensor argument.
+fn static_dim(arg: &Argument, axis: usize) -> Option<usize> {
+    match &arg.ty {
+        ArgType::Tensor(t) => t.static_shape.as_ref().and_then(|shape| shape[axis]),
+        _ => None,
+    }
+}
+
+/// Repeat K and V across heads for grouped-query attention. ONNX tiles them
+/// (`np.tile`), so query head `h` reads K/V head `h % kv_heads`, and burn's
+/// attention takes K/V with as many heads as Q. Emitted only when the head
+/// counts can differ.
+fn gqa_expand(node: &onnx_ir::attention::AttentionNode, rank: usize) -> TokenStream {
+    let heads_may_differ = if rank == 3 {
+        node.config.q_num_heads != node.config.kv_num_heads
+    } else {
+        let q_heads = static_dim(&node.inputs[0], 1);
+        let kv_heads = static_dim(&node.inputs[1], 1);
+        !matches!((q_heads, kv_heads), (Some(q), Some(kv)) if q == kv)
+    };
+    if !heads_may_differ {
+        return quote! {};
+    }
+    quote! {
+        let groups = q.dims()[1] / k.dims()[1];
+        let (k, v) = if groups > 1 {
+            (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+        } else {
+            (k, v)
+        };
+    }
+}
+
+/// ONNX's causal mask, aligned to the upper-left corner: key `j` is hidden from
+/// query `i` when `j > i`. `true` marks a masked position, shaped `[1, 1, q, k]`.
+fn causal_mask_tokens() -> TokenStream {
+    quote! {{
+        let q_len = q.dims()[2];
+        let k_len = k.dims()[2];
+        let rows = Tensor::<1, Int>::arange(0..q_len as i64, (&self.device, burn::tensor::DType::I64))
+            .reshape([q_len, 1])
+            .expand([q_len, k_len]);
+        let cols = Tensor::<1, Int>::arange(0..k_len as i64, (&self.device, burn::tensor::DType::I64))
+            .reshape([1, k_len])
+            .expand([q_len, k_len]);
+        cols.greater(rows).unsqueeze::<4>()
+    }}
 }
 
 impl NodeCodegen for onnx_ir::attention::AttentionNode {
@@ -118,6 +172,20 @@ fn forward_burn_attention(
         });
     }
 
+    body.extend(gqa_expand(node, rank));
+
+    // burn's is_causal aligns the mask to the bottom-right corner, ONNX's to the
+    // upper-left; they agree only when Q and K are equally long. Otherwise the
+    // ONNX mask is built explicitly.
+    let seq_axis = if rank == 3 { 1 } else { 2 };
+    let square = !past_kv
+        && matches!(
+            (static_dim(&node.inputs[0], seq_axis), static_dim(&node.inputs[1], seq_axis)),
+            (Some(q), Some(k)) if q == k
+        );
+    let native_causal = node.config.is_causal && square;
+    let explicit_causal = node.config.is_causal && !square;
+
     // Build AttentionModuleOptions
     let scale_tokens = match node.config.scale {
         Some(scale) => quote! { Some(#scale) },
@@ -129,7 +197,7 @@ fn forward_burn_attention(
     } else {
         quote! { None }
     };
-    let is_causal = node.config.is_causal;
+    let is_causal = native_causal;
     let options = quote! {
         burn::tensor::ops::AttentionModuleOptions {
             scale: #scale_tokens,
@@ -141,49 +209,67 @@ fn forward_burn_attention(
     // Mask handling:
     // - Bool masks -> `mask` parameter (inverted: ONNX attend=true -> Burn masked=true)
     // - Float/int masks -> `attn_bias` parameter (additive bias)
-    // - Causal masking is handled natively by the backend via is_causal
-    let mask_input = if !node.config.is_causal {
-        node.inputs.get(3).filter(|a| !a.is_optional())
-    } else {
-        None
+    // - Causal masking combines with either (see `explicit_causal` above)
+    let mask_input = node.inputs.get(3).filter(|a| !a.is_optional());
+
+    let (mask, bias) = match mask_input {
+        Some(mask_input) => {
+            let mask_arg = scope.arg(mask_input);
+            match &mask_input.ty {
+                ArgType::Tensor(t) if t.dtype.is_bool() => {
+                    let mask = match t.rank {
+                        2 => quote! { #mask_arg.bool_not().unsqueeze::<4>() },
+                        3 => quote! { #mask_arg.bool_not().unsqueeze_dim::<4>(1) },
+                        4 => quote! { #mask_arg.bool_not() },
+                        _ => panic!("Attention mask must be rank 2, 3, or 4"),
+                    };
+                    (Some(mask), None)
+                }
+                ArgType::Tensor(t) if t.dtype.is_float() => {
+                    let bias = match t.rank {
+                        2 => quote! { #mask_arg.unsqueeze::<4>() },
+                        3 => quote! { #mask_arg.unsqueeze_dim::<4>(1) },
+                        4 => mask_arg,
+                        _ => panic!("Attention bias must be rank 2, 3, or 4"),
+                    };
+                    (None, Some(bias))
+                }
+                ArgType::Tensor(t) if t.dtype.is_int() || t.dtype.is_uint() => {
+                    let q_dtype = node.inputs.first().unwrap().ty.elem_type().to_tokens();
+                    let bias = match t.rank {
+                        2 => quote! { #mask_arg.float().cast(#q_dtype).unsqueeze::<4>() },
+                        3 => quote! { #mask_arg.float().cast(#q_dtype).unsqueeze_dim::<4>(1) },
+                        4 => quote! { #mask_arg.float().cast(#q_dtype) },
+                        _ => panic!("Attention bias must be rank 2, 3, or 4"),
+                    };
+                    (None, Some(bias))
+                }
+                _ => panic!("Unsupported attention mask type"),
+            }
+        }
+        None => (None, None),
     };
 
-    let (mask_tokens, bias_tokens) = if let Some(mask_input) = mask_input {
-        let mask_arg = scope.arg(mask_input);
-        match &mask_input.ty {
-            ArgType::Tensor(t) if t.dtype.is_bool() => {
-                let mask = match t.rank {
-                    2 => quote! { #mask_arg.bool_not().unsqueeze::<4>() },
-                    3 => quote! { #mask_arg.bool_not().unsqueeze_dim::<4>(1) },
-                    4 => quote! { #mask_arg.bool_not() },
-                    _ => panic!("Attention mask must be rank 2, 3, or 4"),
-                };
-                (quote! { Some(#mask) }, quote! { None })
-            }
-            ArgType::Tensor(t) if t.dtype.is_float() => {
-                let bias = match t.rank {
-                    2 => quote! { #mask_arg.unsqueeze::<4>() },
-                    3 => quote! { #mask_arg.unsqueeze_dim::<4>(1) },
-                    4 => mask_arg,
-                    _ => panic!("Attention bias must be rank 2, 3, or 4"),
-                };
-                (quote! { None }, quote! { Some(#bias) })
-            }
-            ArgType::Tensor(t) if t.dtype.is_int() || t.dtype.is_uint() => {
-                let q_dtype = node.inputs.first().unwrap().ty.elem_type().to_tokens();
-                let bias = match t.rank {
-                    2 => quote! { #mask_arg.float().cast(#q_dtype).unsqueeze::<4>() },
-                    3 => quote! { #mask_arg.float().cast(#q_dtype).unsqueeze_dim::<4>(1) },
-                    4 => quote! { #mask_arg.float().cast(#q_dtype) },
-                    _ => panic!("Attention bias must be rank 2, 3, or 4"),
-                };
-                (quote! { None }, quote! { Some(#bias) })
-            }
-            _ => panic!("Unsupported attention mask type"),
-        }
-    } else {
-        (quote! { None }, quote! { None })
+    // The causal mask reads Q and K's lengths, so it is built before they move
+    // into the call.
+    if explicit_causal {
+        let causal = causal_mask_tokens();
+        body.extend(quote! { let causal = #causal; });
+    }
+    let mask = match (mask, explicit_causal) {
+        (mask, false) => mask,
+        (None, true) => Some(quote! { causal }),
+        (Some(mask), true) => Some(quote! {{
+            let mask = #mask;
+            let shape = mask.dims();
+            mask.bool_or(causal.expand(shape))
+        }}),
     };
+    let option = |value: Option<TokenStream>| match value {
+        Some(value) => quote! { Some(#value) },
+        None => quote! { None },
+    };
+    let (mask_tokens, bias_tokens) = (option(mask), option(bias));
 
     let attention_call = quote! {
         let #output_y = burn::tensor::module::attention(q, k, v, #mask_tokens, #bias_tokens, #options);
@@ -307,6 +393,8 @@ fn forward_custom(
         panic!("Attention: past_[key,value] and present_[key,value] must be used together.")
     }
 
+    body.extend(gqa_expand(node, rank));
+
     if node.inputs.get(3).is_some_and(|a| !a.is_optional()) || node.config.is_causal {
         body.extend(quote! {
             let q_dims = q.dims();
@@ -350,6 +438,7 @@ fn forward_custom(
 
     if node.config.is_causal {
         attn_mask = quote! {
+            #attn_mask
             let #qk = {
                 let shape = #attn_mask_shape;
                 let mask = Tensor::<2>::ones([shape[2], shape[3]], &#qk.device());
@@ -469,6 +558,12 @@ mod tests {
                 let q = query;
                 let k = key;
                 let v = value;
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let output = burn::tensor::module::attention(
                     q,
                     k,
@@ -575,16 +670,39 @@ mod tests {
                 let q = query;
                 let k = key;
                 let v = value;
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
+                let causal = {
+                    let q_len = q.dims()[2];
+                    let k_len = k.dims()[2];
+                    let rows = Tensor::<
+                        1,
+                        Int,
+                    >::arange(0..q_len as i64, (&self.device, burn::tensor::DType::I64))
+                        .reshape([q_len, 1])
+                        .expand([q_len, k_len]);
+                    let cols = Tensor::<
+                        1,
+                        Int,
+                    >::arange(0..k_len as i64, (&self.device, burn::tensor::DType::I64))
+                        .reshape([1, k_len])
+                        .expand([q_len, k_len]);
+                    cols.greater(rows).unsqueeze::<4>()
+                };
                 let output = burn::tensor::module::attention(
                     q,
                     k,
                     v,
-                    None,
+                    Some(causal),
                     None,
                     burn::tensor::ops::AttentionModuleOptions {
                         scale: None,
                         softcap: None,
-                        is_causal: true,
+                        is_causal: false,
                     },
                 );
                 (output,)
@@ -626,6 +744,12 @@ mod tests {
                 let q = query;
                 let k = key;
                 let v = value;
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let output = burn::tensor::module::attention(
                     q,
                     k,
@@ -670,6 +794,12 @@ mod tests {
                 let q = query;
                 let k = key;
                 let v = value;
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let output = burn::tensor::module::attention(
                     q,
                     k,
@@ -714,6 +844,12 @@ mod tests {
                 let q = query;
                 let k = key;
                 let v = value;
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let output = burn::tensor::module::attention(
                     q,
                     k,
@@ -765,6 +901,12 @@ mod tests {
                 let q = query;
                 let k = key;
                 let v = value;
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let output = burn::tensor::module::attention(
                     q,
                     k,
@@ -816,6 +958,12 @@ mod tests {
                 let q = query;
                 let k = key;
                 let v = value;
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let output = burn::tensor::module::attention(
                     q,
                     k,
@@ -877,6 +1025,12 @@ mod tests {
                 let k = present_k.clone();
                 let present_v = Tensor::cat([past_v, v].to_vec(), 2);
                 let v = present_v.clone();
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let output = burn::tensor::module::attention(
                     q,
                     k,
@@ -938,6 +1092,12 @@ mod tests {
                 let k = present_k.clone();
                 let present_v = Tensor::cat([past_v, v].to_vec(), 2);
                 let v = present_v.clone();
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let output = burn::tensor::module::attention(
                     q,
                     k,
@@ -1001,6 +1161,12 @@ mod tests {
                 let k = present_k.clone();
                 let present_v = Tensor::cat([past_v, v].to_vec(), 2);
                 let v = present_v.clone();
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let q_dims = q.dims();
                 let k_dims = k.dims();
                 let q_scaled = q * scale;
@@ -1067,6 +1233,12 @@ mod tests {
                 let k = present_k.clone();
                 let present_v = Tensor::cat([past_v, v].to_vec(), 2);
                 let v = present_v.clone();
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let q_dims = q.dims();
                 let k_dims = k.dims();
                 let q_scaled = q * scale;
@@ -1137,6 +1309,12 @@ mod tests {
                 let k = present_k.clone();
                 let present_v = Tensor::cat([past_v, v].to_vec(), 2);
                 let v = present_v.clone();
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let q_dims = q.dims();
                 let k_dims = k.dims();
                 let q_scaled = q * scale;
@@ -1191,6 +1369,12 @@ mod tests {
                 let q = query;
                 let k = key;
                 let v = value;
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
                 let output = burn::tensor::module::attention(
                     q,
                     k,
@@ -1211,8 +1395,9 @@ mod tests {
     }
 
     #[test]
-    fn test_attention_causal_with_mask_ignores_mask() {
-        // Per ONNX spec: "is_causal masks scores above the diagonal, regardless of attn_mask"
+    fn test_attention_causal_with_mask() {
+        // Per ONNX spec, is_causal masks scores above the diagonal regardless of
+        // attn_mask, so both apply: the mask as a bias, the causal part as a mask.
         let config = AttentionConfig {
             is_causal: true,
             kv_num_heads: None,
@@ -1243,16 +1428,39 @@ mod tests {
                 let q = query;
                 let k = key;
                 let v = value;
+                let groups = q.dims()[1] / k.dims()[1];
+                let (k, v) = if groups > 1 {
+                    (k.repeat_dim(1, groups), v.repeat_dim(1, groups))
+                } else {
+                    (k, v)
+                };
+                let causal = {
+                    let q_len = q.dims()[2];
+                    let k_len = k.dims()[2];
+                    let rows = Tensor::<
+                        1,
+                        Int,
+                    >::arange(0..q_len as i64, (&self.device, burn::tensor::DType::I64))
+                        .reshape([q_len, 1])
+                        .expand([q_len, k_len]);
+                    let cols = Tensor::<
+                        1,
+                        Int,
+                    >::arange(0..k_len as i64, (&self.device, burn::tensor::DType::I64))
+                        .reshape([1, k_len])
+                        .expand([q_len, k_len]);
+                    cols.greater(rows).unsqueeze::<4>()
+                };
                 let output = burn::tensor::module::attention(
                     q,
                     k,
                     v,
-                    None,
-                    None,
+                    Some(causal),
+                    Some(mask),
                     burn::tensor::ops::AttentionModuleOptions {
                         scale: None,
                         softcap: None,
-                        is_causal: true,
+                        is_causal: false,
                     },
                 );
                 (output,)

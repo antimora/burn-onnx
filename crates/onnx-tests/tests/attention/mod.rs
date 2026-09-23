@@ -13,7 +13,8 @@ include_models!(
     attention_qk_output_0,
     attention_qk_output_1,
     attention_qk_output_2,
-    attention_qk_output_3
+    attention_qk_output_3,
+    attention_gqa_causal
 );
 
 #[cfg(test)]
@@ -268,5 +269,50 @@ mod tests {
         qk_output
             .to_data()
             .assert_approx_eq::<f32>(&expected_qk, Tolerance::default());
+    }
+
+    #[test]
+    fn attention_gqa_causal() {
+        let device = Default::default();
+        let model = attention_gqa_causal::Model::new(&device);
+        let seq = |shape: [usize; 4], scale: f32| {
+            let n = shape.iter().product::<usize>() as i64;
+            Tensor::<1, burn::tensor::Int>::arange(0..n, &device)
+                .float()
+                .reshape(shape)
+                .mul_scalar(scale)
+                .remainder_scalar(1.7)
+                .sub_scalar(0.8)
+        };
+        let mask = Tensor::<2>::from_floats([[0.0, -0.5, 0.3], [0.2, 0.0, -1.0]], &device);
+
+        let y = model.forward(
+            seq([1, 4, 2, 4], 0.37),
+            seq([1, 2, 3, 4], 0.23),
+            seq([1, 2, 3, 4], 0.41),
+            mask,
+        );
+
+        y.to_data().assert_approx_eq::<f32>(
+            &TensorData::from([[
+                [
+                    [-0.8f32, -0.39, 0.02, 0.43],
+                    [-0.091_481, -0.415_921, -0.005_921, 0.404_078],
+                ],
+                [
+                    [0.72, -0.57, -0.16, 0.25],
+                    [0.696_09, -0.593_911, -0.183_911, 0.226_09],
+                ],
+                [
+                    [-0.8, -0.39, 0.02, 0.43],
+                    [-0.113_607, -0.415_112, -0.005_112, 0.404_888],
+                ],
+                [
+                    [0.72, -0.57, -0.16, 0.25],
+                    [0.685_064, -0.604_937, -0.194_936, 0.215_064],
+                ],
+            ]]),
+            burn::tensor::Tolerance::absolute(1e-4),
+        );
     }
 }

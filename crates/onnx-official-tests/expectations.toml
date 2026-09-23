@@ -294,9 +294,7 @@ status = "skip-compile"
 reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 
 [test_attention_3d_causal]
-status = "fail-compare"
-reason = "attention op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_attention_3d_causal_expanded]
 status = "pass"
@@ -312,9 +310,7 @@ status = "skip-compile"
 reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 
 [test_attention_3d_diff_heads_sizes_causal]
-status = "fail-compare"
-reason = "attention op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_attention_3d_diff_heads_sizes_causal_expanded]
 status = "pass"
@@ -345,23 +341,17 @@ reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 status = "pass"
 
 [test_attention_3d_gqa]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_3d_gqa_attn_mask]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_3d_gqa_attn_mask_expanded]
 status = "skip-compile"
 reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 
 [test_attention_3d_gqa_causal]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_3d_gqa_causal_expanded]
 status = "pass"
@@ -370,25 +360,19 @@ status = "pass"
 status = "pass"
 
 [test_attention_3d_gqa_scaled]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_3d_gqa_scaled_expanded]
 status = "pass"
 
 [test_attention_3d_gqa_softcap]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_3d_gqa_softcap_expanded]
 status = "pass"
 
 [test_attention_3d_gqa_with_past_and_present]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_3d_gqa_with_past_and_present_expanded]
 status = "skip-compile"
@@ -457,9 +441,7 @@ status = "pass"
 status = "pass"
 
 [test_attention_4d_attn_mask_3d_causal]
-status = "fail-compare"
-reason = "attention op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_attn_mask_3d_causal_expanded]
 status = "skip-compile"
@@ -473,9 +455,7 @@ reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 status = "pass"
 
 [test_attention_4d_attn_mask_4d_causal]
-status = "fail-compare"
-reason = "attention op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_attn_mask_4d_causal_expanded]
 status = "skip-compile"
@@ -504,9 +484,7 @@ status = "skip-compile"
 reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 
 [test_attention_4d_causal]
-status = "fail-compare"
-reason = "attention op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_causal_expanded]
 status = "pass"
@@ -530,9 +508,7 @@ status = "skip-compile"
 reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 
 [test_attention_4d_diff_heads_sizes_causal]
-status = "fail-compare"
-reason = "attention op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_diff_heads_sizes_causal_expanded]
 status = "pass"
@@ -583,23 +559,17 @@ status = "pass"
 status = "pass"
 
 [test_attention_4d_gqa]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_gqa_attn_mask]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_gqa_attn_mask_expanded]
 status = "skip-compile"
 reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 
 [test_attention_4d_gqa_causal]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_gqa_causal_expanded]
 status = "pass"
@@ -608,34 +578,26 @@ status = "pass"
 status = "pass"
 
 [test_attention_4d_gqa_scaled]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_gqa_scaled_expanded]
 status = "pass"
 
 [test_attention_4d_gqa_softcap]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_gqa_softcap_expanded]
 status = "pass"
 
 [test_attention_4d_gqa_with_past_and_present]
-status = "fail-compare"
-reason = "comparison against reference tensor fails (classified by M2 first-run sweep; root cause not yet triaged)"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_gqa_with_past_and_present_expanded]
 status = "skip-compile"
 reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 
 [test_attention_4d_gqa_with_past_and_present_fp16]
-status = "fail-compare"
-reason = "burn-flex attention_naive panics on GQA: key heads (3) != query heads (9) at burn-flex/src/ops/attention.rs:658. Surfaced after #393 wired f16 comparison through the harness; not a burn-onnx codegen bug."
-tracking = "https://github.com/tracel-ai/burn/issues/4930"
+status = "pass"
 
 [test_attention_4d_gqa_with_past_and_present_fp16_expanded]
 status = "skip-codegen"
@@ -670,9 +632,7 @@ status = "pass"
 status = "pass"
 
 [test_attention_4d_with_past_and_present_qk_matmul_bias_3d_mask_causal]
-status = "fail-compare"
-reason = "attention op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_with_past_and_present_qk_matmul_bias_3d_mask_causal_expanded]
 status = "skip-compile"
@@ -686,9 +646,7 @@ reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 status = "pass"
 
 [test_attention_4d_with_past_and_present_qk_matmul_bias_4d_mask_causal]
-status = "fail-compare"
-reason = "attention op family comparison failure"
-tracking = "#311"
+status = "pass"
 
 [test_attention_4d_with_past_and_present_qk_matmul_bias_4d_mask_causal_expanded]
 status = "skip-compile"

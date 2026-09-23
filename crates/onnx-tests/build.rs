@@ -74,6 +74,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/atanh/atanh.onnx")
         .input("tests/attention/attention_3d.onnx")
         .input("tests/attention/attention_4d.onnx")
+        .input("tests/attention/attention_gqa_causal.onnx")
         .input("tests/attention/attention_attn_mask_bool.onnx")
         .input("tests/attention/attention_attn_mask_float.onnx")
         .input("tests/attention/attention_attn_mask_int.onnx")
