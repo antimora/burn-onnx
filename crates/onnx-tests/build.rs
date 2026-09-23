@@ -586,6 +586,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/split/split_axis1.onnx")
         .input("tests/split/split_runtime_sizes.onnx")
         .input("tests/split/split_uneven.onnx")
+        .input("tests/split/split_zero_size.onnx")
         .input("tests/sqrt/sqrt.onnx")
         .input("tests/squeeze/squeeze.onnx")
         .input("tests/squeeze/squeeze_float.onnx")
