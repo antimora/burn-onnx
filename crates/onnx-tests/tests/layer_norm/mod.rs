@@ -4,7 +4,8 @@ include_models!(
     layer_norm,
     layer_norm_no_bias,
     layer_norm_custom_epsilon,
-    layer_norm_4d
+    layer_norm_4d,
+    layer_norm_runtime_mean
 );
 
 #[cfg(test)]
@@ -187,5 +188,38 @@ mod tests {
         output
             .to_data()
             .assert_approx_eq::<f32>(&expected, Tolerance::default());
+    }
+
+    #[test]
+    fn layer_norm_runtime_scale_with_mean() {
+        let device = Default::default();
+        let model: layer_norm_runtime_mean::Model = layer_norm_runtime_mean::Model::new(&device);
+        let x = burn::tensor::Tensor::<1, burn::tensor::Int>::arange(0..12, &device)
+            .float()
+            .powf_scalar(1.5)
+            .reshape([2, 2, 3]);
+        let scale =
+            burn::tensor::Tensor::<2>::from_floats([[1.0, 2.0, 0.5], [-1.0, 1.5, 3.0]], &device);
+
+        let (y, mean) = model.forward(x, scale);
+
+        let tolerance = burn::tensor::Tolerance::absolute(1e-4);
+        y.to_data().assert_approx_eq::<f32>(
+            &burn::tensor::TensorData::from([
+                [
+                    [-1.197_790_1f32, -1.885_971_3, -0.238_547_06],
+                    [-0.126_213_03, 1.260_969_3, 4.953_033_4],
+                ],
+                [
+                    [-1.403_542_9, -1.781_185_5, -0.169_781_19],
+                    [-0.247_078_57, 1.300_929_4, 4.558_000_6],
+                ],
+            ]),
+            tolerance,
+        );
+        mean.to_data().assert_approx_eq::<f32>(
+            &burn::tensor::TensorData::from([[[4.700_819_5f32]], [[25.158_377]]]),
+            tolerance,
+        );
     }
 }

@@ -2501,8 +2501,7 @@ status = "pass"
 status = "pass"
 
 [test_layer_normalization_2d_axis0]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_2d_axis0_expanded]
 status = "skip-codegen"
@@ -2513,8 +2512,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_2d_axis1]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_2d_axis1_expanded]
 status = "skip-codegen"
@@ -2525,8 +2523,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_2d_axis_negative_1]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_2d_axis_negative_1_expanded]
 status = "skip-codegen"
@@ -2537,8 +2534,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_2d_axis_negative_2]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_2d_axis_negative_2_expanded]
 status = "skip-codegen"
@@ -2549,8 +2545,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_3d_axis0_epsilon]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_3d_axis0_epsilon_expanded]
 status = "skip-codegen"
@@ -2561,8 +2556,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_3d_axis1_epsilon]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_3d_axis1_epsilon_expanded]
 status = "skip-codegen"
@@ -2573,8 +2567,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_3d_axis2_epsilon]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_3d_axis2_epsilon_expanded]
 status = "skip-codegen"
@@ -2585,8 +2578,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_3d_axis_negative_1_epsilon]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_3d_axis_negative_1_epsilon_expanded]
 status = "skip-codegen"
@@ -2597,8 +2589,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_3d_axis_negative_2_epsilon]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_3d_axis_negative_2_epsilon_expanded]
 status = "skip-codegen"
@@ -2609,8 +2600,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_3d_axis_negative_3_epsilon]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_3d_axis_negative_3_epsilon_expanded]
 status = "skip-codegen"
@@ -2621,8 +2611,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_4d_axis0]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_4d_axis0_expanded]
 status = "skip-codegen"
@@ -2633,8 +2622,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_4d_axis1]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_4d_axis1_expanded]
 status = "skip-codegen"
@@ -2645,8 +2633,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_4d_axis2]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_4d_axis2_expanded]
 status = "skip-codegen"
@@ -2657,8 +2644,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_4d_axis3]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_4d_axis3_expanded]
 status = "skip-codegen"
@@ -2669,8 +2655,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_4d_axis_negative_1]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_4d_axis_negative_1_expanded]
 status = "skip-codegen"
@@ -2681,8 +2666,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_4d_axis_negative_2]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_4d_axis_negative_2_expanded]
 status = "skip-codegen"
@@ -2693,8 +2677,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_4d_axis_negative_3]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_4d_axis_negative_3_expanded]
 status = "skip-codegen"
@@ -2705,8 +2688,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_4d_axis_negative_4]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_4d_axis_negative_4_expanded]
 status = "skip-codegen"
@@ -2717,8 +2699,7 @@ status = "skip-codegen"
 reason = "Runtime reshape with tensor shape expects tensor output"
 
 [test_layer_normalization_default_axis]
-status = "skip-codegen"
-reason = "Node 'layernormalization1' (LayerNormalization): LayerNorm: weight tensor must be present"
+status = "pass"
 
 [test_layer_normalization_default_axis_expanded]
 status = "skip-codegen"

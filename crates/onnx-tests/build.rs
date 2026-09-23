@@ -341,6 +341,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/layer_norm/layer_norm.onnx")
         .input("tests/layer_norm/layer_norm_4d.onnx")
         .input("tests/layer_norm/layer_norm_custom_epsilon.onnx")
+        .input("tests/layer_norm/layer_norm_runtime_mean.onnx")
         .input("tests/layer_norm/layer_norm_no_bias.onnx")
         .input("tests/leaky_relu/leaky_relu.onnx")
         .input("tests/less/less.onnx")
