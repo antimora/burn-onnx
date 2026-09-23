@@ -121,6 +121,7 @@ fn forward_functional(
     // Scale and bias broadcast against the normalized axes, so lower ranks gain
     // leading axes before they are expanded and flattened.
     let normalized_rank = rank - axis;
+    // `expand` cannot infer a rank, so the unsqueeze names it.
     let lift = |arg: &Argument, value: TokenStream| {
         if arg.ty.rank() < normalized_rank {
             let r = normalized_rank.to_tokens();
@@ -140,17 +141,15 @@ fn forward_functional(
         });
 
     // stash_type=1 computes in float32 and casts Y back.
-    let (to_f32, to_input_dtype) = if config.full_precision {
+    let (dtype_binding, to_f32, to_input_dtype) = if config.full_precision {
         (
+            quote! { let dtype = #input.dtype(); },
             quote! { .cast(burn::tensor::DType::F32) },
             quote! { .cast(dtype) },
         )
     } else {
-        (quote! {}, quote! {})
+        (quote! {}, quote! {}, quote! {})
     };
-    let dtype_binding = config
-        .full_precision
-        .then(|| quote! { let dtype = #input.dtype(); });
     let normalized_dims = (axis..rank).map(|i| quote! { dims[#i] });
     let normalized = quote! { [#(#normalized_dims),*] };
     let bias = match bias {
