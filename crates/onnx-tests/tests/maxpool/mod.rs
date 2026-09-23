@@ -3,6 +3,7 @@ use crate::include_models;
 include_models!(
     maxpool1d,
     maxpool1d_asymmetric_padding,
+    maxpool1d_indices,
     maxpool2d_indices,
     maxpool2d_indices_same,
     maxpool2d_indices_ceil,
@@ -207,6 +208,90 @@ mod tests {
             [[32.0, 34.0, 35.0], [42.0, 44.0, 45.0], [47.0, 49.0, 50.0]],
         ]]);
         output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn maxpool1d_indices() {
+        // Symmetric pads (column-major storage_order, the same as row-major in 1D),
+        // asymmetric pads, ceil_mode dropping a window that starts in the trailing
+        // padding, and SAME_UPPER on an input whose length is only known at run time.
+        // Expected values and indices from maxpool1d_indices.py (checked against
+        // onnxruntime).
+        let device = Default::default();
+        let model: maxpool1d_indices::Model = maxpool1d_indices::Model::new(&device);
+        let x = || {
+            Tensor::<3>::from_data(
+                TensorData::from([
+                    [
+                        [9.0f32, 25., 8., 21., 0., 12., 17.],
+                        [22., 11., 13., 15., 1., 4., 5.],
+                    ],
+                    [
+                        [2., 16., 23., 3., 26., 24., 18.],
+                        [27., 20., 7., 10., 14., 19., 6.],
+                    ],
+                ]),
+                &device,
+            )
+        };
+
+        let (y_sym, i_sym, y_asym, i_asym, y_ceil, i_ceil, y_same, i_same) =
+            model.forward(x(), x());
+
+        let expected_sym = TensorData::from([
+            [[9.0f32, 25., 21., 17.], [22., 13., 15., 5.]],
+            [[2., 23., 26., 24.], [27., 20., 14., 19.]],
+        ]);
+        let expected_sym_indices = TensorData::from([
+            [[0i64, 1, 3, 6], [7, 9, 10, 13]],
+            [[14, 16, 18, 19], [21, 22, 25, 26]],
+        ]);
+        y_sym.to_data().assert_eq(&expected_sym, true);
+        i_sym.to_data().assert_eq(&expected_sym_indices, true);
+        y_ceil.to_data().assert_eq(&expected_sym, true);
+        i_ceil.to_data().assert_eq(&expected_sym_indices, true);
+
+        y_asym.to_data().assert_eq(
+            &TensorData::from([
+                [
+                    [25.0f32, 25., 21., 21., 17., 17., 17.],
+                    [22., 15., 15., 15., 5., 5., 5.],
+                ],
+                [
+                    [23., 23., 26., 26., 26., 24., 18.],
+                    [27., 20., 14., 19., 19., 19., 6.],
+                ],
+            ]),
+            true,
+        );
+        i_asym.to_data().assert_eq(
+            &TensorData::from([
+                [[1i64, 1, 3, 3, 6, 6, 6], [7, 10, 10, 10, 13, 13, 13]],
+                [[16, 16, 18, 18, 18, 19, 20], [21, 22, 25, 26, 26, 26, 27]],
+            ]),
+            true,
+        );
+
+        y_same.to_data().assert_eq(
+            &TensorData::from([
+                [
+                    [25.0f32, 25., 21., 21., 12., 17., 17.],
+                    [22., 13., 15., 15., 4., 5., 5.],
+                ],
+                [
+                    [16., 23., 23., 26., 26., 24., 18.],
+                    [27., 20., 10., 14., 19., 19., 6.],
+                ],
+            ]),
+            true,
+        );
+        i_same.to_data().assert_eq(
+            &TensorData::from([
+                [[1i64, 1, 3, 3, 5, 6, 6], [7, 9, 10, 10, 12, 13, 13]],
+                [[15, 16, 16, 18, 18, 19, 20], [21, 22, 24, 25, 26, 26, 27]],
+            ]),
+            true,
+        );
     }
 
     #[test]
