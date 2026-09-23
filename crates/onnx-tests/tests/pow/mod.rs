@@ -1,5 +1,5 @@
 use crate::include_models;
-include_models!(pow, pow_int, pow_broadcast);
+include_models!(pow, pow_int, pow_broadcast, pow_mixed);
 
 #[cfg(test)]
 mod tests {
@@ -86,5 +86,31 @@ mod tests {
         let expected = TensorData::from([[[[1.0000f32, 1.6000e+01, 7.2900e+02, 6.5536e+04]]]]);
 
         output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn pow_mixed_types() {
+        let device = Default::default();
+        let model: pow_mixed::Model = pow_mixed::Model::new(&device);
+        let f = Tensor::<1>::from_floats([-2.0, 1.5, 3.0, -1.0], &device);
+        let i = Tensor::<1, Int>::from_ints([3, 2, 4, 5], &device);
+        let fe = Tensor::<1>::from_floats([2.0, 3.0, 0.5, 1.0], &device);
+        let u = Tensor::<1, Int>::from_data(
+            TensorData::from([2u64, 3, 1, 4]),
+            (&device, burn::tensor::DType::U64),
+        );
+
+        let (float_int, int_float, float_uint) = model.forward(f, i, fe, u);
+
+        let tolerance = burn::tensor::Tolerance::default();
+        float_int
+            .to_data()
+            .assert_approx_eq::<f32>(&TensorData::from([-8.0f32, 2.25, 81.0, -1.0]), tolerance);
+        int_float
+            .to_data()
+            .assert_eq(&TensorData::from([9i64, 8, 2, 5]), true);
+        float_uint
+            .to_data()
+            .assert_approx_eq::<f32>(&TensorData::from([4.0f32, 3.375, 3.0, 1.0]), tolerance);
     }
 }
