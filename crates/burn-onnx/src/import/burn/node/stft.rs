@@ -53,6 +53,13 @@ impl NodeCodegen for onnx_ir::node::stft::StftNode {
         let core = if frame_length.is_power_of_two() {
             pow2_core(frame_length, frame_step, onesided, window_tokens.as_ref())
         } else {
+            log::warn!(
+                "STFT node '{}' has non-power-of-two frame_length {}; its DFT runs as an \
+                 f64 matmul for accuracy and falls back to f32 on devices without f64 \
+                 (e.g. Metal), which can lose precision in near-zero spectral bins",
+                self.name,
+                frame_length
+            );
             matrix_dft_core(frame_length, frame_step, onesided, window_tokens.as_ref())
         };
 
@@ -133,7 +140,7 @@ fn matrix_dft_core(
         let windowed: burn::tensor::Tensor<3> =
             frames.mul(window.reshape([1, 1, #frame_length]));
 
-        // Cast to f64 for the matmul. The downstream graph (e.g. kokoro's
+        // Do the matmul in f64 when the device supports it. The downstream graph (e.g. kokoro's
         // iSTFT preamble) often computes `imag/real` to recover phase,
         // which amplifies any f32 epsilon-level error in near-zero
         // spectral components into very large relative errors. Native FFT
@@ -141,8 +148,8 @@ fn matrix_dft_core(
         // to the f32 zero; an O(N) f32 matmul does not, because partial
         // sums accumulate cancellation error of order O(N * eps) * max_val.
         // f64 matmul drops that error to f64 epsilon, which round-trips
-        // through f32 cleanly for our scale. Backends without f64 (Metal)
-        // fall back to f32.
+        // through f32 cleanly for our scale. Backends without f64 (e.g. Metal)
+        // fall back to f32 and keep the O(N * eps) cancellation error above.
         let dft_dtype = if device.supports_dtype(burn::tensor::DType::F64) {
             burn::tensor::DType::F64
         } else {
@@ -150,7 +157,8 @@ fn matrix_dft_core(
         };
         let windowed = windowed.cast(dft_dtype);
 
-        // Compute DFT twiddle factors W[k, n] = exp(-j 2pi k n / N) in f64.
+        // Compute DFT twiddle factors W[k, n] = exp(-j 2pi k n / N) on the host
+        // in f64; they are stored in dft_dtype when uploaded below.
         // Conceptually constant, but kept at forward-call time on purpose:
         //   1. Generated code stays small regardless of n_fft (baking the
         //      twiddles as literals would add 2 * n_freqs * n_fft f64

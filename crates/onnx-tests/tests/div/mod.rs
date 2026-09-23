@@ -13,7 +13,7 @@ include_models!(
 mod tests {
     use super::*;
     use alloc::vec::Vec;
-    use burn::tensor::{Device, Int, Tensor, TensorData, Tolerance};
+    use burn::tensor::{DType, Device, Int, Tensor, TensorData, Tolerance};
 
     #[test]
     fn div_tensor_by_scalar_and_tensor_by_tensor() {
@@ -134,9 +134,11 @@ mod tests {
             ],
         ]);
 
+        assert_eq!(result1.dtype(), DType::F32);
         result1
             .to_data()
             .assert_approx_eq::<f32>(&expected1, Tolerance::default());
+        assert_eq!(result2.dtype(), DType::F32);
         result2
             .to_data()
             .assert_approx_eq::<f32>(&expected2, Tolerance::default());

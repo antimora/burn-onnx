@@ -14,9 +14,10 @@ mod tests {
     use burn::tensor::{Device, Tensor, TensorData};
 
     #[test]
+    #[cfg_attr(feature = "test-metal", ignore = "Metal has no f64")]
     fn is_inf() {
         let device = Device::default();
-        // The model casts to f64, which is unavailable on some backends (e.g. Metal).
+        // The model casts to f64; support on wgpu depends on the adapter.
         if !device.supports_dtype(burn::tensor::DType::F64) {
             return;
         }

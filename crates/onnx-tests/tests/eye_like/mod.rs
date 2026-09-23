@@ -139,10 +139,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "test-metal", ignore = "Metal has no f64")]
     fn eye_like_float64_test() {
         // Test for EyeLike operation with Float64 dtype
         let device = Device::default();
-        // f64 is unavailable on some backends (e.g. Metal).
+        // f64 support on wgpu depends on the adapter.
         if !device.supports_dtype(burn::tensor::DType::F64) {
             return;
         }

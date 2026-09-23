@@ -32,9 +32,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "test-metal", ignore = "Metal has no f64")]
     fn one_hot_encoder_f64_input() {
         let device = burn::tensor::Device::default();
-        // f64 is unavailable on some backends (e.g. Metal).
+        // f64 support on wgpu depends on the adapter.
         if !device.supports_dtype(DType::F64) {
             return;
         }

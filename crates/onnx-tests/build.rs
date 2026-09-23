@@ -604,6 +604,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/squeeze/squeeze_tensor_to_scalar.onnx")
         .input("tests/stft/stft_basic.onnx")
         .input("tests/stft/stft_full.onnx")
+        .input("tests/stft/stft_large_non_pow2.onnx")
         .input("tests/stft/stft_non_pow2.onnx")
         .input("tests/stft/stft_with_window.onnx")
         .input("tests/sub/sub.onnx")
