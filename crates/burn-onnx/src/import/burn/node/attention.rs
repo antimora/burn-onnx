@@ -26,6 +26,8 @@ struct Prelude {
     reshape_output: TokenStream,
     output_names: Vec<Ident>,
     rank: usize,
+    /// Whether a KV cache (past_key and past_value) is appended.
+    past_kv: bool,
 }
 
 fn prelude(node: &onnx_ir::attention::AttentionNode, scope: &mut ScopeAtPosition<'_>) -> Prelude {
@@ -124,6 +126,7 @@ fn prelude(node: &onnx_ir::attention::AttentionNode, scope: &mut ScopeAtPosition
         reshape_output,
         output_names,
         rank,
+        past_kv,
     }
 }
 
@@ -275,9 +278,9 @@ fn forward_burn_attention(
         reshape_output,
         output_names,
         rank,
+        past_kv,
     } = prelude(node, scope);
     let output_y = &output_names[0];
-    let past_kv = node.inputs.get(4).is_some();
 
     let native_causal = native_causal(node, rank);
     let explicit_causal = node.config.is_causal && !native_causal;
@@ -308,14 +311,14 @@ fn forward_burn_attention(
         None => (None, None),
     };
     let has_user_mask = hide.is_some() || bias.is_some();
-    if explicit_causal {
-        let causal = causal_mask(past_kv);
-        body.extend(quote! { let causal = #causal; });
-    }
     let mask = match (hide, explicit_causal) {
-        (Some(hide), true) => Some(quote! { #hide.expand(causal.dims()).bool_or(causal) }),
+        (Some(hide), true) => {
+            let causal = causal_mask(past_kv);
+            body.extend(quote! { let causal = #causal; });
+            Some(quote! { #hide.expand(causal.dims()).bool_or(causal) })
+        }
         (Some(hide), false) => Some(hide),
-        (None, true) => Some(quote! { causal }),
+        (None, true) => Some(causal_mask(past_kv)),
         (None, false) => None,
     };
     if let Some(mask) = &mask {
@@ -382,9 +385,9 @@ fn forward_custom(
         reshape_output,
         output_names,
         rank,
+        past_kv,
     } = prelude(node, scope);
     let output_y = &output_names[0];
-    let past_kv = node.inputs.get(4).is_some();
 
     body.extend(match node.config.scale {
         Some(scale) => {
@@ -662,7 +665,7 @@ mod tests {
                 } else {
                     (k, v)
                 };
-                let causal = {
+                let hide = {
                     let [batch, heads, q_len, _] = q.dims();
                     let k_len = k.dims()[2];
                     let rows = Tensor::<
@@ -679,7 +682,6 @@ mod tests {
                         .expand([q_len, k_len]);
                     cols.greater(rows).unsqueeze::<4>().expand([batch, heads, q_len, k_len])
                 };
-                let hide = causal;
                 let output = burn::tensor::module::attention(
                     q,
                     k,
@@ -1598,7 +1600,7 @@ mod tests {
                 } else {
                     (k, v)
                 };
-                let causal = {
+                let hide = {
                     let [batch, heads, q_len, _] = q.dims();
                     let k_len = k.dims()[2];
                     let rows = Tensor::<
@@ -1615,7 +1617,6 @@ mod tests {
                         .expand([q_len, k_len]);
                     cols.greater(rows).unsqueeze::<4>().expand([batch, heads, q_len, k_len])
                 };
-                let hide = causal;
                 let score_bias = mask;
                 let hidden_rows = {
                     let shape = [q.dims()[0], q.dims()[1], q.dims()[2], k.dims()[2]];
