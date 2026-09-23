@@ -112,5 +112,19 @@ mod tests {
         float_uint
             .to_data()
             .assert_approx_eq::<f32>(&TensorData::from([4.0f32, 3.375, 3.0, 1.0]), tolerance);
+
+        // A fractional int ^ float result truncates toward zero, as in the onnx reference.
+        let (_, int_float, _) = model.forward(
+            Tensor::<1>::ones([4], &device),
+            Tensor::<1, Int>::from_ints([5, 7, 2, 10], &device),
+            Tensor::<1>::from_floats([0.5, 0.5, -1.0, 0.3], &device),
+            Tensor::<1, Int>::from_data(
+                TensorData::from([1u64, 1, 1, 1]),
+                (&device, burn::tensor::DType::U64),
+            ),
+        );
+        int_float
+            .to_data()
+            .assert_eq(&TensorData::from([2i64, 2, 0, 1]), true);
     }
 }

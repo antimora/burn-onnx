@@ -271,4 +271,31 @@ mod tests {
             true,
         );
     }
+
+    #[test]
+    fn topk_smallest_ties() {
+        // ONNX breaks ties by the lower index. Expected values from the onnx
+        // ReferenceEvaluator on topk_smallest.onnx.
+        let device = Default::default();
+        let model = topk_smallest::Model::new(&device);
+
+        let input = Tensor::<2>::from_floats(
+            [
+                [2.0, 1.0, 1.0, 3.0, 1.0],
+                [5.0, 5.0, 5.0, 5.0, 5.0],
+                [0.0, -1.0, 0.0, -1.0, 2.0],
+            ],
+            &device,
+        );
+        let (values, indices) = model.forward(input);
+
+        values.to_data().assert_eq(
+            &TensorData::from([[1.0f32, 1.0, 1.0], [5.0, 5.0, 5.0], [-1.0, -1.0, 0.0]]),
+            true,
+        );
+        indices.to_data().assert_eq(
+            &TensorData::from([[1i64, 2, 4], [0, 1, 2], [1, 3, 0]]),
+            true,
+        );
+    }
 }
