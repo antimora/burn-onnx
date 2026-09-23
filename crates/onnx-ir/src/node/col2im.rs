@@ -205,44 +205,16 @@ impl NodeProcessor for Col2ImProcessor {
 
         // Note: ONNX spec requires num_spatial_dims >= 2, but we support 1D as an extension.
 
-        // Extract dilations attribute (default: all 1s)
-        let dilations = node
-            .attrs
-            .get("dilations")
-            .map(|v| {
-                v.clone()
-                    .into_i64s()
-                    .iter()
-                    .map(|&d| d as usize)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| vec![1; num_spatial_dims]);
+        if num_spatial_dims == 0 {
+            return Err(ProcessError::Custom(
+                "Col2Im: image_shape and block_shape must not be empty".to_string(),
+            ));
+        }
 
-        // Extract pads attribute (default: all 0s, format is [begin, end] per dim)
-        let pads = node
-            .attrs
-            .get("pads")
-            .map(|v| {
-                v.clone()
-                    .into_i64s()
-                    .iter()
-                    .map(|&p| p as usize)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| vec![0; num_spatial_dims * 2]);
-
-        // Extract strides attribute (default: all 1s)
-        let strides = node
-            .attrs
-            .get("strides")
-            .map(|v| {
-                v.clone()
-                    .into_i64s()
-                    .iter()
-                    .map(|&s| s as usize)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_else(|| vec![1; num_spatial_dims]);
+        // pads holds the begin values, then the end values.
+        let dilations = int_list_attr(node, "dilations", num_spatial_dims, 1)?;
+        let pads = int_list_attr(node, "pads", num_spatial_dims * 2, 0)?;
+        let strides = int_list_attr(node, "strides", num_spatial_dims, 1)?;
 
         Ok(Col2ImConfig::new(
             image_shape,
@@ -267,6 +239,33 @@ impl NodeProcessor for Col2ImProcessor {
     }
 }
 
+/// Read a list attribute of `len` entries. Its default is also its minimum: 1 for
+/// dilations and strides, 0 for pads.
+fn int_list_attr(
+    node: &RawNode,
+    name: &str,
+    len: usize,
+    least: i64,
+) -> Result<Vec<usize>, ProcessError> {
+    let Some(value) = node.attrs.get(name) else {
+        return Ok(vec![least as usize; len]);
+    };
+    let values = value.clone().into_i64s();
+    if values.len() != len {
+        return Err(ProcessError::InvalidAttribute {
+            name: name.to_string(),
+            reason: format!("expected {len} entries, got {}", values.len()),
+        });
+    }
+    if let Some(&v) = values.iter().find(|&&v| v < least) {
+        return Err(ProcessError::InvalidAttribute {
+            name: name.to_string(),
+            reason: format!("entries must be at least {least}, got {v}"),
+        });
+    }
+    Ok(values.iter().map(|&v| v as usize).collect())
+}
+
 /// Read a Col2Im shape input: its value when constant, otherwise a reference to it
 /// with the spatial rank taken from its known length.
 fn shape_input(node: &RawNode, index: usize, name: &str) -> Result<Col2ImShape, ProcessError> {
@@ -277,6 +276,11 @@ fn shape_input(node: &RawNode, index: usize, name: &str) -> Result<Col2ImShape, 
         let values = data
             .to_i64_vec()
             .map_err(|_| ProcessError::Custom(format!("Col2Im: {name} must be an int64 tensor")))?;
+        if let Some(&v) = values.iter().find(|&&v| v <= 0) {
+            return Err(ProcessError::Custom(format!(
+                "Col2Im: {name} entries must be positive, got {v}"
+            )));
+        }
         return Ok(Col2ImShape::Static(
             values.iter().map(|&v| v as usize).collect(),
         ));
@@ -284,12 +288,14 @@ fn shape_input(node: &RawNode, index: usize, name: &str) -> Result<Col2ImShape, 
 
     let len = match &arg.ty {
         ArgType::Shape(len) => Some(*len),
-        ArgType::Tensor(t) if t.rank == 1 => t.static_shape.as_ref().and_then(|s| s[0]),
+        ArgType::Tensor(t) if t.rank == 1 && t.dtype.is_int() => {
+            t.static_shape.as_ref().and_then(|s| s[0])
+        }
         _ => None,
     }
     .ok_or_else(|| {
         ProcessError::Custom(format!(
-            "Col2Im: runtime {name} must be a 1D tensor of known length, got {:?}",
+            "Col2Im: runtime {name} must be a 1D int tensor of known length, got {:?}",
             arg.ty
         ))
     })?;
@@ -507,5 +513,64 @@ mod tests {
             }
             _ => panic!("Expected Custom ProcessError, got {:?}", result),
         }
+    }
+
+    fn config_error(node: &RawNode) -> ProcessError {
+        Col2ImProcessor.extract_config(node, 18).unwrap_err()
+    }
+
+    #[test]
+    fn test_rejects_shape_length_mismatch() {
+        let node = create_test_node(vec![5, 5], vec![2], None, None, None, None);
+        assert!(
+            matches!(config_error(&node), ProcessError::Custom(msg) if msg.contains("block_shape has 1"))
+        );
+    }
+
+    #[test]
+    fn test_rejects_non_positive_static_shape() {
+        let node = create_test_node(vec![0, 5], vec![2, 2], None, None, None, None);
+        assert!(
+            matches!(config_error(&node), ProcessError::Custom(msg) if msg.contains("must be positive"))
+        );
+        let node = create_test_node(vec![5, 5], vec![2, -1], None, None, None, None);
+        assert!(
+            matches!(config_error(&node), ProcessError::Custom(msg) if msg.contains("must be positive"))
+        );
+    }
+
+    #[test]
+    fn test_rejects_attribute_length_mismatch() {
+        let node = create_test_node(vec![5, 5], vec![2, 2], None, None, None, Some(vec![1]));
+        assert!(matches!(
+            config_error(&node),
+            ProcessError::InvalidAttribute { ref name, .. } if name == "strides"
+        ));
+        let node = create_test_node(vec![5, 5], vec![2, 2], None, None, Some(vec![0, 0]), None);
+        assert!(matches!(
+            config_error(&node),
+            ProcessError::InvalidAttribute { ref name, .. } if name == "pads"
+        ));
+    }
+
+    #[test]
+    fn test_rejects_out_of_range_attributes() {
+        let node = create_test_node(
+            vec![5, 5],
+            vec![2, 2],
+            None,
+            None,
+            Some(vec![0, -1, 0, 0]),
+            None,
+        );
+        assert!(matches!(
+            config_error(&node),
+            ProcessError::InvalidAttribute { ref name, .. } if name == "pads"
+        ));
+        let node = create_test_node(vec![5, 5], vec![2, 2], None, Some(vec![1, 0]), None, None);
+        assert!(matches!(
+            config_error(&node),
+            ProcessError::InvalidAttribute { ref name, .. } if name == "dilations"
+        ));
     }
 }
