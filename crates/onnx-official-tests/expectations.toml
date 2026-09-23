@@ -1825,13 +1825,13 @@ status = "pass"
 status = "pass"
 
 [test_dft]
-status = "fail-compare"
-reason = "Burn rfft requires power-of-2 signal dimension; test uses dim=10"
+status = "skip-codegen"
+reason = "Node 'dft1' (Dft): DFT: axis must be a compile-time constant"
 tracking = "#549"
 
 [test_dft_axis]
-status = "fail-compare"
-reason = "Burn rfft requires power-of-2 signal dimension; test uses dim=10"
+status = "skip-codegen"
+reason = "Node 'dft1' (Dft): DFT: axis must be a compile-time constant"
 tracking = "#549"
 
 [test_dft_axis_opset19]
