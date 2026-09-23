@@ -82,7 +82,7 @@ fn gelu(graph: &OnnxGraph) {
         gelu1_out1: F32[2, 3, 4]
       Config:
         GeluConfig {
-            approximate: None,
+            approximate: Exact,
         }
     "#);
 }
