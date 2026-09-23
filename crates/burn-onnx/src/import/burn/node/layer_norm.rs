@@ -395,4 +395,86 @@ mod tests {
         }
         ");
     }
+
+    #[test]
+    fn test_layer_norm_inv_std_dev_only() {
+        let mut node = create_functional_node(-1, 1, 3);
+        node.outputs[1].name = String::new();
+        node.outputs[1].value_source = onnx_ir::ir::ValueSource::Optional;
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            input: Tensor<3>,
+            scale: Tensor<1>,
+            bias: Tensor<1>,
+        ) -> (Tensor<3>, Tensor<3>) {
+            let (output, inv_std_dev) = {
+                let dtype = input.dtype();
+                let dims = input.dims();
+                let outer: usize = dims[..2usize].iter().product();
+                let inner: usize = dims[2usize..].iter().product();
+                let flat = input.reshape([outer, inner]).cast(burn::tensor::DType::F32);
+                let y = burn::tensor::module::layer_norm(
+                        flat.clone(),
+                        scale
+                            .expand([dims[2usize]])
+                            .reshape([inner])
+                            .cast(burn::tensor::DType::F32),
+                        Some(
+                            bias
+                                .expand([dims[2usize]])
+                                .reshape([inner])
+                                .cast(burn::tensor::DType::F32),
+                        ),
+                        0.00001f64,
+                    )
+                    .reshape(dims)
+                    .cast(dtype);
+                let mut stat_dims = dims;
+                for dim in stat_dims.iter_mut().skip(2usize) {
+                    *dim = 1;
+                }
+                let mean = flat.clone().mean_dim(1);
+                let inv_std = (flat - mean.clone())
+                    .square()
+                    .mean_dim(1)
+                    .add_scalar(0.00001f64)
+                    .sqrt()
+                    .recip();
+                (y, inv_std.reshape(stat_dims))
+            };
+            (output, inv_std_dev)
+        }
+        ");
+    }
+
+    #[test]
+    fn test_layer_norm_functional_stash_type_zero_without_bias() {
+        let node = LayerNormalizationNodeBuilder::new("layer_norm1")
+            .input_tensor("input", 3, DType::F16)
+            .input_tensor("scale", 1, DType::F16)
+            .output_tensor("output", 3, DType::F16)
+            .config(LayerNormConfig::new(1e-5, false))
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>, scale: Tensor<1>) -> Tensor<3> {
+            let output = {
+                let dims = input.dims();
+                let outer: usize = dims[..2usize].iter().product();
+                let inner: usize = dims[2usize..].iter().product();
+                let flat = input.reshape([outer, inner]);
+                burn::tensor::module::layer_norm(
+                        flat,
+                        scale.expand([dims[2usize]]).reshape([inner]),
+                        None,
+                        0.00001f64,
+                    )
+                    .reshape(dims)
+            };
+            output
+        }
+        ");
+    }
 }
