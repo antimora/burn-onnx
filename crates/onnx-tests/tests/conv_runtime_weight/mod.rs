@@ -1,5 +1,5 @@
 use crate::include_models;
-include_models!(conv_runtime_weight);
+include_models!(conv_runtime_weight, conv_runtime_bias);
 
 #[cfg(test)]
 mod tests {
@@ -73,5 +73,39 @@ mod tests {
             ]]),
             tolerance,
         );
+    }
+
+    #[test]
+    fn conv_runtime_bias() {
+        // Constant weight and scale, bias fed at run time.
+        let device = Default::default();
+        let model = conv_runtime_bias::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/conv_runtime_bias.bpk"),
+            &device,
+        );
+        let x = Tensor::<1, Int>::arange(0..18, &device)
+            .float()
+            .reshape([1, 2, 3, 3])
+            .mul_scalar(0.2)
+            .sub_scalar(1.0);
+
+        let (conv_out, ln_out) = model.forward(
+            x,
+            Tensor::<1>::from_floats([10.0, -20.0], &device),
+            Tensor::<1>::from_floats([5.0, 0.0, -5.0], &device),
+        );
+
+        let tolerance = Tolerance::absolute(1e-4);
+        conv_out.to_data().assert_approx_eq::<f32>(
+            &TensorData::from([[
+                [[10.88f32, 10.32], [9.2, 8.64]],
+                [[-17.2, -16.48], [-15.04, -14.32]],
+            ]]),
+            tolerance,
+        );
+        let row = [3.775_48f32, 0.0, -2.550_97];
+        ln_out
+            .to_data()
+            .assert_approx_eq::<f32>(&TensorData::from([[[row; 3], [row; 3]]]), tolerance);
     }
 }

@@ -10,8 +10,9 @@
 //!
 //! **Implementation Note**: Requires at least 2 inputs (X and Scale; Bias is optional).
 //! Accepts 1-3 outputs (Y required, optional Mean and InvStdDev). Scale and Bias are
-//! lifted into a module only when they are constants normalizing the last axis alone
-//! and neither optional output is used; otherwise they stay graph values.
+//! lifted into a module only when Scale is a constant over the last axis alone, Bias
+//! is absent or constant, and neither optional output is used; otherwise both stay
+//! graph values.
 
 use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
@@ -88,12 +89,13 @@ impl NodeProcessor for LayerNormProcessor {
         let scale_is_1d = node.inputs[1]
             .value()
             .is_some_and(|data| data.shape.len() == 1);
-        if !scale_is_1d || uses_statistics(node) {
+        let bias_constant = node.get_input(2).is_none_or(|bias| bias.is_constant());
+        if !scale_is_1d || !bias_constant || uses_statistics(node) {
             return Ok(());
         }
         node.inputs[1].to_static()?;
-        if node.inputs.len() > 2 && node.inputs[2].is_constant() {
-            node.inputs[2].to_static()?;
+        if let Some(bias) = node.inputs.get_mut(2).filter(|bias| !bias.is_optional()) {
+            bias.to_static()?;
         }
 
         Ok(())

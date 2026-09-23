@@ -22,7 +22,7 @@ impl NodeCodegen for onnx_ir::node::layer_norm::LayerNormalizationNode {
             .expect("LayerNorm: scale tensor shape must be known at codegen time");
         let num_features = scale_shape[0].to_tokens();
         let epsilon = self.config.epsilon;
-        let has_bias = self.inputs.len() > 2;
+        let has_bias = self.inputs.get(2).is_some_and(|bias| !bias.is_optional());
 
         Some(Field::new(
             self.name.clone(),

@@ -28,7 +28,7 @@ impl NodeCodegen for onnx_ir::node::conv_transpose2d::ConvTranspose2dNode {
         let groups = groups.to_tokens();
         let padding = self.config.padding.to_tokens();
         let padding_out = self.config.padding_out.to_tokens();
-        let bias = self.inputs.len() == 3;
+        let bias = self.inputs.get(2).is_some_and(|bias| !bias.is_optional());
 
         Some(Field::new(
             self.name.clone(),

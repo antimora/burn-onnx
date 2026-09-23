@@ -63,13 +63,14 @@ impl NodeProcessor for Convtranspose1dProcessor {
     }
 
     fn lift_constants(&self, node: &mut RawNode, _opset: usize) -> Result<(), ProcessError> {
-        // Lift weight (input[1]) and optional bias (input[2]) into the module. A bias
-        // next to a runtime weight stays a graph value: the functional conv that
-        // weight needs takes the bias as an ordinary input.
-        if node.inputs.len() > 1 && node.inputs[1].is_constant() {
+        // Weight (input[1]) and optional bias (input[2]) go into the module only when
+        // both are constants. Otherwise they stay graph values for the functional
+        // conv_transpose, which takes both as ordinary inputs.
+        let bias_constant = node.get_input(2).is_none_or(|bias| bias.is_constant());
+        if node.inputs.len() > 1 && node.inputs[1].is_constant() && bias_constant {
             node.inputs[1].to_static()?;
-            if node.inputs.len() > 2 && node.inputs[2].is_constant() {
-                node.inputs[2].to_static()?;
+            if let Some(bias) = node.inputs.get_mut(2).filter(|bias| !bias.is_optional()) {
+                bias.to_static()?;
             }
         }
 
