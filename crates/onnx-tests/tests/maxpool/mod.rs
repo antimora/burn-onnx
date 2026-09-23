@@ -5,6 +5,7 @@ include_models!(
     maxpool1d_asymmetric_padding,
     maxpool2d_indices,
     maxpool2d_indices_same,
+    maxpool2d_indices_ceil,
     maxpool1d_ceil_mode,
     maxpool2d,
     maxpool2d_asymmetric_padding,
@@ -358,5 +359,37 @@ mod tests {
             ]]),
             burn::tensor::Tolerance::absolute(1e-3),
         );
+    }
+
+    #[test]
+    fn maxpool2d_indices_ceil_mode_drops_padding_window() {
+        // ONNX drops a ceil-mode window that would start in the trailing padding.
+        // Expected values from maxpool2d_indices_ceil.py (checked against the onnx
+        // reference), indices from the definition.
+        let device = Default::default();
+        let model: maxpool2d_indices_ceil::Model = maxpool2d_indices_ceil::Model::new(&device);
+        // Rows of 0..25 in reverse row order.
+        let values: alloc::vec::Vec<f32> = (0..5)
+            .rev()
+            .flat_map(|row| (0..5).map(move |col| (row * 5 + col) as f32))
+            .collect();
+        let x = Tensor::<4>::from_data(TensorData::new(values, [1, 1, 5, 5]), &device);
+
+        let (y_sym, i_sym, y_asym, i_asym) = model.forward(x);
+
+        y_sym.to_data().assert_eq(
+            &TensorData::from([[[[20.0f32, 22., 24.], [15., 17., 19.], [5., 7., 9.]]]]),
+            true,
+        );
+        i_sym.to_data().assert_eq(
+            &TensorData::from([[[[0i64, 2, 4], [5, 7, 9], [15, 17, 19]]]]),
+            true,
+        );
+        y_asym
+            .to_data()
+            .assert_eq(&TensorData::from([[[[22.0f32, 24.], [7., 9.]]]]), true);
+        i_asym
+            .to_data()
+            .assert_eq(&TensorData::from([[[[2i64, 4], [17, 19]]]]), true);
     }
 }

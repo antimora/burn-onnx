@@ -119,6 +119,25 @@ fn forward_with_indices(
         .reshape([batch, channels, 1, 1])
     };
 
+    // ONNX drops a ceil-mode window that would start inside the trailing padding,
+    // but burn's ceil_mode keeps it, so both outputs are cut back to the ONNX size.
+    // Reads `height`, `width` and the pads bound as `top`, `bottom`, `left`, `right`.
+    let trim = config.ceil_mode.then(|| {
+        let [kh, kw] = config.kernel_size;
+        let [sh, sw] = config.strides;
+        let [dh, dw] = config.dilation;
+        quote! {
+            let out_len = |size: usize, begin: usize, end: usize, kernel: usize, stride: usize, dilation: usize| {
+                let len = (size + begin + end - (kernel - 1) * dilation - 1).div_ceil(stride) + 1;
+                if (len - 1) * stride >= size + begin { len - 1 } else { len }
+            };
+            let out_h = out_len(height, top, bottom, #kh, #sh, #dh);
+            let out_w = out_len(width, left, right, #kw, #sw, #dw);
+            let values = values.slice(s![.., .., 0..out_h, 0..out_w]);
+            let indices = indices.slice(s![.., .., 0..out_h, 0..out_w]);
+        }
+    });
+
     // Symmetric padding known at build time: burn pads, and its indices already
     // address the input plane in row-major order.
     if let Some(&[(t, b), (l, r)]) = padding.as_deref()
@@ -134,6 +153,12 @@ fn forward_with_indices(
         } else {
             quote! { indices }
         };
+        let sym_trim = trim.map(|trim| {
+            quote! {
+                let (top, bottom, left, right) = (#t, #t, #l, #l);
+                #trim
+            }
+        });
         return quote! {
             let (#output, #indices_out) = {
                 let [batch, channels, height, width] = #input.dims();
@@ -146,6 +171,7 @@ fn forward_with_indices(
                     #ceil_mode,
                 );
                 let indices = indices.cast(burn::tensor::DType::I64);
+                #sym_trim
                 (values, #in_plane + #planes)
             };
         };
@@ -180,6 +206,7 @@ fn forward_with_indices(
                 #ceil_mode,
             );
             let indices = indices.cast(burn::tensor::DType::I64);
+            #trim
             let row = indices.clone().div_scalar(padded_width as i64).sub_scalar(top as i64);
             let col = indices
                 .remainder_scalar(padded_width as i64)
@@ -494,6 +521,128 @@ mod tests {
                     false,
                 );
                 let indices = indices.cast(burn::tensor::DType::I64);
+                let row = indices.clone().div_scalar(padded_width as i64).sub_scalar(top as i64);
+                let col = indices.remainder_scalar(padded_width as i64).sub_scalar(left as i64);
+                (
+                    values,
+                    row.mul_scalar(width as i64) + col
+                        + Tensor::<
+                            1,
+                            Int,
+                        >::arange(
+                                0..(batch * channels) as i64,
+                                (&self.device, burn::tensor::DType::I64),
+                            )
+                            .mul_scalar((height * width) as i64)
+                            .reshape([batch, channels, 1, 1]),
+                )
+            };
+            (output, indices)
+        }
+        ");
+    }
+
+    fn ceil_indices_node(padding: PaddingConfig2d) -> MaxPool2dNode {
+        let config = MaxPool2dConfig::new([2, 2], [2, 2], padding, [1, 1], true, AutoPad::NotSet);
+        MaxPool2dNodeBuilder::new("pool1")
+            .input_tensor("input", 4, DType::F32)
+            .output_tensor("output", 4, DType::F32)
+            .output_tensor("indices", 4, DType::I64)
+            .config(config)
+            .build()
+    }
+
+    #[test]
+    fn test_max_pool2d_indices_ceil_mode_symmetric() {
+        let node = ceil_indices_node(PaddingConfig2d::Explicit(1, 1, 1, 1));
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, input: Tensor<4>) -> (Tensor<4>, Tensor<4, Int>) {
+            let (output, indices) = {
+                let [batch, channels, height, width] = input.dims();
+                let (values, indices) = burn::tensor::module::max_pool2d_with_indices(
+                    input,
+                    [2, 2],
+                    [2, 2],
+                    [1usize, 1usize],
+                    [1, 1],
+                    true,
+                );
+                let indices = indices.cast(burn::tensor::DType::I64);
+                let (top, bottom, left, right) = (1usize, 1usize, 1usize, 1usize);
+                let out_len = |
+                    size: usize,
+                    begin: usize,
+                    end: usize,
+                    kernel: usize,
+                    stride: usize,
+                    dilation: usize|
+                {
+                    let len = (size + begin + end - (kernel - 1) * dilation - 1).div_ceil(stride)
+                        + 1;
+                    if (len - 1) * stride >= size + begin { len - 1 } else { len }
+                };
+                let out_h = out_len(height, top, bottom, 2usize, 2usize, 1usize);
+                let out_w = out_len(width, left, right, 2usize, 2usize, 1usize);
+                let values = values.slice(s![.., .., 0..out_h, 0..out_w]);
+                let indices = indices.slice(s![.., .., 0..out_h, 0..out_w]);
+                (
+                    values,
+                    indices
+                        + Tensor::<
+                            1,
+                            Int,
+                        >::arange(
+                                0..(batch * channels) as i64,
+                                (&self.device, burn::tensor::DType::I64),
+                            )
+                            .mul_scalar((height * width) as i64)
+                            .reshape([batch, channels, 1, 1]),
+                )
+            };
+            (output, indices)
+        }
+        ");
+    }
+
+    #[test]
+    fn test_max_pool2d_indices_ceil_mode_asymmetric() {
+        let node = ceil_indices_node(PaddingConfig2d::Explicit(0, 0, 1, 1));
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, input: Tensor<4>) -> (Tensor<4>, Tensor<4, Int>) {
+            let (output, indices) = {
+                let [batch, channels, height, width] = input.dims();
+                let [(top, bottom), (left, right)] = [(0usize, 1usize), (0usize, 1usize)];
+                let padded = input
+                    .pad(
+                        [(0, 0), (0, 0), (top, bottom), (left, right)],
+                        burn::tensor::ops::PadMode::Constant(f32::NEG_INFINITY),
+                    );
+                let padded_width = width + left + right;
+                let (values, indices) = burn::tensor::module::max_pool2d_with_indices(
+                    padded,
+                    [2, 2],
+                    [2, 2],
+                    [0, 0],
+                    [1, 1],
+                    true,
+                );
+                let indices = indices.cast(burn::tensor::DType::I64);
+                let out_len = |
+                    size: usize,
+                    begin: usize,
+                    end: usize,
+                    kernel: usize,
+                    stride: usize,
+                    dilation: usize|
+                {
+                    let len = (size + begin + end - (kernel - 1) * dilation - 1).div_ceil(stride)
+                        + 1;
+                    if (len - 1) * stride >= size + begin { len - 1 } else { len }
+                };
+                let out_h = out_len(height, top, bottom, 2usize, 2usize, 1usize);
+                let out_w = out_len(width, left, right, 2usize, 2usize, 1usize);
+                let values = values.slice(s![.., .., 0..out_h, 0..out_w]);
+                let indices = indices.slice(s![.., .., 0..out_h, 0..out_w]);
                 let row = indices.clone().div_scalar(padded_width as i64).sub_scalar(top as i64);
                 let col = indices.remainder_scalar(padded_width as i64).sub_scalar(left as i64);
                 (
