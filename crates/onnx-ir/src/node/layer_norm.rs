@@ -126,6 +126,7 @@ impl NodeProcessor for LayerNormProcessor {
             }
         }
 
+        // TODO: Validate input tensor dtype is floating-point type - Type constraint T not enforced
         let input = match &node.inputs[0].ty {
             ArgType::Tensor(tensor) => tensor.clone(),
             other => {
@@ -201,6 +202,8 @@ impl NodeProcessor for LayerNormProcessor {
             }
         }
 
+        // TODO: Validate epsilon > 0 for numerical stability - Negative or zero epsilon could cause issues
+        // TODO: Validate stash_type is 1 or unspecified - Spec only defines stash_type=1 (float), other values undefined
         let full_precision = stash_type == 1;
         let config = LayerNormConfig::new(epsilon as f64, full_precision).with_axis(axis);
         Ok(config)

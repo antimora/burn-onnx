@@ -102,8 +102,9 @@ impl NodeCodegen for onnx_ir::scatter_elements::ScatterElementsNode {
         // tuples turns it into a ScatterND, which accepts any index shape. The non-axis
         // columns are the row-major coordinates of p, recovered from a flat arange.
         //
-        // Duplicate indices fold sequentially on the CPU backends but race on cubecl,
-        // which burn documents as undefined for Assign and Mul on both paths.
+        // Duplicate indices fold sequentially on the CPU backends but race on cubecl.
+        // burn documents duplicates as undefined for Assign on both paths and for Mul,
+        // Min and Max on the scatter_nd path.
         let coordinates = quote! {
             let mut strides = [1usize; #rank_lit];
             for d in (0..#rank_lit - 1).rev() {

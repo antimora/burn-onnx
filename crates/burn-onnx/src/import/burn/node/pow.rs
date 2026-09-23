@@ -55,8 +55,8 @@ impl NodeCodegen for onnx_ir::pow::PowNode {
                     broadcast_helpers::leading_broadcast(quote! { #lhs }, lhs_rank, rhs_rank);
                 let rhs_bc =
                     broadcast_helpers::leading_broadcast(quote! { #rhs }, rhs_rank, lhs_rank);
-                // powi keeps the integer-power semantics a negative float base needs
-                // (powf would give NaN), but takes an exponent of the base's kind.
+                // powi takes an exponent of the base's kind. On a float base it
+                // dispatches to powf, so the integer exponent is cast to the base's dtype.
                 let lhs_dtype = lhs_ty.elem_type();
                 if lhs_dtype.is_float() {
                     let dtype = lhs_dtype.to_tokens();

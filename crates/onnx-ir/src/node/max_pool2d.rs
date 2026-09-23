@@ -12,7 +12,7 @@
 //! - **Opset 12**: Added support for int8, uint8 data types; clarified behavior with negative padding.
 //!
 //! **Implementation Note**: Accepts 1-2 outputs (Y required, optional Indices output).
-//! Indices output is accepted but not currently used in codegen.
+//! Indices are emitted through burn's `max_pool2d_with_indices`.
 //!
 //! ## Missing Test Coverage
 //! - TODO: No test for dilation > 1 with opset < 11 - Should reject dilation in older opsets

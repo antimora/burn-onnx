@@ -17,6 +17,9 @@
 //!
 //! Not supported: `onesided=1` together with complex input or `inverse=1`.
 //!
+//! burn's `rfft` and `cfft` panic at run time unless the transform length (the signal
+//! length, or `dft_length` when given) is a power of two.
+//!
 //! ## Type Constraints
 //! - **T1**: tensor(bfloat16), tensor(double), tensor(float), tensor(float16)
 //! - **T2**: tensor(int32), tensor(int64)
@@ -176,7 +179,8 @@ impl NodeProcessor for DftProcessor {
             .map(|v| v.clone().into_i64() != 0)
             .unwrap_or(false);
 
-        // A onesided spectrum only exists for the forward transform of a real signal.
+        // ONNX forbids onesided output for complex input; onesided with inverse=1 is
+        // not implemented.
         if onesided && (inverse || !is_real_input) {
             return Err(ProcessError::Custom(
                 "DFT: onesided output requires a real input and a forward transform".to_string(),

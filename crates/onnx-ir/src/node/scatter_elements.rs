@@ -11,7 +11,7 @@
 //! - **Opset 16**: Added add/mul reduction.
 //! - **Opset 18**: Added max/min reduction.
 //!
-//! The deprecated `Scatter` operator (opsets 9 and 10) is ScatterElements without a
+//! The deprecated `Scatter` operator (versions 9 and 11) is ScatterElements without a
 //! reduction, so [`ScatterProcessor`] builds the same node for it.
 
 use derive_new::new;

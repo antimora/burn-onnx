@@ -186,7 +186,7 @@ fn forward_cfft(
     }
 }
 
-/// rfft's own length argument: it zero-pads or truncates the signal to `dft_length`.
+/// The `n` argument of rfft/cfft, which zero-pads or truncates the signal to `dft_length`.
 fn dft_length_tokens(config: &DftConfig) -> TokenStream {
     match config.dft_length {
         Some(dft_length) => quote! { Some(#dft_length) },
