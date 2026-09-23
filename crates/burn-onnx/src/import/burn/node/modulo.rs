@@ -29,7 +29,9 @@ impl NodeCodegen for onnx_ir::modulo::ModNode {
                 let rhs_bc =
                     broadcast_helpers::leading_broadcast(quote! { #rhs }, rhs_rank, lhs_rank);
 
-                let expr = if self.config.fmod {
+                let expr = if self.config.fmod && !lhs_ty.elem_type().is_float() {
+                    int_fmod(lhs_bc, rhs_bc, &lhs_ty.elem_type())
+                } else if self.config.fmod {
                     quote! { #lhs_bc.fmod(#rhs_bc) }
                 } else {
                     // Burn's remainder does not broadcast internally
@@ -41,6 +43,14 @@ impl NodeCodegen for onnx_ir::modulo::ModNode {
                         quote! { remainder },
                     )
                 };
+                quote! {
+                    let #output = #expr;
+                }
+            }
+            (lhs_ty, ArgType::ScalarNative(_))
+                if lhs_ty.is_on_device() && self.config.fmod && !lhs_ty.elem_type().is_float() =>
+            {
+                let expr = int_fmod_scalar(lhs, rhs, &lhs_ty.elem_type());
                 quote! {
                     let #output = #expr;
                 }
@@ -204,6 +214,42 @@ impl NodeCodegen for onnx_ir::modulo::ModNode {
             ),
         }
     }
+}
+
+/// Integer `fmod` built on `remainder`: burn's remainder takes the divisor's sign
+/// (floored), fmod the dividend's (truncated), so a nonzero remainder whose sign
+/// differs from the dividend's is moved by one divisor. Unsigned values never
+/// differ in sign.
+fn int_fmod(lhs: TokenStream, rhs: TokenStream, dtype: &DType) -> TokenStream {
+    if dtype.is_uint() {
+        return quote! { #lhs.remainder(#rhs) };
+    }
+    quote! {{
+        let dividend = #lhs;
+        let divisor = #rhs;
+        let remainder = dividend.clone().remainder(divisor.clone());
+        let flip = remainder
+            .clone()
+            .not_equal_elem(0)
+            .bool_and(remainder.clone().lower_elem(0).not_equal(dividend.lower_elem(0)));
+        remainder.clone().mask_where(flip, remainder - divisor)
+    }}
+}
+
+/// [`int_fmod`] with a native scalar divisor.
+fn int_fmod_scalar(lhs: TokenStream, rhs: TokenStream, dtype: &DType) -> TokenStream {
+    if dtype.is_uint() {
+        return quote! { #lhs.remainder_scalar(#rhs) };
+    }
+    quote! {{
+        let dividend = #lhs;
+        let remainder = dividend.clone().remainder_scalar(#rhs);
+        let flip = remainder
+            .clone()
+            .not_equal_elem(0)
+            .bool_and(remainder.clone().lower_elem(0).not_equal(dividend.lower_elem(0)));
+        remainder.clone().mask_where(flip, remainder.sub_scalar(#rhs))
+    }}
 }
 
 #[cfg(test)]
@@ -948,6 +994,55 @@ mod tests {
                     *result_item = scalar % *result_item;
                 }
                 result
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_int_fmod_tensor() {
+        let node = ModNodeBuilder::new("mod1")
+            .input_tensor("x", 1, DType::I64)
+            .input_tensor("y", 1, DType::I64)
+            .output_tensor("output", 1, DType::I64)
+            .config(ModConfig::new(true))
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, x: Tensor<1, Int>, y: Tensor<1, Int>) -> Tensor<1, Int> {
+            let output = {
+                let dividend = x;
+                let divisor = y;
+                let remainder = dividend.clone().remainder(divisor.clone());
+                let flip = remainder
+                    .clone()
+                    .not_equal_elem(0)
+                    .bool_and(remainder.clone().lower_elem(0).not_equal(dividend.lower_elem(0)));
+                remainder.clone().mask_where(flip, remainder - divisor)
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_int_fmod_scalar() {
+        let node = ModNodeBuilder::new("mod1")
+            .input_tensor("x", 1, DType::I64)
+            .input_scalar("y", DType::I64)
+            .output_tensor("output", 1, DType::I64)
+            .config(ModConfig::new(true))
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, x: Tensor<1, Int>, y: i64) -> Tensor<1, Int> {
+            let output = {
+                let dividend = x;
+                let remainder = dividend.clone().remainder_scalar(y);
+                let flip = remainder
+                    .clone()
+                    .not_equal_elem(0)
+                    .bool_and(remainder.clone().lower_elem(0).not_equal(dividend.lower_elem(0)));
+                remainder.clone().mask_where(flip, remainder.sub_scalar(y))
             };
             output
         }

@@ -405,6 +405,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/mod/mod_broadcast_fixed.onnx")
         .input("tests/mod/mod_broadcast_remainder_fixed.onnx")
         .input("tests/mod/mod_fmod.onnx")
+        .input("tests/mod/mod_int_fmod.onnx")
         .input("tests/mod/mod_remainder.onnx")
         .input("tests/mod/mod_scalar.onnx")
         .input("tests/mod/mod_shape.onnx")

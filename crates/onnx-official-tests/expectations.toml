@@ -3122,8 +3122,7 @@ status = "pass"
 status = "pass"
 
 [test_mod_int64_fmod]
-status = "skip-compile"
-reason = "no method named `fmod` found for struct `burn::Tensor<1, burn::tensor::Int>` in the current scope: method not found in `burn::Tensor<1, burn::tensor::Int>`"
+status = "pass"
 
 [test_mod_mixed_sign_float16]
 status = "pass"
@@ -3494,31 +3493,25 @@ status = "pass"
 status = "pass"
 
 [test_pow_types_float32_int32]
-status = "skip-compile"
-reason = "mismatched types: expected `Tensor<1>`, found `Tensor<1, Int>`"
+status = "pass"
 
 [test_pow_types_float32_int64]
-status = "skip-compile"
-reason = "mismatched types: expected `Tensor<1>`, found `Tensor<1, Int>`"
+status = "pass"
 
 [test_pow_types_float32_uint32]
-status = "skip-codegen"
-reason = "pow function requires RHS to be int or float type"
+status = "pass"
 
 [test_pow_types_float32_uint64]
-status = "skip-codegen"
-reason = "pow function requires RHS to be int or float type"
+status = "pass"
 
 [test_pow_types_int32_float32]
-status = "skip-compile"
-reason = "no method named `powf` found for struct `burn::Tensor<1, burn::tensor::Int>` in the current scope"
+status = "pass"
 
 [test_pow_types_int32_int32]
 status = "pass"
 
 [test_pow_types_int64_float32]
-status = "skip-compile"
-reason = "no method named `powf` found for struct `burn::Tensor<1, burn::tensor::Int>` in the current scope"
+status = "pass"
 
 [test_pow_types_int64_int64]
 status = "pass"

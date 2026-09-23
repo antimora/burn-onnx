@@ -8,7 +8,8 @@ include_models!(
     mod_scalar,
     mod_shape,
     mod_shape_broadcast,
-    modulo
+    modulo,
+    mod_int_fmod
 );
 
 #[cfg(test)]
@@ -197,5 +198,26 @@ mod tests {
 
         assert_eq!(lhs_bc, [0i64, 2, 2, 2]);
         assert_eq!(rhs_bc, [0i64, 0, 0, 1]);
+    }
+
+    #[test]
+    fn mod_int_fmod() {
+        let device = Default::default();
+        let model: mod_int_fmod::Model = mod_int_fmod::Model::new(&device);
+        let int64 = |values: [i64; 8]| {
+            Tensor::<1, burn::tensor::Int>::from_data(
+                TensorData::from(values),
+                (&device, burn::tensor::DType::I64),
+            )
+        };
+        let x = int64([7, -7, 7, -7, 6, -6, 0, 5]);
+        let y = int64([3, 3, -3, -3, 3, -3, 4, 7]);
+
+        let (z, zs) = model.forward(x, y, -4);
+
+        z.to_data()
+            .assert_eq(&TensorData::from([1i64, -1, 1, -1, 0, 0, 0, 5]), true);
+        zs.to_data()
+            .assert_eq(&TensorData::from([3i64, -3, 3, -3, 2, -2, 0, 1]), true);
     }
 }
