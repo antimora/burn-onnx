@@ -54,8 +54,12 @@ impl NodeCodegen for onnx_ir::max_pool1d::MaxPool1dNode {
         }
 
         let field = Ident::new(&self.name, Span::call_site());
+        let pooled = match as_float(self, &input) {
+            Some(float_input) => restore_dtype(self, quote! { self.#field.forward(#float_input) }),
+            None => quote! { self.#field.forward(#input) },
+        };
         quote! {
-            let #output = self.#field.forward(#input);
+            let #output = #pooled;
         }
     }
 
@@ -69,9 +73,31 @@ impl NodeCodegen for onnx_ir::max_pool1d::MaxPool1dNode {
     }
 }
 
-/// Whether the optional ONNX Indices output is used.
+/// Whether the optional ONNX Indices output is present (not omitted).
 fn wants_indices(node: &onnx_ir::max_pool1d::MaxPool1dNode) -> bool {
     node.outputs.get(1).is_some_and(|arg| !arg.is_optional())
+}
+
+/// burn pools float tensors only. An integer input (int8/uint8 since opset 12) is
+/// pooled as f32, which holds it exactly; returns that conversion, or `None` for a
+/// float input.
+fn as_float(node: &onnx_ir::max_pool1d::MaxPool1dNode, input: &TokenStream) -> Option<TokenStream> {
+    let dtype = node.inputs[0].ty.elem_type();
+    if dtype.is_float() {
+        None
+    } else if dtype.is_uint() {
+        Some(
+            quote! { #input.cast(burn::tensor::DType::I32).float().cast(burn::tensor::DType::F32) },
+        )
+    } else {
+        Some(quote! { #input.float().cast(burn::tensor::DType::F32) })
+    }
+}
+
+/// Casts pooled f32 `values` back to the integer input's dtype (see [`as_float`]).
+fn restore_dtype(node: &onnx_ir::max_pool1d::MaxPool1dNode, values: TokenStream) -> TokenStream {
+    let dtype = node.inputs[0].ty.elem_type().to_tokens();
+    quote! { #values.int().cast(#dtype) }
 }
 
 /// Max pooling through burn's `max_pool1d_with_indices`, whose indices count positions
@@ -79,8 +105,8 @@ fn wants_indices(node: &onnx_ir::max_pool1d::MaxPool1dNode) -> bool {
 /// each row's offset is added. `storage_order` does not matter with one spatial axis.
 ///
 /// burn pads both ends equally. Other padding (asymmetric, or SAME on an input sized
-/// only at run time) is applied beforehand with -inf, which never wins the max, and
-/// the indices are shifted back from the padded row to the input's.
+/// only at run time) is applied beforehand with -inf, which never beats a finite value,
+/// and the indices are shifted back from the padded row to the input's.
 fn forward_with_indices(
     node: &onnx_ir::max_pool1d::MaxPool1dNode,
     input: TokenStream,
@@ -88,6 +114,16 @@ fn forward_with_indices(
 ) -> TokenStream {
     let config = &node.config;
     let indices_out = arg_to_ident(&node.outputs[1]);
+
+    // An integer input is converted once up front and read from `float_input`.
+    let (convert, input, values) = match as_float(node, &input) {
+        Some(float_input) => (
+            quote! { let float_input = #float_input; },
+            quote! { float_input },
+            restore_dtype(node, quote! { values }),
+        ),
+        None => (quote! {}, input, quote! { values }),
+    };
 
     let input_spatial = onnx_ir::node::padding::static_spatial_dims(&node.inputs[0].ty);
     let padding = crate::burn::codegen::resolve_padding_pairs(
@@ -112,10 +148,11 @@ fn forward_with_indices(
         .reshape([batch, channels, 1])
     };
 
-    // ONNX drops a ceil-mode window that would start inside the trailing padding,
-    // but burn's ceil_mode keeps it (tracel-ai/burn#5791), so both outputs are cut
+    // ONNX drops a ceil-mode window that would start inside the trailing padding.
+    // burn keeps it when it pads (tracel-ai/burn#5791), and when the input is
+    // pre-padded burn cannot tell the padding from input, so both outputs are cut
     // back to the ONNX size.
-    // Reads `length` and the pads bound as `left`, `right`.
+    // Reads `length`, `left`, `right`; rebinds `values` and `indices`.
     let trim = config.ceil_mode.then(|| {
         quote! {
             let out_len = {
@@ -140,6 +177,7 @@ fn forward_with_indices(
         });
         return quote! {
             let (#output, #indices_out) = {
+                #convert
                 let [batch, channels, length] = #input.dims();
                 let (values, indices) = burn::tensor::module::max_pool1d_with_indices(
                     #input,
@@ -151,7 +189,7 @@ fn forward_with_indices(
                 );
                 let indices = indices.cast(burn::tensor::DType::I64);
                 #sym_trim
-                (values, indices + #rows)
+                (#values, indices + #rows)
             };
         };
     }
@@ -169,6 +207,7 @@ fn forward_with_indices(
 
     quote! {
         let (#output, #indices_out) = {
+            #convert
             let [batch, channels, length] = #input.dims();
             let [(left, right)] = #padding;
             let padded = #input.pad(
@@ -185,7 +224,7 @@ fn forward_with_indices(
             );
             let indices = indices.cast(burn::tensor::DType::I64);
             #trim
-            (values, indices.sub_scalar(left as i64) + #rows)
+            (#values, indices.sub_scalar(left as i64) + #rows)
         };
     }
 }
@@ -549,6 +588,216 @@ mod tests {
                             let small = total / 2;
                             let big = total - small;
                             (small, big)
+                        },
+                    ]
+                };
+                let padded = input
+                    .pad(
+                        [(0, 0), (0, 0), (left, right)],
+                        burn::tensor::ops::PadMode::Constant(f32::NEG_INFINITY),
+                    );
+                let (values, indices) = burn::tensor::module::max_pool1d_with_indices(
+                    padded,
+                    2usize,
+                    1usize,
+                    0,
+                    1usize,
+                    false,
+                );
+                let indices = indices.cast(burn::tensor::DType::I64);
+                (
+                    values,
+                    indices.sub_scalar(left as i64)
+                        + Tensor::<
+                            1,
+                            Int,
+                        >::arange(
+                                0..(batch * channels) as i64,
+                                (&self.device, burn::tensor::DType::I64),
+                            )
+                            .mul_scalar(length as i64)
+                            .reshape([batch, channels, 1]),
+                )
+            };
+            (output, indices)
+        }
+        ");
+    }
+
+    #[test]
+    fn test_max_pool1d_omitted_indices_uses_module() {
+        let node = MaxPool1dNodeBuilder::new("pool1")
+            .input_tensor("input", 3, DType::F32)
+            .output_tensor("output", 3, DType::F32)
+            .output_tensor("", 3, DType::I64)
+            .config(MaxPool1dConfig::new(
+                2,
+                2,
+                1,
+                PaddingConfig1d::Valid,
+                false,
+                AutoPad::NotSet,
+            ))
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
+            let output = self.pool1.forward(input);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_max_pool1d_forward_int8() {
+        let node = MaxPool1dNodeBuilder::new("pool1")
+            .input_tensor("input", 3, DType::I8)
+            .output_tensor("output", 3, DType::I8)
+            .config(MaxPool1dConfig::new(
+                3,
+                1,
+                1,
+                PaddingConfig1d::Valid,
+                false,
+                AutoPad::NotSet,
+            ))
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, input: Tensor<3, Int>) -> Tensor<3, Int> {
+            let output = self
+                .pool1
+                .forward(input.float().cast(burn::tensor::DType::F32))
+                .int()
+                .cast(burn::tensor::DType::I8);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_max_pool1d_indices_uint8() {
+        let node = MaxPool1dNodeBuilder::new("pool1")
+            .input_tensor("input", 3, DType::U8)
+            .output_tensor("output", 3, DType::U8)
+            .output_tensor("indices", 3, DType::I64)
+            .config(MaxPool1dConfig::new(
+                2,
+                2,
+                1,
+                PaddingConfig1d::Explicit(1, 1),
+                false,
+                AutoPad::NotSet,
+            ))
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, input: Tensor<3, Int>) -> (Tensor<3, Int>, Tensor<3, Int>) {
+            let (output, indices) = {
+                let float_input = input
+                    .cast(burn::tensor::DType::I32)
+                    .float()
+                    .cast(burn::tensor::DType::F32);
+                let [batch, channels, length] = float_input.dims();
+                let (values, indices) = burn::tensor::module::max_pool1d_with_indices(
+                    float_input,
+                    2usize,
+                    2usize,
+                    1usize,
+                    1usize,
+                    false,
+                );
+                let indices = indices.cast(burn::tensor::DType::I64);
+                (
+                    values.int().cast(burn::tensor::DType::U8),
+                    indices
+                        + Tensor::<
+                            1,
+                            Int,
+                        >::arange(
+                                0..(batch * channels) as i64,
+                                (&self.device, burn::tensor::DType::I64),
+                            )
+                            .mul_scalar(length as i64)
+                            .reshape([batch, channels, 1]),
+                )
+            };
+            (output, indices)
+        }
+        ");
+    }
+
+    #[test]
+    fn test_max_pool1d_indices_same_upper_static() {
+        // A 2-wide kernel on a static length pads (0, 1), so the input is pre-padded.
+        let config =
+            MaxPool1dConfig::new(2, 1, 1, PaddingConfig1d::Valid, false, AutoPad::SameUpper);
+        let node = MaxPool1dNodeBuilder::new("pool1")
+            .input_tensor_shape("input", vec![1, 3, 6], DType::F32)
+            .output_tensor("output", 3, DType::F32)
+            .output_tensor("indices", 3, DType::I64)
+            .config(config)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, input: Tensor<3>) -> (Tensor<3>, Tensor<3, Int>) {
+            let (output, indices) = {
+                let [batch, channels, length] = input.dims();
+                let [(left, right)] = [(0usize, 1usize)];
+                let padded = input
+                    .pad(
+                        [(0, 0), (0, 0), (left, right)],
+                        burn::tensor::ops::PadMode::Constant(f32::NEG_INFINITY),
+                    );
+                let (values, indices) = burn::tensor::module::max_pool1d_with_indices(
+                    padded,
+                    2usize,
+                    1usize,
+                    0,
+                    1usize,
+                    false,
+                );
+                let indices = indices.cast(burn::tensor::DType::I64);
+                (
+                    values,
+                    indices.sub_scalar(left as i64)
+                        + Tensor::<
+                            1,
+                            Int,
+                        >::arange(
+                                0..(batch * channels) as i64,
+                                (&self.device, burn::tensor::DType::I64),
+                            )
+                            .mul_scalar(length as i64)
+                            .reshape([batch, channels, 1]),
+                )
+            };
+            (output, indices)
+        }
+        ");
+    }
+
+    #[test]
+    fn test_max_pool1d_indices_same_lower_dynamic() {
+        let config =
+            MaxPool1dConfig::new(2, 1, 1, PaddingConfig1d::Valid, false, AutoPad::SameLower);
+        let node = MaxPool1dNodeBuilder::new("pool1")
+            .input_tensor("input", 3, DType::F32)
+            .output_tensor("output", 3, DType::F32)
+            .output_tensor("indices", 3, DType::I64)
+            .config(config)
+            .build();
+        assert_snapshot!(codegen_forward_default(&node), @r"
+        pub fn forward(&self, input: Tensor<3>) -> (Tensor<3>, Tensor<3, Int>) {
+            let (output, indices) = {
+                let [batch, channels, length] = input.dims();
+                let [(left, right)] = {
+                    let dims = input.dims();
+                    [
+                        {
+                            let size = dims[2usize];
+                            let total = (size.div_ceil(1usize).saturating_sub(1) * 1usize
+                                + 2usize)
+                                .saturating_sub(size);
+                            let small = total / 2;
+                            let big = total - small;
+                            (big, small)
                         },
                     ]
                 };

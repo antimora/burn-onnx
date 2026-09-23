@@ -6,13 +6,13 @@
 //!
 //! ## Opset Versions
 //! - **Opset 1**: Initial version with basic max pooling operation.
-//! - **Opset 8**: Added support for `storage_order` attribute.
+//! - **Opset 8**: Added optional Indices output and the `storage_order` attribute.
 //! - **Opset 10**: Added `ceil_mode` attribute to use ceiling instead of floor for output shape calculation.
-//! - **Opset 11**: Added support for dilation; updated padding semantics; added optional Indices output.
+//! - **Opset 11**: Added support for dilation; updated padding semantics.
 //! - **Opset 12**: Added support for int8, uint8 data types; clarified behavior with negative padding.
 //!
 //! **Implementation Note**: Accepts 1-2 outputs (Y required, optional Indices output).
-//! Indices are emitted through burn's `max_pool1d_with_indices`.
+//! Indices are typed as int64 with the input's rank.
 //!
 //! ## Missing Test Coverage
 //! - TODO: No test for dilation > 1 with opset < 11 - Should reject dilation in older opsets
@@ -104,11 +104,11 @@ impl NodeProcessor for MaxPool1dProcessor {
         opset: usize,
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
-        // TODO: Validate input tensor is 3D (N x C x L) - Lower or higher rank should be rejected - burn/crates/onnx-ir/src/node/max_pool1d.rs:105
-        // TODO: Validate input dtype - int8/uint8 support requires opset 12+ - burn/crates/onnx-ir/src/node/max_pool1d.rs:105
+        // TODO: Validate input tensor is 3D (N x C x L) - Lower or higher rank should be rejected
+        // TODO: Validate input dtype - int8/uint8 support requires opset 12+
 
         // Validate attributes before extracting config
-        // TODO: Validate required kernel_shape attribute is present - Missing kernel_shape should cause error - burn/crates/onnx-ir/src/node/max_pool1d.rs:117
+        // TODO: Validate required kernel_shape attribute is present - Missing kernel_shape should cause error
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
