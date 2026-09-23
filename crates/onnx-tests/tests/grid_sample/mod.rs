@@ -55,7 +55,6 @@ mod tests {
     }
 
     #[test]
-    // burn-cubecl has no Nearest grid_sample kernel yet.
     #[cfg_attr(
         any(feature = "test-metal", feature = "test-wgpu"),
         ignore = "Nearest grid_sample is unsupported on cubecl backends"
