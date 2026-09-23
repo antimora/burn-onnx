@@ -18,8 +18,7 @@ impl NodeCodegen for onnx_ir::scatter_elements::ScatterElementsNode {
         let updates = scope.arg(&self.inputs[2]);
         let output = arg_to_ident(self.outputs.first().unwrap());
 
-        let data_arg = self.inputs.first().unwrap();
-        let (data_kind, rank) = match &data_arg.ty {
+        let (data_kind, rank) = match &self.inputs[0].ty {
             ArgType::Tensor(t) => (TensorKind::from(t.dtype), t.rank),
             _ => {
                 let msg = format!(
@@ -50,45 +49,40 @@ impl NodeCodegen for onnx_ir::scatter_elements::ScatterElementsNode {
         };
 
         // ONNX allows indices down to `-dim_size` along the scatter axis, which burn's
-        // indexing does not accept, so fold negatives before scattering. Indices outside
-        // `[-dim_size, dim_size - 1]` are an error per the ONNX spec and stay unchecked
-        // here; adding a guard would mean reading the indices back to the host on every
-        // forward pass.
+        // indexing does not accept. burn's remainder is floored, so taking it modulo the
+        // axis size folds negatives in one op. Indices outside `[-dim_size, dim_size - 1]`
+        // are an error per the ONNX spec and stay unchecked here; adding a guard would
+        // mean reading the indices back to the host on every forward pass.
         //
         // The graph values are read once up front: every later read is of a local, so
         // no temporary below can shadow a graph value that shares its name.
+        //
+        // `scatter` has no Assign for bool tensors (only Add, as a logical or), and
+        // `scatter_nd` none at all, so bool data round-trips through i64.
+        let is_bool = matches!(data_kind, TensorKind::Bool);
+        let to_int = is_bool.then(|| {
+            quote! {
+                let (data, updates) = (
+                    data.int().cast(burn::tensor::DType::I64),
+                    updates.int().cast(burn::tensor::DType::I64),
+                );
+            }
+        });
+        let to_bool = is_bool.then(|| quote! { .bool() });
         let prologue = quote! {
             let (data, indices, updates) = (#data, #indices, #updates);
+            #to_int
             let axis_size = data.dims()[#axis] as i64;
-            let indices = indices.cast(burn::tensor::DType::I64);
-            let negative = indices.clone().lower_elem(0i64);
-            let corrected = indices.clone() + axis_size;
-            let indices = indices.mask_where(negative, corrected);
+            let indices = indices
+                .cast(burn::tensor::DType::I64)
+                .remainder_scalar(axis_size);
         };
 
         // Element-wise `scatter` implements all five update ops on every backend, but
         // it requires `indices` to match `data` on every non-axis dimension, while ONNX
         // only bounds them by it. When the shapes line up, which is the common case,
         // the native kernel runs directly.
-        //
-        // `scatter` has no Assign for bool tensors (only Add, as a logical or), so bool
-        // data round-trips through i64.
-        let native = if matches!(data_kind, TensorKind::Bool) {
-            quote! {
-                data
-                    .int()
-                    .cast(burn::tensor::DType::I64)
-                    .scatter(
-                        #axis,
-                        indices,
-                        updates.int().cast(burn::tensor::DType::I64),
-                        #update_op,
-                    )
-                    .bool()
-            }
-        } else {
-            quote! { data.scatter(#axis, indices, updates, #update_op) }
-        };
+        let native = quote! { data.scatter(#axis, indices, updates, #update_op) };
 
         // A rank-1 tensor has no non-axis dimension to disagree on.
         if rank == 1 {
@@ -96,7 +90,7 @@ impl NodeCodegen for onnx_ir::scatter_elements::ScatterElementsNode {
                 let #output = {
                     #prologue
                     #native
-                };
+                }#to_bool;
             };
         }
 
@@ -134,25 +128,6 @@ impl NodeCodegen for onnx_ir::scatter_elements::ScatterElementsNode {
             let coordinates = Tensor::cat(columns, 1);
         };
 
-        let scatter_nd = if matches!(data_kind, TensorKind::Bool) {
-            // `scatter_nd` panics for bool tensors, so round-trip through i64.
-            quote! {
-                data
-                    .int()
-                    .cast(burn::tensor::DType::I64)
-                    .scatter_nd(
-                        coordinates,
-                        updates.int().cast(burn::tensor::DType::I64).reshape([n]),
-                        #update_op,
-                    )
-                    .bool()
-            }
-        } else {
-            quote! {
-                data.scatter_nd(coordinates, updates.reshape([n]), #update_op)
-            }
-        };
-
         // An empty index tensor is a legal ONNX no-op, but `scatter_nd` rejects empty
         // indices and `reshape([0, ..])` would read the 0 as "keep the source dim".
         quote! {
@@ -167,9 +142,9 @@ impl NodeCodegen for onnx_ir::scatter_elements::ScatterElementsNode {
                     #native
                 } else {
                     #coordinates
-                    #scatter_nd
+                    data.scatter_nd(coordinates, updates.reshape([n]), #update_op)
                 }
-            };
+            }#to_bool;
         }
     }
 }
@@ -204,10 +179,7 @@ mod tests {
             let output = {
                 let (data, indices, updates) = (data, indices, updates);
                 let axis_size = data.dims()[0] as i64;
-                let indices = indices.cast(burn::tensor::DType::I64);
-                let negative = indices.clone().lower_elem(0i64);
-                let corrected = indices.clone() + axis_size;
-                let indices = indices.mask_where(negative, corrected);
+                let indices = indices.cast(burn::tensor::DType::I64).remainder_scalar(axis_size);
                 let idx_dims = indices.dims();
                 let data_dims = data.dims();
                 let n: usize = idx_dims.iter().product();
@@ -274,10 +246,7 @@ mod tests {
             let output = {
                 let (data, indices, updates) = (data, indices, updates);
                 let axis_size = data.dims()[1] as i64;
-                let indices = indices.cast(burn::tensor::DType::I64);
-                let negative = indices.clone().lower_elem(0i64);
-                let corrected = indices.clone() + axis_size;
-                let indices = indices.mask_where(negative, corrected);
+                let indices = indices.cast(burn::tensor::DType::I64).remainder_scalar(axis_size);
                 let idx_dims = indices.dims();
                 let data_dims = data.dims();
                 let n: usize = idx_dims.iter().product();
@@ -344,10 +313,7 @@ mod tests {
             let output = {
                 let (data, indices, updates) = (data, indices, updates);
                 let axis_size = data.dims()[0] as i64;
-                let indices = indices.cast(burn::tensor::DType::I64);
-                let negative = indices.clone().lower_elem(0i64);
-                let corrected = indices.clone() + axis_size;
-                let indices = indices.mask_where(negative, corrected);
+                let indices = indices.cast(burn::tensor::DType::I64).remainder_scalar(axis_size);
                 let idx_dims = indices.dims();
                 let data_dims = data.dims();
                 let n: usize = idx_dims.iter().product();
@@ -414,10 +380,7 @@ mod tests {
             let output = {
                 let (data, indices, updates) = (data, indices, updates);
                 let axis_size = data.dims()[0] as i64;
-                let indices = indices.cast(burn::tensor::DType::I64);
-                let negative = indices.clone().lower_elem(0i64);
-                let corrected = indices.clone() + axis_size;
-                let indices = indices.mask_where(negative, corrected);
+                let indices = indices.cast(burn::tensor::DType::I64).remainder_scalar(axis_size);
                 let idx_dims = indices.dims();
                 let data_dims = data.dims();
                 let n: usize = idx_dims.iter().product();
@@ -484,10 +447,7 @@ mod tests {
             let output = {
                 let (data, indices, updates) = (data, indices, updates);
                 let axis_size = data.dims()[0] as i64;
-                let indices = indices.cast(burn::tensor::DType::I64);
-                let negative = indices.clone().lower_elem(0i64);
-                let corrected = indices.clone() + axis_size;
-                let indices = indices.mask_where(negative, corrected);
+                let indices = indices.cast(burn::tensor::DType::I64).remainder_scalar(axis_size);
                 let idx_dims = indices.dims();
                 let data_dims = data.dims();
                 let n: usize = idx_dims.iter().product();
@@ -554,10 +514,7 @@ mod tests {
             let output = {
                 let (data, indices, updates) = (data, indices, updates);
                 let axis_size = data.dims()[0] as i64;
-                let indices = indices.cast(burn::tensor::DType::I64);
-                let negative = indices.clone().lower_elem(0i64);
-                let corrected = indices.clone() + axis_size;
-                let indices = indices.mask_where(negative, corrected);
+                let indices = indices.cast(burn::tensor::DType::I64).remainder_scalar(axis_size);
                 let idx_dims = indices.dims();
                 let data_dims = data.dims();
                 let n: usize = idx_dims.iter().product();
@@ -623,21 +580,15 @@ mod tests {
         ) -> Tensor<1, Bool> {
             let output = {
                 let (data, indices, updates) = (data, indices, updates);
+                let (data, updates) = (
+                    data.int().cast(burn::tensor::DType::I64),
+                    updates.int().cast(burn::tensor::DType::I64),
+                );
                 let axis_size = data.dims()[0] as i64;
-                let indices = indices.cast(burn::tensor::DType::I64);
-                let negative = indices.clone().lower_elem(0i64);
-                let corrected = indices.clone() + axis_size;
-                let indices = indices.mask_where(negative, corrected);
-                data.int()
-                    .cast(burn::tensor::DType::I64)
-                    .scatter(
-                        0,
-                        indices,
-                        updates.int().cast(burn::tensor::DType::I64),
-                        burn::tensor::IndexingUpdateOp::Assign,
-                    )
-                    .bool()
-            };
+                let indices = indices.cast(burn::tensor::DType::I64).remainder_scalar(axis_size);
+                data.scatter(0, indices, updates, burn::tensor::IndexingUpdateOp::Assign)
+            }
+                .bool();
             output
         }
         ");
@@ -663,26 +614,19 @@ mod tests {
         ) -> Tensor<2, Bool> {
             let output = {
                 let (data, indices, updates) = (data, indices, updates);
+                let (data, updates) = (
+                    data.int().cast(burn::tensor::DType::I64),
+                    updates.int().cast(burn::tensor::DType::I64),
+                );
                 let axis_size = data.dims()[1] as i64;
-                let indices = indices.cast(burn::tensor::DType::I64);
-                let negative = indices.clone().lower_elem(0i64);
-                let corrected = indices.clone() + axis_size;
-                let indices = indices.mask_where(negative, corrected);
+                let indices = indices.cast(burn::tensor::DType::I64).remainder_scalar(axis_size);
                 let idx_dims = indices.dims();
                 let data_dims = data.dims();
                 let n: usize = idx_dims.iter().product();
                 if n == 0 {
                     data
                 } else if (0..2).all(|d| d == 1 || idx_dims[d] == data_dims[d]) {
-                    data.int()
-                        .cast(burn::tensor::DType::I64)
-                        .scatter(
-                            1,
-                            indices,
-                            updates.int().cast(burn::tensor::DType::I64),
-                            burn::tensor::IndexingUpdateOp::Assign,
-                        )
-                        .bool()
+                    data.scatter(1, indices, updates, burn::tensor::IndexingUpdateOp::Assign)
                 } else {
                     let mut strides = [1usize; 2];
                     for d in (0..2 - 1).rev() {
@@ -709,16 +653,14 @@ mod tests {
                             );
                     }
                     let coordinates = Tensor::cat(columns, 1);
-                    data.int()
-                        .cast(burn::tensor::DType::I64)
-                        .scatter_nd(
-                            coordinates,
-                            updates.int().cast(burn::tensor::DType::I64).reshape([n]),
-                            burn::tensor::IndexingUpdateOp::Assign,
-                        )
-                        .bool()
+                    data.scatter_nd(
+                        coordinates,
+                        updates.reshape([n]),
+                        burn::tensor::IndexingUpdateOp::Assign,
+                    )
                 }
-            };
+            }
+                .bool();
             output
         }
         ");
