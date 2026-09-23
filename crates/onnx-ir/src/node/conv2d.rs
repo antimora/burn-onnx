@@ -504,6 +504,21 @@ mod tests {
     }
 
     #[test]
+    fn test_conv2d_rejects_unknown_kernel_shape() {
+        // A runtime weight with no known shape leaves nothing to read the kernel from.
+        let node = TestNodeBuilder::new(NodeType::Conv2d, "test_conv2d")
+            .input_tensor_f32("data", 4, None)
+            .input_tensor_f32("weight", 4, None)
+            .output_tensor_f32("output", 4, None)
+            .build();
+        let result = Conv2dProcessor.extract_config(&node, 16);
+        assert!(matches!(
+            result,
+            Err(ProcessError::Custom(msg)) if msg.contains("kernel_shape is not set")
+        ));
+    }
+
+    #[test]
     fn test_conv2d_static_shape_known() {
         // Input [1, 2, 8, 8], weight [4, 2, 2, 2], stride=[1,1], pad=0, dilation=[1,1]
         // H_out = (8 + 0 - 1*(2-1) - 1) / 1 + 1 = (8 - 1 - 1) / 1 + 1 = 7
