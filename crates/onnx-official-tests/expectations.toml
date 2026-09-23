@@ -343,10 +343,12 @@ status = "pass"
 [test_attention_3d_gqa]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_3d_gqa_attn_mask]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_3d_gqa_attn_mask_expanded]
 status = "skip-compile"
@@ -355,6 +357,7 @@ reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 [test_attention_3d_gqa_causal]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_3d_gqa_causal_expanded]
 status = "pass"
@@ -365,6 +368,7 @@ status = "pass"
 [test_attention_3d_gqa_scaled]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_3d_gqa_scaled_expanded]
 status = "pass"
@@ -372,6 +376,7 @@ status = "pass"
 [test_attention_3d_gqa_softcap]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_3d_gqa_softcap_expanded]
 status = "pass"
@@ -379,6 +384,7 @@ status = "pass"
 [test_attention_3d_gqa_with_past_and_present]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_3d_gqa_with_past_and_present_expanded]
 status = "skip-compile"
@@ -415,6 +421,7 @@ status = "pass"
 [test_attention_3d_with_past_and_present_qk_matmul_bias]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_3d_with_past_and_present_qk_matmul_bias_expanded]
 status = "skip-compile"
@@ -427,6 +434,7 @@ reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 [test_attention_3d_with_past_and_present_qk_matmul_softcap]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_3d_with_past_and_present_qk_matmul_softcap_expanded]
 status = "skip-compile"
@@ -569,10 +577,12 @@ status = "pass"
 [test_attention_4d_gqa]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_gqa_attn_mask]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_gqa_attn_mask_expanded]
 status = "skip-compile"
@@ -581,6 +591,7 @@ reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 [test_attention_4d_gqa_causal]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_gqa_causal_expanded]
 status = "pass"
@@ -591,6 +602,7 @@ status = "pass"
 [test_attention_4d_gqa_scaled]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_gqa_scaled_expanded]
 status = "pass"
@@ -598,6 +610,7 @@ status = "pass"
 [test_attention_4d_gqa_softcap]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_gqa_softcap_expanded]
 status = "pass"
@@ -605,6 +618,7 @@ status = "pass"
 [test_attention_4d_gqa_with_past_and_present]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_gqa_with_past_and_present_expanded]
 status = "skip-compile"
@@ -613,6 +627,7 @@ reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 [test_attention_4d_gqa_with_past_and_present_fp16]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_gqa_with_past_and_present_fp16_expanded]
 status = "skip-codegen"
@@ -643,14 +658,17 @@ status = "pass"
 [test_attention_4d_with_past_and_present_qk_matmul_bias]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_with_past_and_present_qk_matmul_bias_3d_mask]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_with_past_and_present_qk_matmul_bias_3d_mask_causal]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_with_past_and_present_qk_matmul_bias_3d_mask_causal_expanded]
 status = "skip-compile"
@@ -663,10 +681,12 @@ reason = "mismatched types: expected `Tensor<1, Bool>`, found `Tensor<1, Int>`"
 [test_attention_4d_with_past_and_present_qk_matmul_bias_4d_mask]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_with_past_and_present_qk_matmul_bias_4d_mask_causal]
 status = "fail-compare"
 reason = "vendored onnx 1.19.0 data predates the ONNX Attention redefinition (onnx >= 1.22: interleaved GQA heads, cache-offset causal mask, softcap before mask, renumbered qk_matmul_output_mode); passes against the onnx 1.23 reference outputs"
+tracking = "#550"
 
 [test_attention_4d_with_past_and_present_qk_matmul_bias_4d_mask_causal_expanded]
 status = "skip-compile"
