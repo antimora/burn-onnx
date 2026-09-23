@@ -240,7 +240,7 @@ mod tests {
             &device,
         );
 
-        let (scaled, batch_scaled) = model.forward(2.0, matrix, batch);
+        let (scaled, batch_scaled, identity) = model.forward(2.0, matrix, batch);
 
         scaled
             .to_data()
@@ -249,5 +249,6 @@ mod tests {
             &TensorData::from([[[0.0f32, 2.0], [4.0, 6.0]], [[8.0, 10.0], [12.0, 14.0]]]),
             true,
         );
+        assert_eq!(identity, 2.0);
     }
 }

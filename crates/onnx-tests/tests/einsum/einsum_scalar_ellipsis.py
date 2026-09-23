@@ -9,8 +9,8 @@
 
 # Generates `crates/onnx-tests/tests/einsum/einsum_scalar_ellipsis.onnx`.
 #
-# A scalar operand whose term is a zero-width ellipsis, once where no other term
-# has an ellipsis and once next to a batched operand.
+# A scalar operand whose term is a zero-width ellipsis: where no other term has
+# an ellipsis, next to a batched operand, and on its own (`...->...`).
 
 import numpy as np
 import onnx
@@ -24,6 +24,7 @@ def main():
         helper.make_node(
             "Einsum", ["scale", "batch"], ["batch_scaled"], equation="...,...ij->...ij"
         ),
+        helper.make_node("Einsum", ["scale"], ["identity"], equation="...->..."),
     ]
     graph = helper.make_graph(
         nodes,
@@ -36,6 +37,7 @@ def main():
         [
             helper.make_tensor_value_info("scaled", TensorProto.FLOAT, [2, 2]),
             helper.make_tensor_value_info("batch_scaled", TensorProto.FLOAT, [2, 2, 2]),
+            helper.make_tensor_value_info("identity", TensorProto.FLOAT, []),
         ],
     )
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 16)])
@@ -48,9 +50,10 @@ def main():
         "matrix": np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
         "batch": np.arange(8, dtype=np.float32).reshape(2, 2, 2),
     }
-    scaled, batch_scaled = ReferenceEvaluator(model).run(None, inputs)
+    scaled, batch_scaled, identity = ReferenceEvaluator(model).run(None, inputs)
     print(f"scaled: {scaled.tolist()}")
     print(f"batch_scaled: {batch_scaled.tolist()}")
+    print(f"identity: {identity.tolist()}")
 
 
 if __name__ == "__main__":
