@@ -2,14 +2,15 @@
 
 # /// script
 # dependencies = [
-#   "onnx==1.19.0",
+#   "onnx==1.23.0",
 #   "numpy",
 # ]
 # ///
 
 # used to generate model: attention_gqa_causal.onnx
 #
-# Grouped-query attention (4 query heads over 2 K/V heads, which ONNX tiles) with
+# Grouped-query attention (4 query heads over 2 K/V heads, each K/V head shared by
+# two consecutive query heads) with
 # a causal mask over a shorter query than key sequence, which ONNX aligns to the
 # upper-left corner, plus an additive mask applied on top of it.
 

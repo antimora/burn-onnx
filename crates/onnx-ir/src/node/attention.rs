@@ -36,10 +36,14 @@ pub struct AttentionNode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AttentionQkMatmulOutputMode {
+    /// Mode 0: the raw `Q * K^T` product, scaled.
     #[default]
     Matmul,
-    MatmulPlusAttentionMask,
+    /// Mode 1: after the softcap, before the attention mask is added.
     MatmulAfterSoftcap,
+    /// Mode 2: after the softcap and the attention mask.
+    MatmulPlusAttentionMask,
+    /// Mode 3: after the softmax.
     MatmulAfterSoftmax,
 }
 
@@ -220,8 +224,10 @@ impl NodeProcessor for AttentionProcessor {
                     }
                     qk_matmul_output_mode = match mode_value {
                         0 => AttentionQkMatmulOutputMode::Matmul,
-                        1 => AttentionQkMatmulOutputMode::MatmulPlusAttentionMask,
-                        2 => AttentionQkMatmulOutputMode::MatmulAfterSoftcap,
+                        // The current definition (onnx >= 1.22) applies softcap
+                        // before the mask, so mode 1 comes before mode 2.
+                        1 => AttentionQkMatmulOutputMode::MatmulAfterSoftcap,
+                        2 => AttentionQkMatmulOutputMode::MatmulPlusAttentionMask,
                         3 => AttentionQkMatmulOutputMode::MatmulAfterSoftmax,
                         _ => unreachable!(), // Already validated above
                     }
@@ -475,8 +481,8 @@ mod tests {
 
     #[rstest]
     #[case(0, AttentionQkMatmulOutputMode::Matmul)]
-    #[case(1, AttentionQkMatmulOutputMode::MatmulPlusAttentionMask)]
-    #[case(2, AttentionQkMatmulOutputMode::MatmulAfterSoftcap)]
+    #[case(1, AttentionQkMatmulOutputMode::MatmulAfterSoftcap)]
+    #[case(2, AttentionQkMatmulOutputMode::MatmulPlusAttentionMask)]
     #[case(3, AttentionQkMatmulOutputMode::MatmulAfterSoftmax)]
     fn test_qk_matmul_output(#[case] raw: i64, #[case] mode: AttentionQkMatmulOutputMode) {
         let node = create_simple_test_node(None, None, None, Some(raw), None, None, None);
