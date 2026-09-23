@@ -201,6 +201,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/det/det.onnx")
         .input("tests/det/det_batched.onnx")
         .input("tests/dft/dft_complex.onnx")
+        .input("tests/dft/dft_inverse_length.onnx")
         .input("tests/dft/dft_full.onnx")
         .input("tests/dft/dft_length.onnx")
         .input("tests/dft/dft_onesided.onnx")

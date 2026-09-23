@@ -345,4 +345,34 @@ mod tests {
         }
         ");
     }
+
+    #[test]
+    fn test_dft_inverse_real_with_dft_length() {
+        let config = DftConfig {
+            inverse: true,
+            onesided: false,
+            axis: 1,
+            dft_length: Some(16),
+            is_real_input: true,
+        };
+        let node = DftNodeBuilder::new("dft1")
+            .input_tensor("input", 3, DType::F32)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
+            let output = {
+                let re = input.squeeze_dims::<2usize>(&[2isize]);
+                let im = re.zeros_like();
+                let (re, im) = burn::tensor::signal::cfft(re, im.neg(), 1usize, Some(16usize));
+                let len = re.dims()[1usize] as f64;
+                let (re, im) = (re.div_scalar(len), im.neg().div_scalar(len));
+                Tensor::<2usize>::stack::<3usize>([re, im].to_vec(), 2usize)
+            };
+            output
+        }
+        ");
+    }
 }

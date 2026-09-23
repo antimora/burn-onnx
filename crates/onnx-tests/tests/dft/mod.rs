@@ -1,5 +1,11 @@
 use crate::include_models;
-include_models!(dft_onesided, dft_full, dft_length, dft_complex);
+include_models!(
+    dft_onesided,
+    dft_full,
+    dft_length,
+    dft_complex,
+    dft_inverse_length
+);
 
 #[cfg(test)]
 mod tests {
@@ -148,6 +154,55 @@ mod tests {
                 [-0.5, 0.207_11],
                 [-0.5, 0.5],
                 [-0.5, 1.207_11],
+            ]]),
+            tolerance,
+        );
+    }
+
+    #[test]
+    fn dft_inverse_with_dft_length() {
+        // Expected values from dft_inverse_length.py (onnx ReferenceEvaluator).
+        let device = Default::default();
+        let model = dft_inverse_length::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/dft_inverse_length.bpk"),
+            &device,
+        );
+        let values: alloc::vec::Vec<f32> = (0..16).map(|v| v as f32 * 0.5 - 2.0).collect();
+        let x = burn::tensor::Tensor::<3>::from_data(
+            burn::tensor::TensorData::new(values, [1, 8, 2]),
+            &device,
+        );
+
+        let (truncated, padded) = model.forward(x);
+
+        let tolerance = burn::tensor::Tolerance::absolute(1e-4);
+        truncated.to_data().assert_approx_eq::<f32>(
+            &burn::tensor::TensorData::from([[
+                [-0.5f32, 0.0],
+                [0.0, -1.0],
+                [-0.5, -0.5],
+                [-1.0, 0.0],
+            ]]),
+            tolerance,
+        );
+        padded.to_data().assert_approx_eq::<f32>(
+            &burn::tensor::TensorData::from([[
+                [0.75f32, 1.0],
+                [-1.48159, -0.0364],
+                [0.35355, -0.85355],
+                [-0.21009, 0.24208],
+                [0.0, -0.5],
+                [-0.0246, 0.19457],
+                [-0.14645, -0.35355],
+                [0.06143, 0.14863],
+                [-0.25, -0.25],
+                [0.12359, 0.0989],
+                [-0.35355, -0.14645],
+                [0.1842, 0.02753],
+                [-0.5, 0.0],
+                [0.2576, -0.13207],
+                [-0.85355, 0.35355],
+                [0.08945, -1.29323],
             ]]),
             tolerance,
         );
