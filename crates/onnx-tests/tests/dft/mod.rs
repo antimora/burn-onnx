@@ -1,5 +1,5 @@
 use crate::include_models;
-include_models!(dft_onesided, dft_full, dft_length);
+include_models!(dft_onesided, dft_full, dft_length, dft_complex);
 
 #[cfg(test)]
 mod tests {
@@ -101,6 +101,55 @@ mod tests {
         truncated.to_data().assert_approx_eq::<f32>(
             &expected_truncated.to_data(),
             burn::tensor::Tolerance::default(),
+        );
+    }
+
+    #[test]
+    fn dft_complex_and_inverse() {
+        let device = Default::default();
+        let model: dft_complex::Model = dft_complex::Model::new(&device);
+
+        let x = burn::tensor::Tensor::<1, burn::tensor::Int>::arange(0..16, &device)
+            .float()
+            .mul_scalar(0.5)
+            .sub_scalar(2.0)
+            .reshape([1, 8, 2]);
+        let r = burn::tensor::Tensor::<3>::from_floats(
+            [[[1.0], [2.0], [3.0], [4.0], [5.0], [6.0], [7.0], [8.0]]],
+            &device,
+        );
+
+        let (spectrum, roundtrip, real_inverse) = model.forward(x.clone(), r);
+
+        let tolerance = burn::tensor::Tolerance::absolute(1e-4);
+        spectrum.to_data().assert_approx_eq::<f32>(
+            &burn::tensor::TensorData::from([[
+                [12.0f32, 16.0],
+                [-13.656_86, 5.656_85],
+                [-8.0, 0.0],
+                [-5.656_85, -2.343_15],
+                [-4.0, -4.0],
+                [-2.343_15, -5.656_85],
+                [0.0, -8.0],
+                [5.656_85, -13.656_86],
+            ]]),
+            tolerance,
+        );
+        roundtrip
+            .to_data()
+            .assert_approx_eq::<f32>(&x.to_data(), tolerance);
+        real_inverse.to_data().assert_approx_eq::<f32>(
+            &burn::tensor::TensorData::from([[
+                [4.5f32, 0.0],
+                [-0.5, -1.207_11],
+                [-0.5, -0.5],
+                [-0.5, -0.207_11],
+                [-0.5, 0.0],
+                [-0.5, 0.207_11],
+                [-0.5, 0.5],
+                [-0.5, 1.207_11],
+            ]]),
+            tolerance,
         );
     }
 }

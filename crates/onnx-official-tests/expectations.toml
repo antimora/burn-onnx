@@ -1857,11 +1857,12 @@ tracking = "#161"
 
 [test_dft_inverse]
 status = "skip-codegen"
-reason = "Node 'dft1' (Dft): DFT: inverse DFT (inverse=1) is not supported. Burn's irfft is the inverse of rfft (onesided real FFT), which differs from ONNX's complex-to-complex inverse DFT. A full ifft implementation in Burn i..."
+reason = "Node 'dft1' (Dft): DFT: axis must be a compile-time constant"
 
 [test_dft_inverse_opset19]
-status = "skip-codegen"
-reason = "Node 'dft1' (Dft): DFT: inverse DFT (inverse=1) is not supported. Burn's irfft is the inverse of rfft (onesided real FFT), which differs from ONNX's complex-to-complex inverse DFT. A full ifft implementation in Burn i..."
+status = "fail-compare"
+reason = "Burn cfft requires power-of-2 signal dimension; test uses dim=10"
+tracking = "#161"
 
 [test_dft_opset19]
 status = "fail-compare"
