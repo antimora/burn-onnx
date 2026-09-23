@@ -60,18 +60,23 @@ impl NodeCodegen for onnx_ir::one_hot_encoder::OneHotEncoderNode {
                             x_unsqueezed.equal(cats).float().cast(burn::tensor::DType::F32)
                         }
                     },
-                    DType::F32 | DType::F64 => quote! {
-                        {
-                            let x = #input.cast(burn::tensor::DType::F64);
-                            let x_unsqueezed = x.unsqueeze_dim(#input_rank);
-                            let cats = self.#field_name
-                                .clone()
-                                .float()
-                                .cast(burn::tensor::DType::F64)
-                                .reshape([#(#ones,)* #num_categories]);
-                            x_unsqueezed.equal(cats).float().cast(burn::tensor::DType::F32)
+                    // Compare in the input's own float dtype: integer categories are
+                    // exact in f32 up to 2^24, and f64 is unavailable on some backends.
+                    DType::F32 | DType::F64 => {
+                        let float_dtype = tensor_type.dtype.to_tokens();
+                        quote! {
+                            {
+                                let x = #input.cast(#float_dtype);
+                                let x_unsqueezed = x.unsqueeze_dim(#input_rank);
+                                let cats = self.#field_name
+                                    .clone()
+                                    .float()
+                                    .cast(#float_dtype)
+                                    .reshape([#(#ones,)* #num_categories]);
+                                x_unsqueezed.equal(cats).float().cast(burn::tensor::DType::F32)
+                            }
                         }
-                    },
+                    }
                     _ => unreachable!(
                         "OneHotEncoder input dtype is validated in onnx-ir; got {:?}",
                         tensor_type.dtype
@@ -113,16 +118,16 @@ mod tests {
         );
         let node = OneHotEncoderNode::new("ohe1".to_string(), vec![input], vec![output], config);
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @"
+        assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<1>) -> Tensor<2> {
             let output = {
-                let x = input.cast(burn::tensor::DType::F64);
+                let x = input.cast(burn::tensor::DType::F32);
                 let x_unsqueezed = x.unsqueeze_dim(1usize);
                 let cats = self
                     .ohe1
                     .clone()
                     .float()
-                    .cast(burn::tensor::DType::F64)
+                    .cast(burn::tensor::DType::F32)
                     .reshape([1usize, 4usize]);
                 x_unsqueezed.equal(cats).float().cast(burn::tensor::DType::F32)
             };
@@ -144,16 +149,16 @@ mod tests {
         );
         let node = OneHotEncoderNode::new("ohe2".to_string(), vec![input], vec![output], config);
         let code = codegen_forward_default(&node);
-        assert_snapshot!(code, @"
+        assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<2>) -> Tensor<3> {
             let output = {
-                let x = input.cast(burn::tensor::DType::F64);
+                let x = input.cast(burn::tensor::DType::F32);
                 let x_unsqueezed = x.unsqueeze_dim(2usize);
                 let cats = self
                     .ohe2
                     .clone()
                     .float()
-                    .cast(burn::tensor::DType::F64)
+                    .cast(burn::tensor::DType::F32)
                     .reshape([1usize, 1usize, 3usize]);
                 x_unsqueezed.equal(cats).float().cast(burn::tensor::DType::F32)
             };

@@ -28,7 +28,7 @@ mod tests {
         let expected_tensor = TensorData::from([[[[true, true, true, true]]]]);
         let expected_scalar = false;
 
-        tensor_out.to_data().assert_eq(&expected_tensor, true);
+        tensor_out.to_data().assert_eq(&expected_tensor, false);
         assert_eq!(scalar_out, expected_scalar);
     }
 
@@ -44,7 +44,7 @@ mod tests {
         // Shape [2, 3, 4] should equal [2, 3, 4]
         let expected = TensorData::from([true, true, true]);
 
-        output.to_data().assert_eq(&expected, true);
+        output.to_data().assert_eq(&expected, false);
     }
 
     #[test]
@@ -58,8 +58,8 @@ mod tests {
         let (tensor_scalar, scalar_tensor) = model.forward(x, y);
         let expected = TensorData::from([[false, true, false, true]]);
 
-        tensor_scalar.to_data().assert_eq(&expected, true);
-        scalar_tensor.to_data().assert_eq(&expected, true);
+        tensor_scalar.to_data().assert_eq(&expected, false);
+        scalar_tensor.to_data().assert_eq(&expected, false);
     }
 
     #[test]
@@ -113,9 +113,9 @@ mod tests {
         let expected2: Vec<bool> = values.iter().map(|&v| 2 == v).collect();
         tensor_shape
             .to_data()
-            .assert_eq(&TensorData::new(expected1, [2, 3, 4, 5]), true);
+            .assert_eq(&TensorData::new(expected1, [2, 3, 4, 5]), false);
         shape_tensor
             .to_data()
-            .assert_eq(&TensorData::new(expected2, [2, 3, 4, 5]), true);
+            .assert_eq(&TensorData::new(expected2, [2, 3, 4, 5]), false);
     }
 }

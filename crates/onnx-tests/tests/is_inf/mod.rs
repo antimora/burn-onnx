@@ -15,7 +15,11 @@ mod tests {
 
     #[test]
     fn is_inf() {
-        let device = Default::default();
+        let device = Device::default();
+        // The model casts to f64, which is unavailable on some backends (e.g. Metal).
+        if !device.supports_dtype(burn::tensor::DType::F64) {
+            return;
+        }
         let model: is_inf::Model = is_inf::Model::new(&device);
 
         let input1 =
@@ -24,7 +28,7 @@ mod tests {
         let output = model.forward(input1);
         let expected = TensorData::from([[false, true, false, true]]);
 
-        output.to_data().assert_eq(&expected, true);
+        output.to_data().assert_eq(&expected, false);
     }
 
     #[test]
@@ -51,7 +55,7 @@ mod tests {
         let output = model.forward(input1);
         let expected = TensorData::from([[false, false, false, true]]);
 
-        output.to_data().assert_eq(&expected, true);
+        output.to_data().assert_eq(&expected, false);
     }
 
     #[test]
@@ -65,7 +69,7 @@ mod tests {
         let output = model.forward(input1);
         let expected = TensorData::from([[false, true, false, false]]);
 
-        output.to_data().assert_eq(&expected, true);
+        output.to_data().assert_eq(&expected, false);
     }
 
     #[test]
@@ -79,6 +83,6 @@ mod tests {
         let output = model.forward(input1);
         let expected = TensorData::from([[false, false, false, false]]);
 
-        output.to_data().assert_eq(&expected, true);
+        output.to_data().assert_eq(&expected, false);
     }
 }

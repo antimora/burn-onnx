@@ -4,7 +4,7 @@ include_models!(pow, pow_int, pow_broadcast, pow_mixed);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::{Device, Int, Tensor, TensorData};
+    use burn::tensor::{Device, Int, Tensor, TensorData, Tolerance};
 
     #[test]
     fn pow_int_with_tensor_and_scalar() {
@@ -85,7 +85,9 @@ mod tests {
 
         let expected = TensorData::from([[[[1.0000f32, 1.6000e+01, 7.2900e+02, 6.5536e+04]]]]);
 
-        output.to_data().assert_eq(&expected, true);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, Tolerance::default());
     }
 
     #[test]

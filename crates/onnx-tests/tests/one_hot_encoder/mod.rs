@@ -33,7 +33,11 @@ mod tests {
 
     #[test]
     fn one_hot_encoder_f64_input() {
-        let device = Default::default();
+        let device = burn::tensor::Device::default();
+        // f64 is unavailable on some backends (e.g. Metal).
+        if !device.supports_dtype(DType::F64) {
+            return;
+        }
         let model = one_hot_encoder_f64::Model::new(&device);
 
         let input: Tensor<1> = Tensor::from_data(

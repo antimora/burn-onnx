@@ -196,7 +196,11 @@ mod tests {
 
     #[test]
     fn range_double_mixed() {
-        let device = Default::default();
+        let device = burn::tensor::Device::default();
+        // f64 is unavailable on some backends (e.g. Metal).
+        if !device.supports_dtype(burn::tensor::DType::F64) {
+            return;
+        }
         let model: range_double_mixed::Model = range_double_mixed::Model::new(&device);
 
         // start=-0.5 and delta=0.125 are static, limit is runtime

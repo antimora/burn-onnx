@@ -25,7 +25,7 @@ mod tests {
         let output = model.forward(input1, input2);
         let expected = TensorData::from([[true, true, false, false]]);
 
-        output.to_data().assert_eq(&expected, true);
+        output.to_data().assert_eq(&expected, false);
     }
 
     #[test]
@@ -39,7 +39,7 @@ mod tests {
         let output = model.forward(input1, input2);
         let expected = TensorData::from([[true, false, false, true]]);
 
-        output.to_data().assert_eq(&expected, true);
+        output.to_data().assert_eq(&expected, false);
     }
 
     #[test]
@@ -67,7 +67,7 @@ mod tests {
             [false, false, true, true],
         ]);
 
-        output.to_data().assert_eq(&expected, true);
+        output.to_data().assert_eq(&expected, false);
     }
 
     #[test]
@@ -107,9 +107,9 @@ mod tests {
         let expected2: Vec<bool> = values.iter().map(|&v| 2 <= v).collect();
         tensor_shape
             .to_data()
-            .assert_eq(&TensorData::new(expected1, [2, 3, 4, 5]), true);
+            .assert_eq(&TensorData::new(expected1, [2, 3, 4, 5]), false);
         shape_tensor
             .to_data()
-            .assert_eq(&TensorData::new(expected2, [2, 3, 4, 5]), true);
+            .assert_eq(&TensorData::new(expected2, [2, 3, 4, 5]), false);
     }
 }

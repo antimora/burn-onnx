@@ -141,7 +141,11 @@ mod tests {
     #[test]
     fn eye_like_float64_test() {
         // Test for EyeLike operation with Float64 dtype
-        let device = Default::default();
+        let device = Device::default();
+        // f64 is unavailable on some backends (e.g. Metal).
+        if !device.supports_dtype(burn::tensor::DType::F64) {
+            return;
+        }
         let model = eye_like_float64::Model::new(&device);
 
         // Create a 3x3 input tensor
