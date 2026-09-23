@@ -27,7 +27,7 @@ use onnx_ir_derive::NodeBuilder;
 pub enum GeluApproximate {
     /// The exact form, `x * Φ(x)` with the Gaussian CDF expressed through erf.
     #[default]
-    None,
+    Exact,
     /// The tanh approximation of the Gaussian CDF.
     Tanh,
 }
@@ -77,9 +77,9 @@ impl NodeProcessor for GeluProcessor {
 
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
         let approximate = match node.attrs.get("approximate") {
-            None => GeluApproximate::None,
+            None => GeluApproximate::Exact,
             Some(value) => match value.clone().into_string().as_str() {
-                "none" => GeluApproximate::None,
+                "none" => GeluApproximate::Exact,
                 "tanh" => GeluApproximate::Tanh,
                 other => {
                     return Err(ProcessError::InvalidAttribute {
@@ -127,7 +127,7 @@ mod tests {
     fn test_gelu_config_default_is_exact() {
         let node = create_test_node(None);
         let config = GeluProcessor.extract_config(&node, 20).unwrap();
-        assert_eq!(config.approximate, GeluApproximate::None);
+        assert_eq!(config.approximate, GeluApproximate::Exact);
     }
 
     #[test]

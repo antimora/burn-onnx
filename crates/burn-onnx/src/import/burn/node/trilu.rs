@@ -120,6 +120,27 @@ mod tests {
     }
 
     #[test]
+    fn test_trilu_runtime_diagonal_scalar_tensor() {
+        let config = TriluConfig::new(
+            true,
+            TriluDiagonal::Runtime(onnx_ir::ir::RuntimeInputRef::new("k".to_string(), 1)),
+        );
+        let node = TriluNodeBuilder::new("triu1")
+            .input_tensor("input", 2, DType::F32)
+            .input_scalar_tensor("k", DType::I32)
+            .output_tensor("output", 2, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<2>, k: Tensor<1, Int>) -> Tensor<2> {
+            let output = input.triu((k).into_scalar::<i32>() as i64);
+            output
+        }
+        ");
+    }
+
+    #[test]
     fn test_trilu_bool_input_lower() {
         let config = TriluConfig::new(false, TriluDiagonal::Static(0));
         let node = TriluNodeBuilder::new("tril1")

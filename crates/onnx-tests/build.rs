@@ -219,6 +219,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/einsum/einsum_reduction.onnx")
         .input("tests/einsum/einsum_sam.onnx")
         .input("tests/einsum/einsum_scalar.onnx")
+        .input("tests/einsum/einsum_scalar_ellipsis.onnx")
         .input("tests/einsum/einsum_scalar_scalar.onnx")
         .input("tests/einsum/einsum_shadow_rhs.onnx")
         .input("tests/elu/elu.onnx")

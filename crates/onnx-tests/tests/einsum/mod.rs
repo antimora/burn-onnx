@@ -8,6 +8,7 @@ include_models!(
     einsum_reduction,
     einsum_sam,
     einsum_scalar,
+    einsum_scalar_ellipsis,
     einsum_scalar_scalar,
     einsum_shadow_rhs
 );
@@ -223,5 +224,30 @@ mod tests {
 
         let expected = TensorData::from([[432.0f32, 864.0, 1296.0], [765.0, 1530.0, 2295.0]]);
         output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn einsum_scalar_ellipsis() {
+        // Expected values from einsum_scalar_ellipsis.py (onnx ReferenceEvaluator).
+        let device = Default::default();
+        let model = einsum_scalar_ellipsis::Model::from_file(
+            concat!(env!("OUT_DIR"), "/model/einsum_scalar_ellipsis.bpk"),
+            &device,
+        );
+        let matrix = Tensor::<2>::from_floats([[1.0, 2.0], [3.0, 4.0]], &device);
+        let batch = Tensor::<3>::from_floats(
+            [[[0.0, 1.0], [2.0, 3.0]], [[4.0, 5.0], [6.0, 7.0]]],
+            &device,
+        );
+
+        let (scaled, batch_scaled) = model.forward(2.0, matrix, batch);
+
+        scaled
+            .to_data()
+            .assert_eq(&TensorData::from([[2.0f32, 4.0], [6.0, 8.0]]), true);
+        batch_scaled.to_data().assert_eq(
+            &TensorData::from([[[0.0f32, 2.0], [4.0, 6.0]], [[8.0, 10.0], [12.0, 14.0]]]),
+            true,
+        );
     }
 }

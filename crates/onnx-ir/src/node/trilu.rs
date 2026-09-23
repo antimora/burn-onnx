@@ -32,12 +32,6 @@ pub enum TriluDiagonal {
     Runtime(RuntimeInputRef),
 }
 
-impl Default for TriluDiagonal {
-    fn default() -> Self {
-        TriluDiagonal::Static(0)
-    }
-}
-
 /// Configuration for the Trilu operation.
 #[derive(Debug, Clone, PartialEq, new)]
 pub struct TriluConfig {
@@ -82,7 +76,7 @@ impl NodeProcessor for TriluProcessor {
     fn infer_types(
         &self,
         node: &mut RawNode,
-        _opset: usize,
+        opset: usize,
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
         let input_rank = match &node.inputs[0].ty {
@@ -97,17 +91,7 @@ impl NodeProcessor for TriluProcessor {
             )));
         }
 
-        // A constant k is read at build time; a runtime one is passed to burn's
-        // tril/triu, which take a native scalar.
-        if let Some(k) = node.get_input(1)
-            && k.value().is_none()
-            && !k.ty.is_scalar()
-        {
-            return Err(ProcessError::TypeMismatch {
-                expected: "scalar diagonal offset k".to_string(),
-                actual: format!("{:?}", k.ty),
-            });
-        }
+        self.extract_config(node, opset)?;
 
         // Infer output type
         crate::processor::same_as_input(node);
@@ -133,7 +117,16 @@ impl NodeProcessor for TriluProcessor {
                         ))
                     })?)
                 }
-                None => TriluDiagonal::Runtime(RuntimeInputRef::new(diagonal_arg.name.clone(), 1)),
+                // A runtime k is passed to burn's tril/triu, which take a native scalar.
+                None if diagonal_arg.ty.is_scalar() => {
+                    TriluDiagonal::Runtime(RuntimeInputRef::new(diagonal_arg.name.clone(), 1))
+                }
+                None => {
+                    return Err(ProcessError::TypeMismatch {
+                        expected: "scalar diagonal offset k".to_string(),
+                        actual: format!("{:?}", diagonal_arg.ty),
+                    });
+                }
             };
         }
 
@@ -315,6 +308,18 @@ mod tests {
             config.diagonal,
             TriluDiagonal::Runtime(RuntimeInputRef::new("k".to_string(), 1))
         );
+    }
+
+    #[test]
+    fn test_trilu_rejects_non_scalar_runtime_diagonal() {
+        let node = TestNodeBuilder::new(NodeType::Trilu, "test_trilu")
+            .input_tensor_f32("X", 2, None)
+            .input_tensor_i64("k", 1, None)
+            .output_tensor_f32("Y", 2, None)
+            .build();
+
+        let result = TriluProcessor.extract_config(&node, 16);
+        assert!(matches!(result, Err(ProcessError::TypeMismatch { .. })));
     }
 
     #[test]

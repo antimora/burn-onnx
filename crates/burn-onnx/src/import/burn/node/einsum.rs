@@ -47,6 +47,49 @@ fn scalar_native_to_tensor(expr: TokenStream, dtype: DType) -> TokenStream {
     }
 }
 
+/// The equation as Burn's einsum needs it. An ONNX scalar operand may carry a
+/// zero-width `...` term, but Burn passes scalars as shape `[1]`, where an ellipsis
+/// would claim that axis, so the `...` is dropped from scalar terms (and from the
+/// output when no other term keeps one).
+fn burn_equation(equation: &str, inputs: &[Argument]) -> String {
+    let is_scalar = |input: &Argument| input.ty.is_scalar();
+    let (terms, output) = match equation.split_once("->") {
+        Some((terms, output)) => (terms, Some(output)),
+        None => (equation, None),
+    };
+    let terms: Vec<&str> = terms.split(',').collect();
+    if !terms
+        .iter()
+        .zip(inputs)
+        .any(|(term, input)| is_scalar(input) && term.contains("..."))
+    {
+        return equation.to_string();
+    }
+
+    let terms: Vec<String> = terms
+        .iter()
+        .zip(inputs)
+        .map(|(term, input)| {
+            if is_scalar(input) {
+                term.replace("...", "")
+            } else {
+                term.to_string()
+            }
+        })
+        .collect();
+    let keeps_ellipsis = terms.iter().any(|term| term.contains("..."));
+    let mut rewritten = terms.join(",");
+    if let Some(output) = output {
+        rewritten.push_str("->");
+        if keeps_ellipsis {
+            rewritten.push_str(output);
+        } else {
+            rewritten.push_str(&output.replace("...", ""));
+        }
+    }
+    rewritten
+}
+
 impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
     fn inputs(&self) -> &[Argument] {
         &self.inputs
@@ -65,7 +108,7 @@ impl NodeCodegen for onnx_ir::node::einsum::EinsumNode {
             ));
         };
         let output = arg_to_ident(output_arg);
-        let equation = &self.config.equation;
+        let equation = burn_equation(&self.config.equation, &self.inputs);
 
         let mut operands = Vec::with_capacity(self.inputs.len());
         for input in &self.inputs {
@@ -270,6 +313,42 @@ mod tests {
         assert_snapshot!(code, @r#"
         pub fn forward(&self, lhs: Tensor<2>, scale: Tensor<1>) -> Tensor<2> {
             let output: Tensor<2> = Tensor::einsum("ij,->ij", [lhs.into(), scale.into()]);
+            output
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_einsum_scalar_operand_with_ellipsis() {
+        // The scalar's `...` is zero-width in ONNX; it and the output's `...` are
+        // dropped since no other term has one.
+        let node = EinsumNodeBuilder::new("einsum1")
+            .input_scalar_tensor("scale", DType::F32)
+            .input_tensor("rhs", 2, DType::F32)
+            .output_tensor("output", 2, DType::F32)
+            .config(config("...,ij->...ij"))
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, scale: Tensor<1>, rhs: Tensor<2>) -> Tensor<2> {
+            let output: Tensor<2> = Tensor::einsum(",ij->ij", [scale.into(), rhs.into()]);
+            output
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_einsum_scalar_operand_with_ellipsis_kept_elsewhere() {
+        let node = EinsumNodeBuilder::new("einsum1")
+            .input_scalar_tensor("scale", DType::F32)
+            .input_tensor("rhs", 3, DType::F32)
+            .output_tensor("output", 3, DType::F32)
+            .config(config("...,...ij->...ij"))
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, scale: Tensor<1>, rhs: Tensor<3>) -> Tensor<3> {
+            let output: Tensor<3> = Tensor::einsum(",...ij->...ij", [scale.into(), rhs.into()]);
             output
         }
         "#);

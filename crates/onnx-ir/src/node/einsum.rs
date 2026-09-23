@@ -8,7 +8,7 @@
 //! - repeated labels within one term for diagonals and traces (`ii->i`, `ii`)
 //! - ellipsis broadcasting (`...ij,...jk->...ik`), including operands whose ellipsis
 //!   widths differ, which broadcast right-aligned
-//! - scalar operands with an empty term (`,ij->ij`)
+//! - scalar operands with an empty or zero-width ellipsis term (`,ij->ij`, `...,ij->ij`)
 //!
 //! Labels are ASCII letters, upper or lower case.
 //!
@@ -283,11 +283,6 @@ impl ParsedEinsum {
         for (index, (term, &rank)) in self.inputs.iter().zip(ranks).enumerate() {
             let named = term.labels.len();
             let width = match term.ellipsis {
-                // Burn represents a scalar as shape [1], which an ellipsis would absorb
-                // as one broadcast axis instead of none.
-                Some(_) if rank == 0 => {
-                    return Err(format!("scalar input {index} has an ellipsis term"));
-                }
                 Some(_) if rank >= named => rank - named,
                 None if rank == named => 0,
                 _ => {
@@ -569,9 +564,10 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_rejects_scalar_with_ellipsis() {
-        let parsed = ParsedEinsum::parse("...,ij->ij").unwrap();
-        assert!(parsed.resolve(&[0, 2]).is_err());
+    fn test_resolve_scalar_with_zero_width_ellipsis() {
+        let resolved = resolve("...,ij->ij", &[0, 2]);
+        assert_eq!(resolved.inputs[0], Vec::new());
+        assert_eq!(resolved.output, named("ij"));
     }
 
     #[test]

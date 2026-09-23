@@ -15,7 +15,7 @@ impl NodeCodegen for onnx_ir::node::gelu::GeluNode {
         let output = arg_to_ident(self.outputs.first().unwrap());
 
         let function = match self.config.approximate {
-            GeluApproximate::None => quote! { gelu },
+            GeluApproximate::Exact => quote! { gelu },
             GeluApproximate::Tanh => quote! { gelu_approximate },
         };
 
@@ -43,7 +43,7 @@ mod tests {
 
     #[test]
     fn test_gelu_forward() {
-        assert_snapshot!(code_for(GeluApproximate::None), @r"
+        assert_snapshot!(code_for(GeluApproximate::Exact), @r"
         pub fn forward(&self, input: Tensor<2>) -> Tensor<2> {
             let output = burn::tensor::activation::gelu(input);
             output
