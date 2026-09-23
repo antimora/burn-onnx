@@ -6,13 +6,13 @@
 //!
 //! ## Opset Versions
 //! - **Opset 1**: Initial version with basic max pooling operation.
-//! - **Opset 8**: Added support for `storage_order` attribute.
+//! - **Opset 8**: Added optional Indices output and the `storage_order` attribute.
 //! - **Opset 10**: Added `ceil_mode` attribute to use ceiling instead of floor for output shape calculation.
-//! - **Opset 11**: Added support for dilation; updated padding semantics; added optional Indices output.
+//! - **Opset 11**: Added support for dilation; updated padding semantics.
 //! - **Opset 12**: Added support for int8, uint8 data types; clarified behavior with negative padding.
 //!
 //! **Implementation Note**: Accepts 1-2 outputs (Y required, optional Indices output).
-//! Indices are emitted through burn's `max_pool2d_with_indices`.
+//! Indices are typed as int64 with the input's rank.
 //!
 //! ## Missing Test Coverage
 //! - TODO: No test for dilation > 1 with opset < 11 - Should reject dilation in older opsets

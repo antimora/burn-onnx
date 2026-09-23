@@ -119,8 +119,9 @@ fn forward_with_indices(
         .reshape([batch, channels, 1, 1])
     };
 
-    // ONNX drops a ceil-mode window that would start inside the trailing padding,
-    // but burn's ceil_mode keeps it (tracel-ai/burn#5791), so both outputs are cut
+    // ONNX drops a ceil-mode window that would start inside the trailing padding.
+    // burn keeps it when it pads (tracel-ai/burn#5791), and when the input is
+    // pre-padded burn cannot tell the padding from input, so both outputs are cut
     // back to the ONNX size.
     // Reads `height`, `width` and the pads bound as `top`, `bottom`, `left`, `right`.
     let trim = config.ceil_mode.then(|| {
