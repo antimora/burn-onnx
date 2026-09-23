@@ -182,6 +182,13 @@ impl NodeProcessor for MaxPool2dProcessor {
             }
         }
 
+        if !matches!(storage_order, 0 | 1) {
+            return Err(ProcessError::InvalidAttribute {
+                name: "storage_order".to_string(),
+                reason: format!("expected 0 (row major) or 1 (column major), got {storage_order}"),
+            });
+        }
+
         let padding = padding_config_2d(&pads);
 
         let mut config = MaxPool2dConfig::new(
@@ -391,6 +398,21 @@ mod tests {
         if let Err(ProcessError::Custom(msg)) = result {
             assert!(msg.contains("ceil_mode requires opset 10+"));
         }
+    }
+
+    #[test]
+    fn test_max_pool2d_rejects_unknown_storage_order() {
+        let node = TestNodeBuilder::new(NodeType::MaxPool2d, "test_storage_order")
+            .input_tensor_f32("data", 4, None)
+            .output_tensor_f32("output", 4, None)
+            .attr_ints("kernel_shape", vec![2, 2])
+            .attr_int("storage_order", 2)
+            .build();
+        let result = MaxPool2dProcessor.extract_config(&node, 16);
+        assert!(matches!(
+            result,
+            Err(ProcessError::InvalidAttribute { ref name, .. }) if name == "storage_order"
+        ));
     }
 
     #[test]
