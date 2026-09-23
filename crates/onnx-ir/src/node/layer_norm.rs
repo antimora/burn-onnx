@@ -82,30 +82,17 @@ impl NodeProcessor for LayerNormProcessor {
         }
     }
 
-    fn lift_constants(&self, node: &mut RawNode, _opset: usize) -> Result<(), ProcessError> {
+    fn lift_constants(&self, node: &mut RawNode, opset: usize) -> Result<(), ProcessError> {
         // A module holds a single [features] scale over the last axis. Anything else
         // (a multi-axis scale, or the statistics outputs) goes through the functional
         // op, which takes scale and bias as graph values.
-        let scale_is_1d = node.inputs[1]
-            .value()
-            .is_some_and(|data| data.shape.len() == 1);
-        let bias_constant = node.get_input(2).is_none_or(|bias| bias.is_constant());
-        // The module normalizes the last axis only.
         let rank = node.inputs[0].ty.rank() as i64;
-        let axis = node
-            .attrs
-            .get("axis")
-            .map_or(-1, |value| value.clone().into_i64());
+        let axis = self.extract_config(node, opset)?.axis;
         let axis_is_last = rank > 0 && axis.rem_euclid(rank) == rank - 1;
-        if !scale_is_1d || !axis_is_last || !bias_constant || uses_statistics(node) {
+        if node.inputs[1].ty.rank() != 1 || !axis_is_last || uses_statistics(node) {
             return Ok(());
         }
-        node.inputs[1].to_static()?;
-        if let Some(bias) = node.inputs.get_mut(2).filter(|bias| !bias.is_optional()) {
-            bias.to_static()?;
-        }
-
-        Ok(())
+        crate::processor::lift_all_or_none(node, &[1, 2])
     }
 
     fn infer_types(

@@ -8,8 +8,7 @@
 //! - **Opset 1**: Initial version
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{ArgType, Argument, Node, RawNode};
-use crate::node::global_avg_pool::global_pool_output_type;
+use crate::ir::{Argument, Node, RawNode};
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
 };
@@ -39,28 +38,15 @@ impl NodeProcessor for GlobalMaxPoolProcessor {
     fn infer_types(
         &self,
         node: &mut RawNode,
-        _opset: usize,
-        _output_preferences: &OutputPreferences,
+        opset: usize,
+        output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
-        let input_tensor = match &node.inputs[0].ty {
-            ArgType::Tensor(tensor) => tensor,
-            _ => {
-                return Err(ProcessError::TypeMismatch {
-                    expected: "Tensor".to_string(),
-                    actual: format!("{:?}", node.inputs[0].ty),
-                });
-            }
-        };
-        if input_tensor.rank <= 2 {
-            return Err(ProcessError::Custom(format!(
-                "input tensor requires rank at least 3, got rank {}",
-                input_tensor.rank
-            )));
-        }
-
-        node.outputs[0].ty = ArgType::Tensor(global_pool_output_type(input_tensor));
-
-        Ok(())
+        // Same input checks and output shape as GlobalAveragePool.
+        crate::node::global_avg_pool::GlobalAveragePoolProcessor.infer_types(
+            node,
+            opset,
+            output_preferences,
+        )
     }
 
     fn extract_config(&self, _node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
@@ -79,7 +65,7 @@ impl NodeProcessor for GlobalMaxPoolProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{DType, NodeType, TensorType};
+    use crate::ir::{ArgType, DType, NodeType, TensorType};
     use crate::node::test_utils::TestNodeBuilder;
 
     #[test]

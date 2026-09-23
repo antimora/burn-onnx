@@ -287,11 +287,8 @@ fn shape_input(node: &RawNode, index: usize, name: &str) -> Result<Col2ImShape, 
     }
 
     let len = match &arg.ty {
-        ArgType::Shape(len) => Some(*len),
-        ArgType::Tensor(t) if t.rank == 1 && t.dtype.is_int() => {
-            t.static_shape.as_ref().and_then(|s| s[0])
-        }
-        _ => None,
+        ArgType::Tensor(t) if t.rank != 1 || !t.dtype.is_int() => None,
+        ty => ty.first_dim_static_len(),
     }
     .ok_or_else(|| {
         ProcessError::Custom(format!(

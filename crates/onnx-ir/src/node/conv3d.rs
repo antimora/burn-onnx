@@ -63,15 +63,7 @@ impl NodeProcessor for Conv3dProcessor {
         // Weight (input[1]) and optional bias (input[2]) go into the module only when
         // both are constants. Otherwise they stay graph values for the functional
         // conv, which takes both as ordinary inputs.
-        let bias_constant = node.get_input(2).is_none_or(|bias| bias.is_constant());
-        if node.inputs.len() > 1 && node.inputs[1].is_constant() && bias_constant {
-            node.inputs[1].to_static()?;
-            if let Some(bias) = node.inputs.get_mut(2).filter(|bias| !bias.is_optional()) {
-                bias.to_static()?;
-            }
-        }
-
-        Ok(())
+        crate::processor::lift_all_or_none(node, &[1, 2])
     }
 
     fn infer_types(
@@ -199,8 +191,6 @@ impl NodeProcessor for Conv3dProcessor {
         let mut group: usize = 1;
         let mut auto_pad = AutoPad::NotSet;
 
-        let weight_shape = crate::node::padding::known_weight_shape(&node.inputs[1]);
-
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
                 "kernel_shape" => kernel_shape = value.clone().into_i64s(),
@@ -226,11 +216,13 @@ impl NodeProcessor for Conv3dProcessor {
 
         let kernel_size = if kernel_shape.is_empty() {
             // Spec says if kernel shape not present in attributes it should be inferred from the weight tensor
-            let weight_shape = weight_shape.ok_or_else(|| {
-                ProcessError::Custom(
-                    "Conv3d: kernel_shape is not set and the weight shape is not known".to_string(),
-                )
-            })?;
+            let weight_shape = crate::node::padding::known_weight_shape(&node.inputs[1])
+                .ok_or_else(|| {
+                    ProcessError::Custom(
+                        "Conv3d: kernel_shape is not set and the weight shape is not known"
+                            .to_string(),
+                    )
+                })?;
             if weight_shape.len() != 5 {
                 return Err(ProcessError::Custom(format!(
                     "expected to infer kernel shape from a weight tensor of rank 5 but got shape {weight_shape:?}"
