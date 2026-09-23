@@ -937,6 +937,7 @@ fn max_pool(graph: &OnnxGraph) {
             ],
             ceil_mode: false,
             auto_pad: NotSet,
+            storage_order: 0,
         }
     "#);
 }
@@ -1708,6 +1709,8 @@ fn top_k(graph: &OnnxGraph) {
             k: Static(
                 2,
             ),
+            largest: true,
+            sorted: true,
         }
     "#);
 }

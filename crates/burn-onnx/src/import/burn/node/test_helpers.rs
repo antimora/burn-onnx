@@ -100,8 +100,15 @@ where
 
     // Use shared helpers for generating function signature parts
     let input_def = codegen_fn_params(&dynamic_inputs);
-    let return_type = codegen_return_type(node.outputs());
-    let return_expr = codegen_return_expr(node.outputs());
+    // An omitted optional output has no name and can't be a graph output.
+    let outputs: Vec<Argument> = node
+        .outputs()
+        .iter()
+        .filter(|arg| !arg.is_optional())
+        .cloned()
+        .collect();
+    let return_type = codegen_return_type(&outputs);
+    let return_expr = codegen_return_expr(&outputs);
 
     if let Err(error) = shadow_check::Checker::for_params(&dynamic_inputs)
         .check("the node under test", &quote! { #body #return_expr })

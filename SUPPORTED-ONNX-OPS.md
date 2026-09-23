@@ -78,7 +78,7 @@ functionality.
 | [Gemm][62]                       | ✅             | ✅           |
 | [GlobalAveragePool][63]          | ✅             | ✅           |
 | [GlobalLpPool][64]               | ✅             | ✅           |
-| [GlobalMaxPool][65]              | ❌             | ❌           |
+| [GlobalMaxPool][65]              | ✅             | ✅           |
 | [Greater][66]                    | ✅             | ✅           |
 | [GreaterOrEqual][67]             | ✅             | ✅           |
 | [GridSample][68]                 | ✅             | ✅           |
@@ -169,7 +169,7 @@ functionality.
 | [Round][147]                     | ✅             | ✅           |
 | [Scaler][206]                    | ✅             | ✅           |
 | [Scan][148]                      | ✅             | ✅           |
-| [Scatter][149]                   | ❌             | ✅           |
+| [Scatter][149]                   | ✅             | ✅           |
 | [ScatterElements][150]           | ✅             | ✅           |
 | [ScatterND][151]                 | ✅             | ✅           |
 | [Selu][152]                      | ✅             | ✅           |

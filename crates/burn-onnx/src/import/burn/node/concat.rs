@@ -403,7 +403,7 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, head: [i64; 2], mid: Tensor<1, Int>) -> [i64; 3] {
-            let output: [i64; 3usize] = [&head[..], &[(mid).into_scalar::<i64>() as i64][..]]
+            let output: [i64; 3usize] = [&head[..], &[(mid).into_scalar::<i64>()][..]]
                 .concat()
                 .try_into()
                 .unwrap();
