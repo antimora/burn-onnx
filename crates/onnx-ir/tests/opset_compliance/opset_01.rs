@@ -886,6 +886,37 @@ fn lp_normalization(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn lp_pool(graph: &OnnxGraph) {
+    let node = find_node(graph, "lppool2d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    LpPool2d "lppool2d1"
+      Inputs:
+        lppool_input: F32[1, 3, 8, 8]
+      Outputs:
+        lppool2d1_out1: F32[1, 3, 8, 8]
+      Config:
+        LpPool2dConfig {
+            kernel_size: [
+                2,
+                2,
+            ],
+            strides: [
+                2,
+                2,
+            ],
+            padding: Valid,
+            dilation: [
+                1,
+                1,
+            ],
+            ceil_mode: false,
+            auto_pad: NotSet,
+            p: 1.5,
+        }
+    "#);
+}
+
+#[rstest]
 fn mat_mul(graph: &OnnxGraph) {
     let node = find_node(graph, "matmul");
     insta::assert_snapshot!(format!("{node}"), @r#"

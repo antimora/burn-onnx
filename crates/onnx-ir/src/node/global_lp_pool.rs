@@ -116,11 +116,11 @@ impl NodeProcessor for GlobalLpPoolProcessor {
     }
 }
 
-/// Parse `p`, which ONNX declares FLOAT in opset 1 and INT from opset 2 on, so both
-/// representations are accepted. Opset 1 permits a fractional `p`, and the Lp formula
-/// is defined for it, so it is kept as-is rather than rounded or rejected. Defaults to
-/// 2 per the ONNX spec.
-fn extract_p(node: &RawNode) -> Result<f64, ProcessError> {
+/// Parse `p` for GlobalLpPool and LpPool, which both declare it FLOAT in opset 1 and
+/// INT from opset 2 on, so both representations are accepted. Opset 1 permits a
+/// fractional `p`, and the Lp formula is defined for it, so it is kept as-is rather
+/// than rounded or rejected. Defaults to 2 per the ONNX spec.
+pub(crate) fn extract_p(node: &RawNode) -> Result<f64, ProcessError> {
     let p = match node.attrs.get("p") {
         None => 2.0,
         Some(AttributeValue::Int64(p)) => *p as f64,
