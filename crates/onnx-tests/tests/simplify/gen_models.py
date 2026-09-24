@@ -756,6 +756,66 @@ def expand_shape_chain():
     )
 
 
+def squeeze_shape_dim():
+    """Add(x, Squeeze(Slice(Shape(y), 1, 2))) with a folded scalar dim.
+
+    y: [2, 3]
+    dim = Slice(Shape(y), 1, 2) -> [3]   (folded by constant_shape)
+    n = Squeeze(dim) -> 3                 (folded by constant_fold)
+    out = Add(x, n)
+
+    `n` is inferred as a scalar before folding, and Add is typed against
+    that, so the folded constant must stay a scalar.
+    """
+    graph = helper.make_graph(
+        name="main_graph",
+        nodes=[
+            helper.make_node("Shape", ["y"], ["y_shape"]),
+            helper.make_node(
+                "Constant",
+                [],
+                ["starts"],
+                value=helper.make_tensor("starts_val", TensorProto.INT64, [1], [1]),
+            ),
+            helper.make_node(
+                "Constant",
+                [],
+                ["ends"],
+                value=helper.make_tensor("ends_val", TensorProto.INT64, [1], [2]),
+            ),
+            helper.make_node("Slice", ["y_shape", "starts", "ends"], ["dim"]),
+            helper.make_node(
+                "Constant",
+                [],
+                ["axes"],
+                value=helper.make_tensor("axes_val", TensorProto.INT64, [1], [0]),
+            ),
+            helper.make_node("Squeeze", ["dim", "axes"], ["n"]),
+            helper.make_node("Add", ["x", "n"], ["out"]),
+        ],
+        inputs=[
+            helper.make_value_info(
+                "x",
+                helper.make_tensor_type_proto(TensorProto.INT64, shape=[2]),
+            ),
+            helper.make_value_info(
+                "y",
+                helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[2, 3]),
+            ),
+        ],
+        outputs=[
+            helper.make_value_info(
+                "out",
+                helper.make_tensor_type_proto(TensorProto.INT64, shape=[2]),
+            ),
+        ],
+    )
+    save(
+        helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", OPSET)]),
+        "simplify_squeeze_shape_dim.onnx",
+    )
+
+
 if __name__ == "__main__":
     print("Generating simplify test models:")
     shape_folding()
@@ -774,4 +834,5 @@ if __name__ == "__main__":
     sdpa_prescale_alias()
     constant_fold()
     expand_shape_chain()
+    squeeze_shape_dim()
     print("Done.")

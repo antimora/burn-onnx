@@ -895,5 +895,6 @@ fn add_simplify_inputs(model_gen: &mut ModelGen) {
         .input("tests/simplify/simplify_sdpa_coalesce.onnx")
         .input("tests/simplify/simplify_sdpa_prescale_alias.onnx")
         .input("tests/simplify/simplify_constant_fold.onnx")
-        .input("tests/simplify/simplify_expand_shape_chain.onnx");
+        .input("tests/simplify/simplify_expand_shape_chain.onnx")
+        .input("tests/simplify/simplify_squeeze_shape_dim.onnx");
 }

@@ -140,8 +140,6 @@ the decomposition alone (#464); the 19 left are the native op, still `skip-codeg
   importing a type the runtime path never names. GRU needs none of it because it uses fully-qualified
   `burn::nn::gru::Gru` paths. Either adopt GRU's style in the other two, or allow unused imports in
   the generated block once.
-- **#280 shape propagation through Where/Mul/ConstantOfShape.** Blocks RF-DETR without an `onnxsim`
-  pre-pass.
 - **#371 Kokoro residual 1.3x.** Established as f32 drift through HiFi-GAN resblocks, not fixable
   here. Close or move to burn.
 - **Empty-set reductions return the wrong identity (3 rows, left over from #464).**
