@@ -42,7 +42,7 @@ mod tests {
     use onnx_ir::selu::{SeluConfig, SeluNode, SeluNodeBuilder};
 
     fn create_node(name: &str) -> SeluNode {
-        let config = SeluConfig::new(1.67326319217681884765625, 1.05070102214813232421875);
+        let config = SeluConfig::new(super::DEFAULT_ALPHA, super::DEFAULT_GAMMA);
 
         SeluNodeBuilder::new(name)
             .input_tensor("input", 2, DType::F32)

@@ -2,7 +2,8 @@
 
 use tracel_xtask::prelude::*;
 
-/// Run the standard checks and lint the opt-in export feature when applicable.
+/// Run the standard checks, then lint burn-onnx tests (with default and export-only features)
+/// when applicable.
 pub fn handle_command(
     args: CheckCmdArgs,
     environment: Environment,
@@ -15,6 +16,26 @@ pub fn handle_command(
     base_commands::check::handle_command(args, environment, context)?;
 
     if lint_export {
+        group!("Lint burn-onnx tests");
+        run_process(
+            "cargo",
+            &[
+                "clippy",
+                "--no-deps",
+                "--color=always",
+                "-p",
+                "burn-onnx",
+                "--tests",
+                "--",
+                "--deny",
+                "warnings",
+            ],
+            None,
+            None,
+            "burn-onnx test lint failed",
+        )?;
+        endgroup!();
+
         group!("Lint burn-onnx export feature");
         run_process(
             "cargo",
