@@ -545,6 +545,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/rnn/rnn_runtime_weights.onnx")
         .input("tests/rnn/rnn_with_initial_state.onnx")
         .input("tests/round/round.onnx")
+        .input("tests/scalar_output_reuse/scalar_output_reuse.onnx")
         .input("tests/scaler/scaler.onnx")
         .input("tests/scaler/scaler_i64.onnx")
         .input("tests/scaler/scaler_ml_domain_only.onnx")

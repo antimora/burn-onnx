@@ -2158,24 +2158,21 @@ status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): DynamicQuantizeLinear (node 'dynamicquantizelinear1')"
 
 [test_dynamicquantizelinear_expanded]
-status = "skip-compile"
-reason = "use of moved value: `div1_out1`: value used here after move"
+status = "pass"
 
 [test_dynamicquantizelinear_max_adjusted]
 status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): DynamicQuantizeLinear (node 'dynamicquantizelinear1')"
 
 [test_dynamicquantizelinear_max_adjusted_expanded]
-status = "skip-compile"
-reason = "use of moved value: `div1_out1`: value used here after move"
+status = "pass"
 
 [test_dynamicquantizelinear_min_adjusted]
 status = "skip-codegen"
 reason = "Unsupported ONNX operation(s): DynamicQuantizeLinear (node 'dynamicquantizelinear1')"
 
 [test_dynamicquantizelinear_min_adjusted_expanded]
-status = "skip-compile"
-reason = "use of moved value: `div1_out1`: value used here after move"
+status = "pass"
 
 [test_edge_pad]
 status = "pass"

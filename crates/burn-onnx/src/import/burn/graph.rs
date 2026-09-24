@@ -617,10 +617,15 @@ impl BurnGraph {
                     .for_each(|arg| self.scope.tensor_register_future_use(arg, node_position));
             });
 
-        // Register graph tensor output with the last node position
+        // Register graph tensor output with the last node position. Boundary-converted
+        // outputs (ScalarTensor retyped to ScalarNative) are still tensors until the
+        // `into_scalar` conversion reads them after the last node.
         self.graph_output_args
             .iter()
-            .filter(|arg| matches!(arg.ty, ArgType::Tensor(_) | ArgType::ScalarTensor(_)))
+            .filter(|arg| {
+                matches!(arg.ty, ArgType::Tensor(_) | ArgType::ScalarTensor(_))
+                    || self.boundary_output_conversions.contains_key(&arg.name)
+            })
             .for_each(|arg| {
                 self.scope.tensor_register_future_use(arg, self.nodes.len());
             });
@@ -1794,6 +1799,35 @@ mod tests {
             code.contains("let hostile_out = actual_idx.abs();"),
             "{code}"
         );
+    }
+
+    /// A ScalarTensor graph output is read again by the boundary `into_scalar`
+    /// conversion, so a node consuming it earlier must clone it.
+    #[test]
+    fn scalar_tensor_output_also_consumed_by_node_is_cloned() {
+        let mut graph = BurnGraph::default();
+        graph.register(Node::Abs(
+            AbsNodeBuilder::new("abs1")
+                .input_tensor("input", 1, DType::F32)
+                .output_scalar_tensor("a", DType::F32)
+                .build(),
+        ));
+        graph.register(Node::Abs(
+            AbsNodeBuilder::new("abs2")
+                .input_scalar_tensor("a", DType::F32)
+                .output_scalar_tensor("b", DType::F32)
+                .build(),
+        ));
+        graph.register_input_output(
+            vec!["input".to_string()],
+            vec!["a".to_string(), "b".to_string()],
+            &[],
+            &[],
+        );
+
+        let code = format_tokens(graph.codegen());
+        assert!(code.contains("let b = a.clone().abs();"), "{code}");
+        assert!(code.contains("let a = (a).into_scalar::<f32>();"), "{code}");
     }
 
     #[test]
