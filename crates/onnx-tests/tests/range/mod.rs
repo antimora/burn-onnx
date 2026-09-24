@@ -212,6 +212,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn range_int16() {
         let device = Default::default();
         let model: range_int16::Model = range_int16::Model::new(&device);
