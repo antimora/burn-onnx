@@ -4,6 +4,7 @@ include_models!(
     reshape_with_1d_tensor,
     reshape_with_shape,
     reshape_to_scalar,
+    reshape_runtime_to_scalar,
     reshape_3d_to_scalar,
     reshape_shape_to_shape,
     reshape_shape_with_neg,
@@ -75,6 +76,23 @@ mod tests {
         // Output should be 2D with shape [3, 4] extracted from shape_source
         let expected = TensorData::from([[0f32, 1., 2., 3.], [4., 5., 6., 7.], [8., 9., 10., 11.]]);
         output.to_data().assert_eq(&expected, true);
+    }
+
+    #[test]
+    fn reshape_runtime_to_scalar() {
+        // An empty shape passed as a runtime input reshapes the single element to a scalar
+        let device = Default::default();
+        let model: reshape_runtime_to_scalar::Model =
+            reshape_runtime_to_scalar::Model::new(&device);
+
+        let x = Tensor::<2>::from_floats([[2.5]], &device);
+        let shape = Tensor::<1, burn::tensor::Int>::from_data(
+            TensorData::new(alloc::vec::Vec::<i64>::new(), [0]),
+            (&device, burn::tensor::DType::I64),
+        );
+        let output = model.forward(x, shape);
+
+        assert_eq!(output, 2.5f32);
     }
 
     #[test]

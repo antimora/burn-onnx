@@ -143,11 +143,25 @@ impl NodeProcessor for BatchNormProcessor {
             Some(shape)
         };
 
+        // Optional outputs 1..=4 (running and saved mean/var, opset < 14) are per-channel
+        // statistics of shape [C]
+        let channels = static_shape
+            .as_ref()
+            .and_then(|s| s.get(1).copied().flatten());
+        let stats_ty = ArgType::Tensor(TensorType {
+            dtype: tensor.dtype,
+            rank: 1,
+            static_shape: Some(vec![channels]),
+        });
+
         node.outputs[0].ty = ArgType::Tensor(TensorType {
             dtype: tensor.dtype,
             rank: tensor.rank,
             static_shape,
         });
+        for output in node.outputs.iter_mut().skip(1) {
+            output.ty = stats_ty.clone();
+        }
 
         Ok(())
     }

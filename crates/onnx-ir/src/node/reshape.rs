@@ -167,30 +167,30 @@ fn calculate_shape_output_size(
 }
 
 /// Infer output rank for reshape operation from available information
-fn infer_reshape_output_rank(node: &RawNode) -> usize {
+fn infer_reshape_output_rank(node: &RawNode) -> Result<usize, ProcessError> {
     // Try sources in order of preference
 
     // 1. Static shape from constant shape input
     if let Some(shape) = get_static_shape(node) {
-        return shape.len();
+        return Ok(shape.len());
     }
 
     // 2. Dynamic shape from shape input type
     if let Some(rank) = get_rank_from_shape_input(node) {
-        return rank;
+        return Ok(rank);
     }
 
-    // 3. Output's static shape if available
+    // 3. Output's declared type (graph output or value_info) if available
     if let Some(rank) = get_rank_from_output(node) {
-        return rank;
+        return Ok(rank);
     }
 
-    // No rank information available
-    panic!(
-        "Reshape node {} has dynamic shape with no rank information available. \
-         Cannot determine output rank.",
-        node.name
-    )
+    let shape_name = node.inputs.get(1).map_or("", |arg| arg.name.as_str());
+    Err(ProcessError::Custom(format!(
+        "Reshape: shape input '{shape_name}' has no statically known length and the output has \
+         no declared rank, so the output rank cannot be determined. Declare the output shape in \
+         the model (e.g. run ONNX shape inference) to resolve it"
+    )))
 }
 
 /// Get rank from shape input if available
@@ -214,13 +214,24 @@ fn get_rank_from_shape_input(node: &RawNode) -> Option<usize> {
 /// Get rank from output tensor if available
 fn get_rank_from_output(node: &RawNode) -> Option<usize> {
     match &node.outputs[0].ty {
-        ArgType::Tensor(tensor) => Some(tensor.rank),
+        // Rank 0 is the default placeholder for outputs with no declared type. Declarations
+        // without a shape field are not seeded (see `declared_type` in graph_state.rs), so a
+        // ScalarNative here comes from an explicitly empty shape
+        ArgType::Tensor(tensor) if tensor.rank > 0 => Some(tensor.rank),
         ArgType::ScalarNative(_) => Some(0),
         _ => None,
     }
 }
 
-/// Extract static shape from reshape node if available
+/// Read the values of a constant shape input as i64
+fn read_shape_values(data: &crate::ir::TensorData) -> Result<Vec<i64>, ProcessError> {
+    data.to_i64_vec()
+        .map_err(|e| ProcessError::Custom(format!("Reshape: failed to read shape values: {e:?}")))
+}
+
+/// Extract static shape from reshape node if available.
+///
+/// Conversion errors are reported by `infer_types` before this is relied on.
 fn get_static_shape(node: &RawNode) -> Option<Vec<i64>> {
     // Check shape input (opset 5+)
     if node.inputs.len() >= 2
@@ -362,6 +373,12 @@ impl NodeProcessor for ReshapeProcessor {
             }
         }
 
+        // A constant shape that cannot be read must fail here rather than fall through to the
+        // runtime-shape rank sources
+        if let Some(value) = node.inputs.get(1).and_then(|arg| arg.value()) {
+            read_shape_values(&value)?;
+        }
+
         // Validate static shape values if available (from input or attribute)
         if let Some(shape_values) = get_static_shape(node) {
             // Count how many -1 values we have (at most one is allowed)
@@ -397,7 +414,7 @@ impl NodeProcessor for ReshapeProcessor {
         let input_info = extract_input_info(&node.inputs[0]);
 
         // Determine output rank
-        let output_rank = infer_reshape_output_rank(node);
+        let output_rank = infer_reshape_output_rank(node)?;
 
         // Check allowzero attribute for static_shape computation
         let allowzero = node
@@ -501,12 +518,13 @@ impl NodeProcessor for ReshapeProcessor {
                 match node.inputs[1].value() {
                     Some(tensor_data) => {
                         // Only validate when we have actual tensor data
-                        assert_eq!(
-                            tensor_data.shape.len(),
-                            1,
-                            "Reshape: shape tensor must be 1D"
-                        );
-                        ReshapeInput::Static(tensor_data.try_into_vec::<i64>().unwrap())
+                        if tensor_data.shape.len() != 1 {
+                            return Err(ProcessError::Custom(format!(
+                                "Reshape: shape tensor must be 1D, got rank {}",
+                                tensor_data.shape.len()
+                            )));
+                        }
+                        ReshapeInput::Static(read_shape_values(&tensor_data)?)
                     }
                     None => {
                         // Runtime input - store reference instead of cloning the argument
@@ -519,9 +537,7 @@ impl NodeProcessor for ReshapeProcessor {
                 // which can clear the input name). Prefer the static value when present
                 // so codegen does not need to refer to an empty ident.
                 match node.inputs[1].value() {
-                    Some(tensor_data) => {
-                        ReshapeInput::Static(tensor_data.try_into_vec::<i64>().unwrap())
-                    }
+                    Some(tensor_data) => ReshapeInput::Static(read_shape_values(&tensor_data)?),
                     None => {
                         ReshapeInput::Runtime(RuntimeInputRef::new(node.inputs[1].name.clone(), 1))
                     }
@@ -530,9 +546,7 @@ impl NodeProcessor for ReshapeProcessor {
             ArgType::ScalarTensor(_) => {
                 // ScalarTensor is rank 1 with a single element
                 match node.inputs[1].value() {
-                    Some(tensor_data) => {
-                        ReshapeInput::Static(tensor_data.try_into_vec::<i64>().unwrap())
-                    }
+                    Some(tensor_data) => ReshapeInput::Static(read_shape_values(&tensor_data)?),
                     None => {
                         ReshapeInput::Runtime(RuntimeInputRef::new(node.inputs[1].name.clone(), 1))
                     }
@@ -639,22 +653,23 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "shape tensor must be 1D")]
     fn test_reshape_config_invalid_shape_dim() {
-        // Create a node with 2D shape tensor (should trigger panic)
+        // Create a node with 2D shape tensor
         let node = TestNodeBuilder::new(NodeType::Reshape, "test_reshape")
             .input_tensor_f32("data", 4, None)
             .input_tensor_with_data(
                 "shape",
                 DType::I64,
-                2,                                                     // 2D tensor (rank 2)
-                crate::ir::TensorData::new(vec![2i64, 3], vec![2, 1]), // 2D shape - this should cause panic
+                2, // 2D tensor (rank 2)
+                crate::ir::TensorData::new(vec![2i64, 3], vec![2, 1]),
             )
             .output_tensor_f32("reshaped", 2, None)
             .build_with_graph_data(16);
         let processor = ReshapeProcessor;
-        // This should panic when validating the shape tensor is 1D
-        let _ = processor.extract_config(&node, 16);
+        let result = processor.extract_config(&node, 16);
+        assert!(
+            matches!(result, Err(ProcessError::Custom(ref msg)) if msg.contains("shape tensor must be 1D"))
+        );
     }
 
     #[test]
@@ -718,6 +733,36 @@ mod tests {
             }
             _ => panic!("Expected tensor output"),
         }
+    }
+
+    #[test]
+    fn test_reshape_runtime_shape_unknown_length_uses_declared_output_rank() {
+        let mut node = TestNodeBuilder::new(NodeType::Reshape, "test_dynamic_reshape")
+            .input_tensor_f32("data", 2, None)
+            .input_tensor_i64("shape", 1, None)
+            .output_tensor_f32("reshaped", 4, None)
+            .build();
+
+        let prefs = OutputPreferences::new();
+        ReshapeProcessor.infer_types(&mut node, 16, &prefs).unwrap();
+
+        assert!(matches!(&node.outputs[0].ty, ArgType::Tensor(t) if t.rank == 4));
+    }
+
+    #[test]
+    fn test_reshape_runtime_shape_unknown_length_no_declared_rank_errors() {
+        // Without a declared output type the output starts as a rank-0 placeholder,
+        // which must not be read as a scalar output rank
+        let mut node = TestNodeBuilder::new(NodeType::Reshape, "test_dynamic_reshape")
+            .input_tensor_f32("data", 2, None)
+            .input_tensor_i64("shape", 1, None)
+            .output_default("reshaped")
+            .build();
+
+        let prefs = OutputPreferences::new();
+        let result = ReshapeProcessor.infer_types(&mut node, 16, &prefs);
+
+        assert!(matches!(result, Err(ProcessError::Custom(_))));
     }
 
     #[test]
