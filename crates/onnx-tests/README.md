@@ -60,9 +60,6 @@ cargo test
 # WGPU backend
 cargo test --features test-wgpu
 
-# LibTorch backend
-cargo test --features test-tch
-
 # Specific test
 cargo test --test test_mod softmax::test_softmax
 ```
