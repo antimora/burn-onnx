@@ -46,8 +46,19 @@ impl NodeCodegen for onnx_ir::lp_pool1d::LpPool1dNode {
         let output = arg_to_ident(self.outputs.first().unwrap());
         let field = Ident::new(&self.name, Span::call_site());
 
+        // onnx-ir only checks that p is finite and > 0, and the config is public, so p
+        // or its reciprocal can still fall outside f32 (opset 1 allows p = 1e-39). A
+        // non-finite literal would panic inside proc-macro2, so emit a named
+        // `compile_error!` instead of crashing model generation.
         let p = self.config.p as f32;
         let p_inv = 1.0f32 / p;
+        if !p.is_finite() || p <= 0.0 || !p_inv.is_finite() {
+            let msg = format!(
+                "LpPool1d node '{}': p must be > 0 with p and 1/p finite in f32, got {:?}",
+                self.name, self.config.p
+            );
+            return quote! { let #output = { compile_error!(#msg); unreachable!() }; };
+        }
         let kernel_size = self.config.kernel_size as f32;
 
         quote! {
@@ -122,6 +133,41 @@ mod tests {
             output
         }
         ");
+    }
+
+    #[test]
+    fn test_lp_pool1d_tiny_p_emits_compile_error() {
+        // 1/p overflows f32 even though p itself is a finite positive f32.
+        let node = create_lp_pool1d_node("pool1", 1e-39);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
+            let output = {
+                compile_error!(
+                    "LpPool1d node 'pool1': p must be > 0 with p and 1/p finite in f32, got 1e-39"
+                );
+                unreachable!()
+            };
+            output
+        }
+        "#);
+    }
+
+    #[test]
+    fn test_lp_pool1d_non_finite_p_emits_compile_error() {
+        let node = create_lp_pool1d_node("pool1", f64::NAN);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r#"
+        pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
+            let output = {
+                compile_error!(
+                    "LpPool1d node 'pool1': p must be > 0 with p and 1/p finite in f32, got NaN"
+                );
+                unreachable!()
+            };
+            output
+        }
+        "#);
     }
 
     #[test]

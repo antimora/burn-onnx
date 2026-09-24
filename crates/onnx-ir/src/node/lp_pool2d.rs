@@ -3,6 +3,10 @@
 //! 2D Lp pooling operation.
 //!
 //! **ONNX Spec**: <https://onnx.ai/onnx/operators/onnx__LpPool.html>
+//!
+//! ## Opset Versions
+//! - **Opset 1**: Initial version. `p` is a FLOAT attribute.
+//! - **Opset 2**: `p` becomes an INT attribute.
 use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
 

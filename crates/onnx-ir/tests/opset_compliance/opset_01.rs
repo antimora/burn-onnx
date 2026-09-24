@@ -911,7 +911,7 @@ fn lp_pool(graph: &OnnxGraph) {
             ],
             ceil_mode: false,
             auto_pad: NotSet,
-            p: 2.0,
+            p: 1.5,
         }
     "#);
 }

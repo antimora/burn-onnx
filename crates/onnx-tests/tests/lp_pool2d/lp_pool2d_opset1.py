@@ -7,8 +7,8 @@
 # ]
 # ///
 
-# LpPool opset 1 declares `p` as a FLOAT attribute (INT from opset 2 on), which also
-# allows a fractional p.
+# LpPool opset 1 declares `p` as a FLOAT attribute (INT from opset 2 on), so `p` may
+# be fractional; this model uses 1.5.
 
 import numpy as np
 import onnx

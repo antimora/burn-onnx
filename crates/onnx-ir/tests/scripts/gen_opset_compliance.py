@@ -631,8 +631,9 @@ def make_global_lp_pool(op_name: str, opset: int):
 def make_lp_pool(op_name: str, opset: int):
     inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3, 8, 8])
     out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
-    # `p` is a FLOAT attribute in opset 1 and an INT from opset 2 on.
-    p_attr = 2.0 if opset < 2 else 2
+    # `p` is a FLOAT attribute in opset 1 and an INT from opset 2 on. The opset-1 value
+    # differs from the default of 2 so the snapshot shows the attribute was read.
+    p_attr = 1.5 if opset < 2 else 2
     node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"), kernel_shape=[2, 2], strides=[2, 2], p=p_attr)
     return [node], [inp], [out], []
 
