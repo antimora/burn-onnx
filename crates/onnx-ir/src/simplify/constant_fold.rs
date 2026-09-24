@@ -88,6 +88,13 @@ fn fold_matching(
             None => continue,
         };
 
+        // Consumers were typed against the inferred output, so a folded Shape
+        // (e.g. a Concat of shapes) must stay a Shape, not become a Tensor.
+        let output_ty = match &node.outputs[0].ty {
+            ArgType::Shape(_) => node.outputs[0].ty.clone(),
+            _ => output_ty,
+        };
+
         let output_name = node.outputs[0].name.clone();
 
         log::info!(
@@ -914,6 +921,8 @@ mod tests {
         assert_eq!(n.node_type, NodeType::Constant);
         let vals = n.inputs[0].value().unwrap().to_i64_vec().unwrap();
         assert_eq!(vals, vec![1, 2, 3, 4, 5]);
+        // Consumers were typed against Shape(5), so the folded output keeps it
+        assert_eq!(n.outputs[0].ty, ArgType::Shape(5));
     }
 
     #[test]

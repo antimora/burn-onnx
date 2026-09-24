@@ -23,7 +23,8 @@ include_simplified_models!(
     simplify_permute_via_shape_gather,
     simplify_sdpa_coalesce,
     simplify_sdpa_prescale_alias,
-    simplify_constant_fold
+    simplify_constant_fold,
+    simplify_expand_shape_chain
 );
 
 /// Extract the `forward` method body from generated source code.
@@ -457,6 +458,32 @@ mod tests {
             }
         }
         ");
+    }
+
+    #[test]
+    fn expand_shape_chain() {
+        let device = Default::default();
+        let s = simplified::simplify_expand_shape_chain::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model_simplified/simplify_expand_shape_chain.bpk"
+            ),
+            &device,
+        );
+        let u = unsimplified::simplify_expand_shape_chain::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model_unsimplified/simplify_expand_shape_chain.bpk"
+            ),
+            &device,
+        );
+        let x = Tensor::<2>::from_floats([[1.0], [2.0]], &device);
+        let y = Tensor::<2>::zeros([2, 3], &device);
+        let expected = burn::tensor::TensorData::from([[1.0f32, 1.0, 1.0], [2.0, 2.0, 2.0]]);
+        s.forward(x.clone(), y.clone())
+            .into_data()
+            .assert_eq(&expected, true);
+        u.forward(x, y).into_data().assert_eq(&expected, true);
     }
 
     #[test]
