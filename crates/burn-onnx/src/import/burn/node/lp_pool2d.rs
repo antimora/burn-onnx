@@ -74,7 +74,7 @@ mod tests {
     use onnx_ir::lp_pool2d::{LpPool2dConfig, LpPool2dNode, LpPool2dNodeBuilder};
     use onnx_ir::padding::{AutoPad, PaddingConfig2d};
 
-    fn create_lp_pool2d_node(name: &str, p: i64) -> LpPool2dNode {
+    fn create_lp_pool2d_node(name: &str, p: f64) -> LpPool2dNode {
         let config = LpPool2dConfig::new(
             [2, 3],
             [1, 2],
@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_lp_pool2d_forward() {
-        let node = create_lp_pool2d_node("pool1", 2);
+        let node = create_lp_pool2d_node("pool1", 2.0);
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_lp_pool2d_forward_with_clone() {
-        let node = create_lp_pool2d_node("pool1", 2);
+        let node = create_lp_pool2d_node("pool1", 2.0);
         let code = codegen_forward_with_clone(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn test_lp_pool2d_field_init() {
-        let node = create_lp_pool2d_node("pool1", 2);
+        let node = create_lp_pool2d_node("pool1", 2.0);
         let code = codegen_field_init(&node);
         assert_snapshot!(code, @r#"
         let pool1 = AvgPool2dConfig::new([2, 3])
@@ -147,7 +147,7 @@ mod tests {
             [1, 1],
             false,
             AutoPad::SameUpper,
-            2,
+            2.0,
         );
         let node = LpPool2dNodeBuilder::new("pool1")
             .input_tensor("input", 4, DType::F32)

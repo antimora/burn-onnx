@@ -374,6 +374,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/lp_normalization/lp_normalization_l2_negative_axis.onnx")
         .input("tests/lp_pool1d/lp_pool1d.onnx")
         .input("tests/lp_pool2d/lp_pool2d.onnx")
+        .input("tests/lp_pool2d/lp_pool2d_opset1.onnx")
         .input("tests/lrn/lrn_custom_size2.onnx")
         .input("tests/lrn/lrn_custom_size3.onnx")
         .input("tests/lrn/lrn_default_size3.onnx")
