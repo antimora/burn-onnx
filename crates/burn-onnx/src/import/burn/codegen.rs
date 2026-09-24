@@ -396,6 +396,37 @@ pub fn resolve_auto_pad_3d(
     }
 }
 
+/// DType for specifying tensor element types in generated code.
+///
+/// Note: Flex32 and QFloat are intentionally not supported as they are Burn-specific
+/// runtime types that cannot come from ONNX models. Flex32 is a GPU optimization type
+/// and QFloat requires quantization schemes not representable in ONNX.
+impl ToTokens for DType {
+    fn to_tokens(&self) -> TokenStream {
+        match self {
+            DType::F16 => quote! { burn::tensor::DType::F16 },
+            DType::BF16 => quote! { burn::tensor::DType::BF16 },
+            DType::F32 => quote! { burn::tensor::DType::F32 },
+            DType::F64 => quote! { burn::tensor::DType::F64 },
+            DType::I8 => quote! { burn::tensor::DType::I8 },
+            DType::I16 => quote! { burn::tensor::DType::I16 },
+            DType::I32 => quote! { burn::tensor::DType::I32 },
+            DType::I64 => quote! { burn::tensor::DType::I64 },
+            DType::U8 => quote! { burn::tensor::DType::U8 },
+            DType::U16 => quote! { burn::tensor::DType::U16 },
+            DType::U32 => quote! { burn::tensor::DType::U32 },
+            DType::U64 => quote! { burn::tensor::DType::U64 },
+            DType::Bool(_) => quote! { burn::tensor::DType::Bool(burn::tensor::BoolStore::Native) },
+            // Flex32 and QFloat are Burn-specific runtime types not present in ONNX models
+            _ => panic!(
+                "Unsupported dtype for ONNX code generation: {:?}. \
+                 Flex32 and QFloat are Burn-specific runtime types.",
+                self
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -521,8 +552,8 @@ mod tests {
 
     #[test]
     fn test_f32_to_tokens_finite() {
-        let tokens = f32_to_tokens(3.14f32);
-        assert_eq!(tokens.to_string(), "3.14f32");
+        let tokens = f32_to_tokens(1.5f32);
+        assert_eq!(tokens.to_string(), "1.5f32");
     }
 
     #[test]
@@ -545,8 +576,8 @@ mod tests {
 
     #[test]
     fn test_f64_to_tokens_finite() {
-        let tokens = f64_to_tokens(2.718f64);
-        assert_eq!(tokens.to_string(), "2.718f64");
+        let tokens = f64_to_tokens(2.5f64);
+        assert_eq!(tokens.to_string(), "2.5f64");
     }
 
     #[test]
@@ -581,36 +612,5 @@ mod tests {
             result.to_string(),
             quote! { PaddingConfig3d::Valid }.to_string()
         );
-    }
-}
-
-/// DType for specifying tensor element types in generated code.
-///
-/// Note: Flex32 and QFloat are intentionally not supported as they are Burn-specific
-/// runtime types that cannot come from ONNX models. Flex32 is a GPU optimization type
-/// and QFloat requires quantization schemes not representable in ONNX.
-impl ToTokens for DType {
-    fn to_tokens(&self) -> TokenStream {
-        match self {
-            DType::F16 => quote! { burn::tensor::DType::F16 },
-            DType::BF16 => quote! { burn::tensor::DType::BF16 },
-            DType::F32 => quote! { burn::tensor::DType::F32 },
-            DType::F64 => quote! { burn::tensor::DType::F64 },
-            DType::I8 => quote! { burn::tensor::DType::I8 },
-            DType::I16 => quote! { burn::tensor::DType::I16 },
-            DType::I32 => quote! { burn::tensor::DType::I32 },
-            DType::I64 => quote! { burn::tensor::DType::I64 },
-            DType::U8 => quote! { burn::tensor::DType::U8 },
-            DType::U16 => quote! { burn::tensor::DType::U16 },
-            DType::U32 => quote! { burn::tensor::DType::U32 },
-            DType::U64 => quote! { burn::tensor::DType::U64 },
-            DType::Bool(_) => quote! { burn::tensor::DType::Bool(burn::tensor::BoolStore::Native) },
-            // Flex32 and QFloat are Burn-specific runtime types not present in ONNX models
-            _ => panic!(
-                "Unsupported dtype for ONNX code generation: {:?}. \
-                 Flex32 and QFloat are Burn-specific runtime types.",
-                self
-            ),
-        }
     }
 }

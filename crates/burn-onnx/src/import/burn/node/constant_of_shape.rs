@@ -150,7 +150,7 @@ mod tests {
     fn test_constant_of_shape_scalar_f32() {
         let config = ConstantOfShapeConfig {
             shape: ConstantOfShapeShape::Static(vec![]),
-            value: Some(TensorData::new(vec![3.14f32], [0usize; 0])),
+            value: Some(TensorData::new(vec![1.5f32], [0usize; 0])),
         };
         let node = ConstantOfShapeNodeBuilder::new("const1")
             .input_shape("dims", 1)
@@ -160,7 +160,7 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, dims: [i64; 1]) -> f32 {
-            let result = 3.14f32;
+            let result = 1.5f32;
             result
         }
         ");
@@ -170,7 +170,7 @@ mod tests {
     fn test_constant_of_shape_scalar_f64() {
         let config = ConstantOfShapeConfig {
             shape: ConstantOfShapeShape::Static(vec![]),
-            value: Some(TensorData::new(vec![2.718f64], [0usize; 0])),
+            value: Some(TensorData::new(vec![2.5f64], [0usize; 0])),
         };
         let node = ConstantOfShapeNodeBuilder::new("const1")
             .input_shape("shape_in", 1)
@@ -180,7 +180,7 @@ mod tests {
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
         pub fn forward(&self, shape_in: [i64; 1]) -> f64 {
-            let value = 2.718f64;
+            let value = 2.5f64;
             value
         }
         ");
