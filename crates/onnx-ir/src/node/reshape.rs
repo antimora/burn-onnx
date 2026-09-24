@@ -167,30 +167,29 @@ fn calculate_shape_output_size(
 }
 
 /// Infer output rank for reshape operation from available information
-fn infer_reshape_output_rank(node: &RawNode) -> usize {
+fn infer_reshape_output_rank(node: &RawNode) -> Result<usize, ProcessError> {
     // Try sources in order of preference
 
     // 1. Static shape from constant shape input
     if let Some(shape) = get_static_shape(node) {
-        return shape.len();
+        return Ok(shape.len());
     }
 
     // 2. Dynamic shape from shape input type
     if let Some(rank) = get_rank_from_shape_input(node) {
-        return rank;
+        return Ok(rank);
     }
 
-    // 3. Output's static shape if available
+    // 3. Output's declared type (graph output or value_info) if available
     if let Some(rank) = get_rank_from_output(node) {
-        return rank;
+        return Ok(rank);
     }
 
-    // No rank information available
-    panic!(
-        "Reshape node {} has dynamic shape with no rank information available. \
-         Cannot determine output rank.",
-        node.name
-    )
+    Err(ProcessError::Custom(
+        "Reshape: shape input has no statically known length and the output has no declared \
+         rank, so the output rank cannot be determined"
+            .to_string(),
+    ))
 }
 
 /// Get rank from shape input if available
@@ -214,7 +213,8 @@ fn get_rank_from_shape_input(node: &RawNode) -> Option<usize> {
 /// Get rank from output tensor if available
 fn get_rank_from_output(node: &RawNode) -> Option<usize> {
     match &node.outputs[0].ty {
-        ArgType::Tensor(tensor) => Some(tensor.rank),
+        // Rank 0 is the default placeholder for outputs with no declared type
+        ArgType::Tensor(tensor) if tensor.rank > 0 => Some(tensor.rank),
         ArgType::ScalarNative(_) => Some(0),
         _ => None,
     }
@@ -397,7 +397,7 @@ impl NodeProcessor for ReshapeProcessor {
         let input_info = extract_input_info(&node.inputs[0]);
 
         // Determine output rank
-        let output_rank = infer_reshape_output_rank(node);
+        let output_rank = infer_reshape_output_rank(node)?;
 
         // Check allowzero attribute for static_shape computation
         let allowzero = node
@@ -718,6 +718,36 @@ mod tests {
             }
             _ => panic!("Expected tensor output"),
         }
+    }
+
+    #[test]
+    fn test_reshape_runtime_shape_unknown_length_uses_declared_output_rank() {
+        let mut node = TestNodeBuilder::new(NodeType::Reshape, "test_dynamic_reshape")
+            .input_tensor_f32("data", 2, None)
+            .input_tensor_i64("shape", 1, None)
+            .output_tensor_f32("reshaped", 4, None)
+            .build();
+
+        let prefs = OutputPreferences::new();
+        ReshapeProcessor.infer_types(&mut node, 16, &prefs).unwrap();
+
+        assert!(matches!(&node.outputs[0].ty, ArgType::Tensor(t) if t.rank == 4));
+    }
+
+    #[test]
+    fn test_reshape_runtime_shape_unknown_length_no_declared_rank_errors() {
+        // Without a declared output type the output starts as a rank-0 placeholder,
+        // which must not be read as a scalar output rank
+        let mut node = TestNodeBuilder::new(NodeType::Reshape, "test_dynamic_reshape")
+            .input_tensor_f32("data", 2, None)
+            .input_tensor_i64("shape", 1, None)
+            .output_default("reshaped")
+            .build();
+
+        let prefs = OutputPreferences::new();
+        let result = ReshapeProcessor.infer_types(&mut node, 16, &prefs);
+
+        assert!(matches!(result, Err(ProcessError::Custom(_))));
     }
 
     #[test]

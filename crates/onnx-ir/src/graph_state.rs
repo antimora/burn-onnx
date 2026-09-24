@@ -420,11 +420,13 @@ impl GraphState {
         })
     }
 
-    /// Get the type of a graph output by name
+    /// Get the type of a graph output by its original ONNX name
     pub(crate) fn get_output_type(&self, name: &str) -> Option<&crate::ir::ArgType> {
+        // Graph outputs are stored under sanitized names
+        let sanitized = crate::proto_conversion::sanitize_name(name);
         self.outputs
             .iter()
-            .find(|out| out.name == name)
+            .find(|out| out.name == sanitized)
             .map(|out| &out.ty)
     }
 
@@ -697,5 +699,21 @@ mod tests {
 
         let arg_b = state.init_in("b_0");
         assert!(matches!(arg_b.ty, ArgType::Tensor(ref t) if t.rank == 3));
+    }
+
+    /// Regression test for https://github.com/tracel-ai/burn-onnx/issues/565
+    ///
+    /// Node outputs are seeded from the declared graph output type, looked up
+    /// by the original ONNX name. Graph outputs are stored sanitized, so a name
+    /// like "Mean" (stored as "mean") was never found and the producing node
+    /// started from a rank-0 placeholder instead of the declared rank.
+    #[test]
+    fn get_output_type_finds_output_by_original_name() {
+        let output = make_tensor_value_info("Mean", 4);
+
+        let state = GraphState::new(&[], &[output], &[], &[]);
+
+        let ty = state.get_output_type("Mean");
+        assert!(matches!(ty, Some(ArgType::Tensor(t)) if t.rank == 4));
     }
 }
