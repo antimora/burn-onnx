@@ -525,6 +525,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/reshape/reshape_shape_partial.onnx")
         .input("tests/reshape/reshape_shape_to_shape.onnx")
         .input("tests/reshape/reshape_shape_with_neg.onnx")
+        .input("tests/reshape/reshape_runtime_to_scalar.onnx")
         .input("tests/reshape/reshape_to_scalar.onnx")
         .input("tests/reshape/reshape_with_1d_tensor.onnx")
         .input("tests/reshape/reshape_with_shape.onnx")

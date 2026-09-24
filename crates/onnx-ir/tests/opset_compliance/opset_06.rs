@@ -49,10 +49,10 @@ fn batch_normalization(graph: &OnnxGraph) {
         _: F32[3] [static(3)]
       Outputs:
         batchnormalization1_out1: F32[1, 3, 4, 4]
-        batchnormalization1_out2: ScalarNative(F32)
-        batchnormalization1_out3: ScalarNative(F32)
-        batchnormalization1_out4: ScalarNative(F32)
-        batchnormalization1_out5: ScalarNative(F32)
+        batchnormalization1_out2: F32[3]
+        batchnormalization1_out3: F32[3]
+        batchnormalization1_out4: F32[3]
+        batchnormalization1_out5: F32[3]
       Config:
         Static(
             BatchNormStaticConfig {

@@ -186,7 +186,7 @@ impl GraphState {
 
         // Store value_info for intermediate values
         for value_info in value_infos {
-            if let Ok(arg) = Argument::try_from(value_info.clone()) {
+            if let Some(arg) = declared_type(value_info) {
                 value_info_map.insert(value_info.name.clone(), arg.ty);
             }
         }
@@ -194,7 +194,7 @@ impl GraphState {
         let outputs = outputs
             .iter()
             .map(|x| {
-                Argument::try_from(x.clone()).unwrap_or_else(|_| {
+                declared_type(x).unwrap_or_else(|| {
                     // Output may not have explicit type info (type will be inferred later)
                     let sanitized = crate::proto_conversion::sanitize_name(&x.name);
                     log::debug!(
@@ -619,6 +619,22 @@ fn create_test_constant(
 
     // Return node and data_id for registering in constant_map
     (constant_node, data_id)
+}
+
+/// Convert a declared graph output or value_info entry into the type that seeds a node output.
+///
+/// A tensor type with no `shape` field has unknown rank. `Argument::try_from` reads it as a
+/// scalar, which is only right for an explicitly empty shape, so such entries are skipped and
+/// the node output is left to type inference.
+fn declared_type(value_info: &ValueInfoProto) -> Option<Argument> {
+    let shape_unknown = value_info
+        .type_
+        .as_ref()
+        .is_some_and(|ty| ty.has_tensor_type() && ty.tensor_type().shape.is_none());
+    if shape_unknown {
+        return None;
+    }
+    Argument::try_from(value_info.clone()).ok()
 }
 
 #[cfg(test)]

@@ -1323,4 +1323,80 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("n_fft"), "got: {msg}");
     }
+
+    /// Reshape(x: f32[2, 3], s: i64[?]) -> `output`, where the length of the runtime shape
+    /// input `s` is unknown, so the output rank can only come from the declared output type.
+    fn runtime_reshape_model(output: ValueInfoProto) -> Vec<u8> {
+        let mut node = NodeProto::new();
+        node.name = "reshape".to_string();
+        node.op_type = "Reshape".to_string();
+        node.input.push("x".to_string());
+        node.input.push("s".to_string());
+        node.output.push(output.name.clone());
+
+        let mut s_dim = tensor_shape_proto::Dimension::new();
+        s_dim.set_dim_param("N".to_string());
+        let mut s_shape = TensorShapeProto::new();
+        s_shape.dim.push(s_dim);
+        let mut s_tensor = type_proto::Tensor::new();
+        s_tensor.elem_type = 7; // INT64
+        s_tensor.shape = ::protobuf::MessageField::some(s_shape);
+        let mut s_ty = TypeProto::new();
+        s_ty.set_tensor_type(s_tensor);
+        let mut s = ValueInfoProto::new();
+        s.name = "s".to_string();
+        s.type_ = ::protobuf::MessageField::some(s_ty);
+
+        let mut graph = GraphProto::new();
+        graph.name = "test_graph".to_string();
+        graph.input.push(tensor_value_info("x", &[2, 3]));
+        graph.input.push(s);
+        graph.output.push(output);
+        graph.node.push(node);
+
+        let mut model = ModelProto::new();
+        model.graph = ::protobuf::MessageField::some(graph);
+        let mut op = OperatorSetIdProto::new();
+        op.version = 16;
+        model.opset_import.push(op);
+        model.write_to_bytes().unwrap()
+    }
+
+    /// Regression test for https://github.com/tracel-ai/burn-onnx/issues/565: a graph output
+    /// whose name changes under sanitization ("Mean" -> "mean") still seeds the Reshape output
+    /// with its declared rank.
+    #[test]
+    fn runtime_reshape_uses_declared_rank_of_sanitized_output() {
+        let bytes = runtime_reshape_model(tensor_value_info("Mean", &[3, 2]));
+        let graph = OnnxGraphBuilder::new().parse_bytes(&bytes).unwrap();
+
+        assert!(
+            matches!(&graph.outputs[0].ty, ArgType::Tensor(t) if t.rank == 2),
+            "got: {:?}",
+            graph.outputs[0].ty
+        );
+    }
+
+    /// An output declared with a tensor type but no shape has unknown rank. It must not be
+    /// read as a scalar declaration.
+    #[test]
+    fn runtime_reshape_with_shapeless_output_declaration_errors() {
+        let mut output = tensor_value_info("y", &[]);
+        output
+            .type_
+            .mut_or_insert_default()
+            .mut_tensor_type()
+            .shape
+            .clear();
+
+        let err = OnnxGraphBuilder::new()
+            .parse_bytes(&runtime_reshape_model(output))
+            .unwrap_err();
+
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("output rank cannot be determined"),
+            "got: {msg}"
+        );
+    }
 }

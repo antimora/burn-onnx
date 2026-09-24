@@ -228,6 +228,17 @@ impl NodeCodegen for onnx_ir::reshape::ReshapeNode {
                         let shape_name = arg_to_ident(shape_arg);
                         let output_rank = match &output_arg.ty {
                             ArgType::Tensor(t) => t.rank,
+                            // An empty runtime shape reshapes the single element to a scalar,
+                            // so the shape values are not needed
+                            ArgType::ScalarNative(elem_type) => {
+                                let value = on_device_to_native(input, elem_type);
+                                return quote! {
+                                    let #output = {
+                                        let _ = &#shape_name;
+                                        #value
+                                    };
+                                };
+                            }
                             _ => panic!("Runtime reshape with tensor shape expects tensor output"),
                         };
                         let array_init = (0..output_rank)
@@ -606,6 +617,33 @@ mod tests {
             let shape_data = new_shape.to_data();
             let shape_array = shape_data.as_slice::<i64>().unwrap();
             let y = x.reshape([shape_array[0] as usize, shape_array[1] as usize]);
+            y
+        }
+        ");
+    }
+
+    // Runtime empty shape with Tensor argument reshapes to a scalar
+    #[test]
+    fn test_reshape_runtime_with_tensor_to_scalar() {
+        let config = ReshapeConfig {
+            shape: ReshapeInput::Runtime(RuntimeInputRef {
+                name: "new_shape".to_string(),
+                input_index: 1,
+            }),
+        };
+        let node = ReshapeNodeBuilder::new("reshape1")
+            .input_tensor("x", 1, DType::F32)
+            .input_tensor("new_shape", 1, DType::I64)
+            .output_scalar("y", DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, x: Tensor<1>, new_shape: Tensor<1, Int>) -> f32 {
+            let y = {
+                let _ = &new_shape;
+                (x).into_scalar::<f32>()
+            };
             y
         }
         ");
