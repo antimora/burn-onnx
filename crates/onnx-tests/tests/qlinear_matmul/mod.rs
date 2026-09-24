@@ -18,6 +18,7 @@ mod tests {
 
     // Case 1: 3D operands with scalar (per-tensor) quantization parameters.
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn qlinear_matmul_scalar() {
         let device = Default::default();
         let model: qlinear_matmul_scalar::Model = qlinear_matmul_scalar::Model::new(&device);
@@ -48,6 +49,7 @@ mod tests {
     // a uses per-row scales (shape [M]), b uses per-column scales (shape [N]),
     // y uses per-row scales (shape [M]).
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn qlinear_matmul_vector() {
         let device = Default::default();
         let model: qlinear_matmul_vector::Model = qlinear_matmul_vector::Model::new(&device);
@@ -91,6 +93,7 @@ mod tests {
     // a_scale: [batch, M, 1] (per-row per-batch), b_scale: [batch, 1, N] (per-column per-batch),
     // y_scale: [batch, M, 1] (per-row per-batch).
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn qlinear_matmul_nd() {
         let device = Default::default();
         let model: qlinear_matmul_nd::Model = qlinear_matmul_nd::Model::new(&device);
@@ -164,6 +167,7 @@ mod tests {
     // Expected values are hand-computed with explicit clip — NOT from the ONNX ReferenceEvaluator,
     // which wraps on overflow rather than saturating (see https://github.com/onnx/onnx/issues/7835).
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn qlinear_matmul_u8_saturate() {
         let device = Default::default();
         let model: qlinear_matmul_u8_saturate::Model =
@@ -193,6 +197,7 @@ mod tests {
     // Expected values are hand-computed with explicit clip — NOT from the ONNX ReferenceEvaluator,
     // which wraps on overflow rather than saturating (see https://github.com/onnx/onnx/issues/7835).
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn qlinear_matmul_i8_saturate() {
         let device = Default::default();
         let model: qlinear_matmul_i8_saturate::Model =
@@ -215,6 +220,7 @@ mod tests {
 
     // Case 6: opset-10 model (2D operands, U8 scalar, F16 scales)
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn qlinear_matmul_opset_10() {
         let device = Default::default();
         let model: qlinear_matmul_opset_10::Model = qlinear_matmul_opset_10::Model::new(&device);
@@ -246,6 +252,7 @@ mod tests {
     // Case 7: scalar F16 scales — verifies the `(scale as f32)` cast path for half-precision scalars.
     // Same operand values as Case 6; scales are the nearest F16 representations of 0.1/0.2/0.3.
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn qlinear_matmul_scalar_f16_scale() {
         let device = Default::default();
         let model: qlinear_matmul_scalar_f16_scale::Model =
@@ -278,6 +285,7 @@ mod tests {
     // Case 8: vector BF16 scales — verifies the `.cast(DType::F32)` path for half-precision tensors.
     // Same operand values as Case 2; scales are the nearest BF16 representations of the F32 values.
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn qlinear_matmul_vector_bf16_scale() {
         let device = Default::default();
         let model: qlinear_matmul_vector_bf16_scale::Model =

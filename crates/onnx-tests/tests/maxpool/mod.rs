@@ -211,6 +211,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn maxpool1d_indices() {
         // Symmetric pads (column-major storage_order, the same as row-major in 1D),
         // asymmetric pads, ceil_mode dropping a window that starts in the trailing

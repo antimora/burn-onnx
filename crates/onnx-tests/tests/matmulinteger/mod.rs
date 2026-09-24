@@ -37,6 +37,7 @@ mod tests {
 
     // Simple no-zero-point case: check integer matmul → int32 result
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn matmulinteger_basic() {
         let device = Default::default();
         let model: matmulinteger::Model = matmulinteger::Model::default();
@@ -75,6 +76,7 @@ mod tests {
 
     // Rank/broadcast shapes: mirror your matmul_ranks style but with integer inputs
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn matmulinteger_ranks() {
         let device = Default::default();
         let model: matmulinteger_ranks::Model = matmulinteger_ranks::Model::default();

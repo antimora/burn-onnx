@@ -7,6 +7,7 @@ mod tests {
     use burn::tensor::{DType, Device, Int, Tensor, TensorData};
 
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn quantize_linear() {
         let device = Default::default();
         let model: quantize_linear::Model = quantize_linear::Model::new(&device);
@@ -23,6 +24,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "test-wgpu", ignore = "WGSL has no 8-bit or 16-bit integers")]
     fn quantize_linear_per_axis() {
         let device = Default::default();
         let model: quantize_linear_axis::Model = quantize_linear_axis::Model::new(&device);
