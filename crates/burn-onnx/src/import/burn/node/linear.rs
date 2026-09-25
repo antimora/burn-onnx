@@ -25,37 +25,33 @@ impl NodeCodegen for onnx_ir::linear::LinearNode {
         };
         let bias = self.inputs.len() > 2;
 
-        // ONNX Gemm stores weights as [d_output, d_input], which matches LinearLayout::Col.
-        // MatMul-sourced Linear stores weights as [d_input, d_output], matching LinearLayout::Row.
-        // Using the appropriate layout avoids data transposition during import.
-        let init_code = if self.config.transpose_weight {
-            quote! {
-                let #name = LinearConfig::new(#d_input, #d_output)
-                    .with_bias(#bias)
-                    .with_layout(LinearLayout::Col)
-                    .init(device);
-            }
-        } else {
-            quote! {
-                let #name = LinearConfig::new(#d_input, #d_output)
-                    .with_bias(#bias)
-                    .init(device);
-            }
+        // Always the default Row layout ([d_input, d_output]). Gemm weights are transposed into
+        // it when the .bpk is written: LinearLayout::Col would transpose on load instead, with
+        // a device sync that panics on single-threaded wasm.
+        let init_code = quote! {
+            let #name = LinearConfig::new(#d_input, #d_output)
+                .with_bias(#bias)
+                .init(device);
         };
 
         Some(Field::new(self.name.clone(), quote! { Linear }, init_code))
     }
 
     fn collect_tensors(&self, field_name: &str) -> Vec<PackTensor> {
-        use crate::burn::node_traits::create_deferred_tensor;
+        use crate::burn::node_traits::{create_deferred_tensor, create_deferred_tensor_transposed};
 
         let mut tensors = vec![];
 
-        // Weight tensor (input index 1)
-        // No transposition needed - LinearLayout::Col handles ONNX [out, in] format
+        // Weight tensor (input index 1), stored as [d_input, d_output]
         if let Some(weight_input) = self.inputs.get(1) {
             let weight_path = format!("{}.weight", field_name);
-            if let Some(tensor) = create_deferred_tensor(weight_input, &weight_path) {
+            let tensor = if self.config.transpose_weight {
+                // Gemm layout [out, in]
+                create_deferred_tensor_transposed(weight_input, &weight_path)
+            } else {
+                create_deferred_tensor(weight_input, &weight_path)
+            };
+            if let Some(tensor) = tensor {
                 tensors.push(tensor);
             }
         }
@@ -84,9 +80,6 @@ impl NodeCodegen for onnx_ir::linear::LinearNode {
     fn register_imports(&self, imports: &mut BurnImports) {
         imports.register("burn::nn::Linear");
         imports.register("burn::nn::LinearConfig");
-        if self.config.transpose_weight {
-            imports.register("burn::nn::LinearLayout");
-        }
     }
 }
 
@@ -167,5 +160,40 @@ mod tests {
             output
         }
         ");
+    }
+
+    #[test]
+    fn test_linear_field_gemm_uses_row_layout() {
+        let node = create_linear_node_gemm("linear1");
+        let code = codegen_field_init(&node);
+        assert_snapshot!(code, @"let linear1 = LinearConfig::new(128, 64).with_bias(true).init(device);");
+    }
+
+    #[test]
+    fn test_linear_field_matmul() {
+        let node = create_linear_node_matmul("linear2");
+        let code = codegen_field_init(&node);
+        assert_snapshot!(code, @"let linear2 = LinearConfig::new(128, 64).with_bias(false).init(device);");
+    }
+
+    #[test]
+    fn test_linear_collect_tensors_gemm_stores_weight_transposed() {
+        use crate::burn::node_traits::NodeCodegen;
+
+        let node = create_linear_node_gemm("linear1");
+        let tensors = node.collect_tensors("linear1");
+        assert_eq!(tensors.len(), 2);
+        assert_eq!(tensors[0].name, "linear1.weight");
+        assert_eq!(tensors[0].shape.dims::<2>(), [128, 64]);
+    }
+
+    #[test]
+    fn test_linear_collect_tensors_matmul_keeps_weight_layout() {
+        use crate::burn::node_traits::NodeCodegen;
+
+        let node = create_linear_node_matmul("linear2");
+        let tensors = node.collect_tensors("linear2");
+        assert_eq!(tensors.len(), 1);
+        assert_eq!(tensors[0].shape.dims::<2>(), [128, 64]);
     }
 }

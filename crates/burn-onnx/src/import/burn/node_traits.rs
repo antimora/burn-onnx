@@ -215,6 +215,17 @@ pub fn arg_to_ident(arg: &Argument) -> proc_macro2::Ident {
 ///
 /// A deferred [`PackTensor`], or `None` when the input carries no static data
 pub fn create_deferred_tensor(input: &Argument, path: &str) -> Option<PackTensor> {
+    deferred_tensor(input, path, false)
+}
+
+/// Like [`create_deferred_tensor`], but stores a 2D tensor transposed: an `[m, n]` argument is
+/// written as `[n, m]`. The transpose happens when the writer draws the bytes, so it keeps the
+/// same bounded peak memory.
+pub fn create_deferred_tensor_transposed(input: &Argument, path: &str) -> Option<PackTensor> {
+    deferred_tensor(input, path, true)
+}
+
+fn deferred_tensor(input: &Argument, path: &str, transpose: bool) -> Option<PackTensor> {
     use burn::module::ParamId;
     use burn::tensor::TensorData;
     use onnx_ir::ir::ArgType;
@@ -231,8 +242,12 @@ pub fn create_deferred_tensor(input: &Argument, path: &str) -> Option<PackTensor
     let (dtype, shape, is_scalar) = match &input.ty {
         ArgType::Tensor(tensor_type) => {
             let dtype = tensor_type.dtype;
-            let shape: Shape = tensor_type.static_shape_known().unwrap_or_default().into();
-            (dtype, shape, false)
+            let mut shape = tensor_type.static_shape_known().unwrap_or_default();
+            if transpose {
+                assert_eq!(shape.len(), 2, "only 2D tensors can be stored transposed");
+                shape.swap(0, 1);
+            }
+            (dtype, Shape::from(shape), false)
         }
         ArgType::ScalarTensor(d) | ArgType::ScalarNative(d) => (*d, Shape::from([1]), true),
         _ => return None,
@@ -258,9 +273,28 @@ pub fn create_deferred_tensor(input: &Argument, path: &str) -> Option<PackTensor
             if is_scalar && data.shape.is_empty() {
                 data.shape = Shape::from([1]);
             }
+            if transpose {
+                data = transpose_2d(&data);
+            }
             Ok(data)
         },
     ))
+}
+
+/// Transpose a 2D tensor's bytes, `[rows, cols]` to `[cols, rows]`, element by element.
+fn transpose_2d(data: &burn::tensor::TensorData) -> burn::tensor::TensorData {
+    let (rows, cols) = (data.shape[0], data.shape[1]);
+    let elem = data.dtype.size();
+    let src = data.as_bytes();
+    let mut dst = vec![0u8; src.len()];
+    for r in 0..rows {
+        for c in 0..cols {
+            let from = (r * cols + c) * elem;
+            let to = (c * rows + r) * elem;
+            dst[to..to + elem].copy_from_slice(&src[from..from + elem]);
+        }
+    }
+    burn::tensor::TensorData::from_bytes_vec(dst, [cols, rows], data.dtype)
 }
 
 #[cfg(test)]
@@ -297,6 +331,18 @@ mod tests {
         assert_eq!(
             TensorKind::from(DType::Bool(BoolStore::Native)),
             TensorKind::Bool
+        );
+    }
+
+    #[test]
+    fn transpose_2d_swaps_rows_and_cols() {
+        use burn::tensor::TensorData;
+
+        let data = TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3]);
+        let transposed = transpose_2d(&data);
+        transposed.assert_eq(
+            &TensorData::new(vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], [3, 2]),
+            true,
         );
     }
 
