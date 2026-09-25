@@ -932,6 +932,79 @@ def resize_sizes_from_shape():
     )
 
 
+def pool_output_dims():
+    """Gather(Shape(pool(x)), 2) for MaxPool and LpPool -> constant pooled height.
+
+    x: [1, 3, 7, 7]
+    floor:        MaxPool kernel 2, stride 2                    -> 3
+    ceil:         MaxPool kernel 2, stride 2, pads 1/1, ceil    -> 4
+    ceil_asym:    MaxPool kernel 4, stride 4, pads 0/3, ceil    -> 2
+    same:         MaxPool kernel 3, stride 2, SAME_UPPER        -> 4
+    lppool:       LpPool kernel 3, stride 2                     -> 3
+    lppool_ceil:  LpPool kernel 4, stride 4, pads 0/3, ceil     -> 2
+
+    Each ceil case drops a last window that would start in the end padding
+    (5 -> 4 and 3 -> 2). burn's pool modules keep it for asymmetric pads, so
+    the generated forward trims it. LpPool's ceil_mode needs opset 18.
+
+    The folded height comes from the pool's static output shape, so it must
+    follow the pooling formula rather than repeat the input's 7.
+    """
+    pools = {
+        "floor": ("MaxPool", dict(kernel_shape=[2, 2], strides=[2, 2])),
+        "ceil": (
+            "MaxPool",
+            dict(kernel_shape=[2, 2], strides=[2, 2], pads=[1, 1, 1, 1], ceil_mode=1),
+        ),
+        "ceil_asym": (
+            "MaxPool",
+            dict(kernel_shape=[4, 4], strides=[4, 4], pads=[0, 0, 3, 3], ceil_mode=1),
+        ),
+        "same": (
+            "MaxPool",
+            dict(kernel_shape=[3, 3], strides=[2, 2], auto_pad="SAME_UPPER"),
+        ),
+        "lppool": ("LpPool", dict(kernel_shape=[3, 3], strides=[2, 2])),
+        "lppool_ceil": (
+            "LpPool",
+            dict(kernel_shape=[4, 4], strides=[4, 4], pads=[0, 0, 3, 3], ceil_mode=1),
+        ),
+    }
+    nodes = [
+        helper.make_node(
+            "Constant",
+            [],
+            ["axis"],
+            value=helper.make_tensor("axis_val", TensorProto.INT64, [], [2]),
+        )
+    ]
+    outputs = []
+    for name, (op, attrs) in pools.items():
+        nodes.append(helper.make_node(op, ["x"], [f"y_{name}"], **attrs))
+        nodes.append(helper.make_node("Shape", [f"y_{name}"], [f"shape_{name}"]))
+        nodes.append(helper.make_node("Gather", [f"shape_{name}", "axis"], [f"h_{name}"]))
+        outputs.append(
+            helper.make_value_info(
+                f"h_{name}", helper.make_tensor_type_proto(TensorProto.INT64, shape=[])
+            )
+        )
+    graph = helper.make_graph(
+        name="main_graph",
+        nodes=nodes,
+        inputs=[
+            helper.make_value_info(
+                "x",
+                helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[1, 3, 7, 7]),
+            ),
+        ],
+        outputs=outputs,
+    )
+    save(
+        helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 18)]),
+        "simplify_pool_output_dims.onnx",
+    )
+
+
 if __name__ == "__main__":
     print("Generating simplify test models:")
     shape_folding()
@@ -953,4 +1026,5 @@ if __name__ == "__main__":
     squeeze_shape_dim()
     reshape_concat_shape()
     resize_sizes_from_shape()
+    pool_output_dims()
     print("Done.")

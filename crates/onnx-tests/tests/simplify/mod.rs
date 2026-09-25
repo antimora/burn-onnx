@@ -27,7 +27,8 @@ include_simplified_models!(
     simplify_expand_shape_chain,
     simplify_squeeze_shape_dim,
     simplify_reshape_concat_shape,
-    simplify_resize_sizes_from_shape
+    simplify_resize_sizes_from_shape,
+    simplify_pool_output_dims
 );
 
 /// Extract the `forward` method body from generated source code.
@@ -144,6 +145,17 @@ mod tests {
             s.forward(x.clone(), shape_source.clone()).to_data(),
             u.forward(x, shape_source).to_data()
         );
+    }
+
+    #[test]
+    fn pool_output_dims() {
+        // Pooled heights from gen_models.py, in its order.
+        let device = Default::default();
+        let s = simplified::simplify_pool_output_dims::Model::new(&device);
+        let u = unsimplified::simplify_pool_output_dims::Model::new(&device);
+        let x = Tensor::<4>::ones([1, 3, 7, 7], &device);
+        assert_eq!(s.forward(x.clone()), (3, 4, 2, 4, 3, 2));
+        assert_eq!(u.forward(x), (3, 4, 2, 4, 3, 2));
     }
 
     #[test]
@@ -635,6 +647,32 @@ mod tests {
         let out = s.forward(input.clone());
         assert_eq!(out.dims(), [1, 3, 8, 8]);
         assert_eq!(out.to_data(), u.forward(input).to_data());
+    }
+
+    #[test]
+    fn codegen_pool_output_dims() {
+        let s = simplified_source::simplify_pool_output_dims();
+        let u = unsimplified_source::simplify_pool_output_dims();
+        assert_codegen_differs(s, u, "pool_output_dims");
+        insta::assert_snapshot!(extract_forward(s), @r"
+        pub fn forward(&self, x: Tensor<4>) -> (i64, i64, i64, i64, i64, i64) {
+                let gather1_out1 = 3i64;
+                let gather2_out1 = 4i64;
+                let gather3_out1 = 2i64;
+                let gather4_out1 = 4i64;
+                let gather5_out1 = 3i64;
+                let gather6_out1 = 2i64;
+                (
+                    gather1_out1,
+                    gather2_out1,
+                    gather3_out1,
+                    gather4_out1,
+                    gather5_out1,
+                    gather6_out1,
+                )
+            }
+        }
+        ");
     }
 
     #[test]

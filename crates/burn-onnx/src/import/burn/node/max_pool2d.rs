@@ -54,8 +54,20 @@ impl NodeCodegen for onnx_ir::max_pool2d::MaxPool2dNode {
         }
 
         let field = Ident::new(&self.name, Span::call_site());
+        let config = &self.config;
+        let (top, left, bottom, right) = config.padding.as_tuple();
+        let pooled = crate::burn::codegen::trim_ceil_pool(
+            quote! { self.#field.forward(#input) },
+            &input,
+            &config.auto_pad,
+            config.ceil_mode,
+            &[(top, bottom), (left, right)],
+            &config.kernel_size,
+            &config.strides,
+            &config.dilation,
+        );
         quote! {
-            let #output = self.#field.forward(#input);
+            let #output = #pooled;
         }
     }
 
@@ -321,6 +333,50 @@ mod tests {
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
             let output = self.pool1.forward(input);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_max_pool2d_forward_ceil_mode_asymmetric_padding() {
+        let config = MaxPool2dConfig::new(
+            [3, 3],
+            [2, 2],
+            PaddingConfig2d::Explicit(1, 2, 3, 4),
+            [1, 1],
+            true,
+            AutoPad::NotSet,
+        );
+        let node = MaxPool2dNodeBuilder::new("pool1")
+            .input_tensor("input", 4, DType::F32)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
+            let output = {
+                let dims = input.dims();
+                let out_len = |
+                    size: usize,
+                    begin: usize,
+                    end: usize,
+                    extent: usize,
+                    stride: usize|
+                {
+                    let len = (size + begin + end + stride - 1 - extent) / stride + 1;
+                    if (len - 1) * stride >= size + begin { len - 1 } else { len }
+                };
+                let pooled = self.pool1.forward(input);
+                pooled
+                    .slice(
+                        s![
+                            .., .., 0..out_len(dims[2usize], 1usize, 3usize, 3usize, 2usize), 0
+                            ..out_len(dims[3usize], 2usize, 4usize, 3usize, 2usize)
+                        ],
+                    )
+            };
             output
         }
         ");

@@ -348,6 +348,44 @@ pub fn runtime_same_padding(
     }}
 }
 
+/// Cut a ceil-mode pool output back to the ONNX size.
+///
+/// ONNX drops a ceil-mode window that would start in the end padding. burn's pool modules
+/// apply asymmetric pads to the input before pooling, so their check counts the end padding
+/// as input and keeps that window. Only explicit `pads` can do this: VALID has none, and
+/// SAME pads leave no window starting in them. `pooled` is returned unchanged otherwise.
+#[allow(clippy::too_many_arguments)]
+pub fn trim_ceil_pool(
+    pooled: TokenStream,
+    input: &TokenStream,
+    auto_pad: &AutoPad,
+    ceil_mode: bool,
+    pads: &[(usize, usize)],
+    kernel: &[usize],
+    stride: &[usize],
+    dilation: &[usize],
+) -> TokenStream {
+    if !ceil_mode || *auto_pad != AutoPad::NotSet || pads.iter().all(|(b, e)| b == e) {
+        return pooled;
+    }
+    // `extent` is the dilated kernel size.
+    let ranges = pads.iter().enumerate().map(|(i, &(begin, end))| {
+        let axis = i + 2;
+        let extent = (kernel[i] - 1) * dilation[i] + 1;
+        let stride = stride[i];
+        quote! { 0..out_len(dims[#axis], #begin, #end, #extent, #stride) }
+    });
+    quote! {{
+        let dims = #input.dims();
+        let out_len = |size: usize, begin: usize, end: usize, extent: usize, stride: usize| {
+            let len = (size + begin + end + stride - 1 - extent) / stride + 1;
+            if (len - 1) * stride >= size + begin { len - 1 } else { len }
+        };
+        let pooled = #pooled;
+        pooled.slice(s![.., .., #(#ranges),*])
+    }}
+}
+
 /// [`resolve_padding_pairs`] as the `[(begin, end); N]` tokens `ConvOptions` takes.
 pub fn conv_padding_pairs(
     auto_pad: &AutoPad,
