@@ -88,13 +88,13 @@ fn cast(graph: &OnnxGraph) {
 
 #[rstest]
 fn constant(graph: &OnnxGraph) {
-    let node = find_node(graph, "constant");
+    let node = find_graph_output_node(graph, "constant");
     insta::assert_snapshot!(format!("{node}"), @r#"
-    Constant "constant6"
+    Constant "constant15"
       Inputs:
-        _: F32[3, 4] [static(5)]
+        _: F32[2, 3] [static(14)]
       Outputs:
-        constant6_out1: F32[3, 4] [constant]
+        constant15_out1: F32[2, 3] [constant]
     "#);
 }
 
@@ -365,8 +365,6 @@ fn scan(graph: &OnnxGraph) {
       Inputs:
         scan_init: F32[2]
         scan_seq: F32[3, 2]
-        scan_elem: F32[]
-        scan_sum_in: F32[]
       Outputs:
         scan1_out1: F32[2]
         scan1_out2: F32[?, ?]
@@ -522,10 +520,7 @@ fn scan(graph: &OnnxGraph) {
             scan_output_directions: [],
             scan_input_axes: [],
             scan_output_axes: [],
-            scope_ref_names: [
-                "scan_elem",
-                "scan_sum_in",
-            ],
+            scope_ref_names: [],
         }
     "#);
 }

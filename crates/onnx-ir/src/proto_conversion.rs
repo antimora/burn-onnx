@@ -827,13 +827,21 @@ pub fn extract_node_outer_scope_references(
     use std::collections::HashSet;
 
     let mut all_refs: HashSet<String> = HashSet::new();
+    let is_loop_or_scan = node_proto.op_type == "Loop" || node_proto.op_type == "Scan";
 
     for attr in &node_proto.attribute {
         if let Ok(attr_type) = attr.type_.enum_value() {
             match attr_type {
                 AttributeType::GRAPH => {
                     if let Some(graph_proto) = attr.g.as_ref() {
-                        let refs = extract_outer_scope_references(graph_proto);
+                        let mut refs = extract_outer_scope_references(graph_proto);
+                        // Loop/Scan body inputs are supplied by the op, not the parent graph
+                        // (same rule as for nested bodies in extract_outer_scope_references)
+                        if is_loop_or_scan && attr.name == "body" {
+                            for input in &graph_proto.input {
+                                refs.remove(&sanitize_name(&input.name));
+                            }
+                        }
                         all_refs.extend(refs);
                     }
                 }

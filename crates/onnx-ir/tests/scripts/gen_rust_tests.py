@@ -323,7 +323,12 @@ def generate_opset_file(opset: int, passing: list[str], failing: list[str]) -> s
             prefix = node_name_prefix(op)
             lines.append("#[rstest]")
             lines.append(f"fn {fn_name}(graph: &OnnxGraph) {{")
-            lines.append(f'    let node = find_node(graph, "{prefix}");')
+            if op == "Constant":
+                # Initializers are lifted into Constant nodes too; the op under test is the
+                # one that feeds a graph output
+                lines.append("    let node = find_graph_output_node(graph, \"constant\");")
+            else:
+                lines.append(f'    let node = find_node(graph, "{prefix}");')
             lines.append(f'    insta::assert_snapshot!(format!("{{node}}"), @r"");')
             lines.append(f"}}")
             lines.append("")
@@ -334,8 +339,12 @@ def generate_opset_file(opset: int, passing: list[str], failing: list[str]) -> s
         lines.append(f"/// Ops that require min_opset > {opset}: {ops_list}")
         lines.append("#[test]")
         lines.append(f"fn unsupported_ops_fail() {{")
-        lines.append(f'    let result = load_model_result("opset_{opset:02d}_unsupported.onnx");')
-        lines.append(f"    assert!(result.is_err(), \"expected parse failure for unsupported ops at opset {opset}\");")
+        lines.append(f'    let err = load_model_result("opset_{opset:02d}_unsupported.onnx")')
+        lines.append(f'        .expect_err("expected parse failure for unsupported ops at opset {opset}");')
+        lines.append('    assert!(')
+        lines.append('        err.to_string().contains("Unsupported opset version"),')
+        lines.append('        "expected an unsupported opset error, got: {err}"')
+        lines.append('    );')
         lines.append(f"}}")
         lines.append("")
 
@@ -370,7 +379,7 @@ def main():
         content = generate_opset_file(opset, passing, failing)
 
         filepath = TEST_DIR / f"{mod_name}.rs"
-        filepath.write_text(content + "\n")
+        filepath.write_text(content.rstrip("\n") + "\n")
         opset_modules.append(mod_name)
         print(f"  Generated {filepath.name} ({len(passing)} passing, {len(failing)} failing)")
 

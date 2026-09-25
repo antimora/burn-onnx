@@ -172,9 +172,10 @@ fn sum(graph: &OnnxGraph) {
 /// Ops that require min_opset > 8: Scan
 #[test]
 fn unsupported_ops_fail() {
-    let result = load_model_result("opset_08_unsupported.onnx");
+    let err = load_model_result("opset_08_unsupported.onnx")
+        .expect_err("expected parse failure for unsupported ops at opset 8");
     assert!(
-        result.is_err(),
-        "expected parse failure for unsupported ops at opset 8"
+        err.to_string().contains("Unsupported opset version"),
+        "expected an unsupported opset error, got: {err}"
     );
 }

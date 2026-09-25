@@ -71,13 +71,13 @@ fn cast_like(graph: &OnnxGraph) {
 
 #[rstest]
 fn constant(graph: &OnnxGraph) {
-    let node = find_node(graph, "constant");
+    let node = find_graph_output_node(graph, "constant");
     insta::assert_snapshot!(format!("{node}"), @r#"
-    Constant "constant2"
+    Constant "constant14"
       Inputs:
-        _: ScalarNative(F32) [static(1)]
+        _: F32[2, 3] [static(13)]
       Outputs:
-        constant2_out1: ScalarTensor(F32) [constant]
+        constant14_out1: F32[2, 3] [constant]
     "#);
 }
 
@@ -389,9 +389,6 @@ fn loop_op(graph: &OnnxGraph) {
         constant4_out1: ScalarNative(I64) [constant]
         constant5_out1: ScalarNative(Bool(Native)) [constant]
         loop_acc: F32[2, 3]
-        loop_acc_in: F32[]
-        loop_cond_in: F32[]
-        loop_iter: F32[]
       Outputs:
         loop1_out1: F32[2, 3]
       Config:
@@ -547,11 +544,7 @@ fn loop_op(graph: &OnnxGraph) {
                     },
                 ),
             },
-            scope_ref_names: [
-                "loop_acc_in",
-                "loop_cond_in",
-                "loop_iter",
-            ],
+            scope_ref_names: [],
         }
     "#);
 }
@@ -641,8 +634,6 @@ fn scan(graph: &OnnxGraph) {
       Inputs:
         scan_init: F32[2]
         scan_seq: F32[3, 2]
-        scan_elem: F32[]
-        scan_sum_in: F32[]
       Outputs:
         scan1_out1: F32[2]
         scan1_out2: F32[?, ?]
@@ -798,10 +789,7 @@ fn scan(graph: &OnnxGraph) {
             scan_output_directions: [],
             scan_input_axes: [],
             scan_output_axes: [],
-            scope_ref_names: [
-                "scan_elem",
-                "scan_sum_in",
-            ],
+            scope_ref_names: [],
         }
     "#);
 }

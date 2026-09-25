@@ -146,13 +146,13 @@ fn concat(graph: &OnnxGraph) {
 
 #[rstest]
 fn constant(graph: &OnnxGraph) {
-    let node = find_node(graph, "constant");
+    let node = find_graph_output_node(graph, "constant");
     insta::assert_snapshot!(format!("{node}"), @r#"
-    Constant "constant3"
+    Constant "constant35"
       Inputs:
-        _: ScalarNative(F32) [static(2)]
+        _: F32[2, 3] [static(34)]
       Outputs:
-        constant3_out1: ScalarTensor(F32) [constant]
+        constant35_out1: F32[2, 3] [constant]
     "#);
 }
 
@@ -731,9 +731,6 @@ fn loop_op(graph: &OnnxGraph) {
         constant15_out1: ScalarNative(I64) [constant]
         constant16_out1: ScalarNative(Bool(Native)) [constant]
         loop_acc: F32[2, 3]
-        loop_acc_in: F32[]
-        loop_cond_in: F32[]
-        loop_iter: F32[]
       Outputs:
         loop1_out1: F32[2, 3]
       Config:
@@ -889,11 +886,7 @@ fn loop_op(graph: &OnnxGraph) {
                     },
                 ),
             },
-            scope_ref_names: [
-                "loop_acc_in",
-                "loop_cond_in",
-                "loop_iter",
-            ],
+            scope_ref_names: [],
         }
     "#);
 }

@@ -92,13 +92,13 @@ fn clip(graph: &OnnxGraph) {
 
 #[rstest]
 fn constant(graph: &OnnxGraph) {
-    let node = find_node(graph, "constant");
+    let node = find_graph_output_node(graph, "constant");
     insta::assert_snapshot!(format!("{node}"), @r#"
-    Constant "constant5"
+    Constant "constant6"
       Inputs:
-        _: I64[2, 2] [static(4)]
+        _: F32[2, 3] [static(5)]
       Outputs:
-        constant5_out1: I64[2, 2] [constant]
+        constant6_out1: F32[2, 3] [constant]
     "#);
 }
 

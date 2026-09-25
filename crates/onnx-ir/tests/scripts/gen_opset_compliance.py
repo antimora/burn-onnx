@@ -1363,6 +1363,9 @@ def make_loop(op_name: str, opset: int):
 
 
 def make_scan(op_name: str, opset: int):
+    # Opset 8 has a leading batch axis on every input (body inputs included) and an
+    # optional sequence_lens input
+    body_shape = [1, 2] if opset < 9 else [2]
     # Body: running sum over the scanned axis, also emitted as a scan output
     body = helper.make_graph(
         [
@@ -1371,18 +1374,17 @@ def make_scan(op_name: str, opset: int):
         ],
         "scan_body",
         [
-            helper.make_tensor_value_info(_p(op_name, "sum_in"), TensorProto.FLOAT, [2]),
-            helper.make_tensor_value_info(_p(op_name, "elem"), TensorProto.FLOAT, [2]),
+            helper.make_tensor_value_info(_p(op_name, "sum_in"), TensorProto.FLOAT, body_shape),
+            helper.make_tensor_value_info(_p(op_name, "elem"), TensorProto.FLOAT, body_shape),
         ],
         [
-            helper.make_tensor_value_info(_p(op_name, "sum_out"), TensorProto.FLOAT, [2]),
-            helper.make_tensor_value_info(_p(op_name, "scan_out"), TensorProto.FLOAT, [2]),
+            helper.make_tensor_value_info(_p(op_name, "sum_out"), TensorProto.FLOAT, body_shape),
+            helper.make_tensor_value_info(_p(op_name, "scan_out"), TensorProto.FLOAT, body_shape),
         ],
     )
     final = helper.make_tensor_value_info(_p(op_name, "final"), TensorProto.FLOAT, None)
     scanned = helper.make_tensor_value_info(_p(op_name, "scanned"), TensorProto.FLOAT, None)
     if opset < 9:
-        # Opset 8 has a leading batch axis on every input and an optional sequence_lens input
         init = helper.make_tensor_value_info(_p(op_name, "init"), TensorProto.FLOAT, [1, 2])
         seq = helper.make_tensor_value_info(_p(op_name, "seq"), TensorProto.FLOAT, [1, 3, 2])
         inputs = ["", _p(op_name, "init"), _p(op_name, "seq")]
