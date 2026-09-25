@@ -354,6 +354,11 @@ impl BurnGraph {
                 *remaining_uses.entry(arg.name.clone()).or_insert(0) += 1;
             }
         }
+        // The return (and any boundary `into_scalar`) reads each graph output after
+        // the last submodule call, so a chunk consuming one must not take it by move.
+        for arg in &self.graph_output_args {
+            *remaining_uses.entry(arg.name.clone()).or_insert(0) += 1;
+        }
 
         for (chunk_idx, range) in partition.chunks.iter().enumerate() {
             let struct_name = format_ident!("Submodule{}", chunk_idx + 1);
@@ -617,10 +622,15 @@ impl BurnGraph {
                     .for_each(|arg| self.scope.tensor_register_future_use(arg, node_position));
             });
 
-        // Register graph tensor output with the last node position
+        // Register graph tensor output with the last node position. Boundary-converted
+        // outputs (ScalarTensor retyped to ScalarNative) are still tensors until the
+        // `into_scalar` conversion reads them after the last node.
         self.graph_output_args
             .iter()
-            .filter(|arg| matches!(arg.ty, ArgType::Tensor(_) | ArgType::ScalarTensor(_)))
+            .filter(|arg| {
+                matches!(arg.ty, ArgType::Tensor(_) | ArgType::ScalarTensor(_))
+                    || self.boundary_output_conversions.contains_key(&arg.name)
+            })
             .for_each(|arg| {
                 self.scope.tensor_register_future_use(arg, self.nodes.len());
             });
@@ -1794,6 +1804,84 @@ mod tests {
             code.contains("let hostile_out = actual_idx.abs();"),
             "{code}"
         );
+    }
+
+    /// A ScalarTensor graph output is read again by the boundary `into_scalar`
+    /// conversion, so a node consuming it earlier must clone it.
+    #[test]
+    fn scalar_tensor_output_also_consumed_by_node_is_cloned() {
+        let mut graph = BurnGraph::default();
+        graph.register(Node::Abs(
+            AbsNodeBuilder::new("abs1")
+                .input_tensor("input", 1, DType::F32)
+                .output_scalar_tensor("a", DType::F32)
+                .build(),
+        ));
+        graph.register(Node::Abs(
+            AbsNodeBuilder::new("abs2")
+                .input_scalar_tensor("a", DType::F32)
+                .output_scalar_tensor("b", DType::F32)
+                .build(),
+        ));
+        graph.register_input_output(
+            vec!["input".to_string()],
+            vec!["a".to_string(), "b".to_string()],
+            &[],
+            &[],
+        );
+
+        let code = format_tokens(graph.codegen());
+        assert!(code.contains("let b = a.clone().abs();"), "{code}");
+        assert!(code.contains("let a = (a).into_scalar::<f32>();"), "{code}");
+    }
+
+    /// The top-level forward reads every graph output after the last submodule
+    /// call, so a graph output that a later chunk also consumes must be cloned
+    /// into that call. Covers a plain tensor output and a boundary-converted one.
+    #[test]
+    fn partitioned_graph_output_consumed_by_later_chunk_is_cloned() {
+        let mut graph = BurnGraph::default();
+        graph.register(Node::Abs(
+            AbsNodeBuilder::new("abs_scalar")
+                .input_tensor("x", 1, DType::F32)
+                .output_scalar_tensor("s", DType::F32)
+                .build(),
+        ));
+        for node in abs_chain(250) {
+            graph.register(node);
+        }
+        graph.register(Node::Abs(
+            AbsNodeBuilder::new("abs_late_tensor")
+                .input_tensor("t1", 2, DType::F32)
+                .output_tensor("late_t", 2, DType::F32)
+                .build(),
+        ));
+        graph.register(Node::Abs(
+            AbsNodeBuilder::new("abs_late_scalar")
+                .input_scalar_tensor("s", DType::F32)
+                .output_scalar_tensor("late_s", DType::F32)
+                .build(),
+        ));
+        graph.register_input_output(
+            vec!["x".to_string(), "t0".to_string()],
+            ["s", "t1", "t250", "late_t", "late_s"]
+                .map(String::from)
+                .to_vec(),
+            &[],
+            &[],
+        );
+
+        let partition = graph.compute_partition().expect("graph should partition");
+        assert!(
+            !partition.chunk_inputs[0].iter().any(|arg| arg.name == "t1"),
+            "t1 must be produced by one chunk and consumed by a later one"
+        );
+
+        // `t1` and `s` are chunk inputs only of the chunk holding the late nodes.
+        let code = format_tokens(graph.codegen());
+        assert!(code.contains("t1.clone()"), "{code}");
+        assert!(code.contains("s.clone()"), "{code}");
+        assert!(code.contains("let s = (s).into_scalar::<f32>();"), "{code}");
     }
 
     #[test]
