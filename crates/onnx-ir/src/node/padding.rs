@@ -187,6 +187,137 @@ pub(crate) fn validate_auto_pad(node: &RawNode) -> Result<(), ProcessError> {
     }
 }
 
+/// An integer list attribute of a ConvTranspose as `usize`s, each at least `min`.
+pub(crate) fn conv_transpose_ints(
+    name: &str,
+    values: &[i64],
+    min: i64,
+) -> Result<Vec<usize>, ProcessError> {
+    if values.iter().any(|&value| value < min) {
+        return Err(ProcessError::InvalidAttribute {
+            name: name.to_string(),
+            reason: format!("values must be at least {min}, got {values:?}"),
+        });
+    }
+    Ok(values.iter().map(|&value| value as usize).collect())
+}
+
+/// The spatial `output_shape` attribute of a ConvTranspose over `spatial_rank` axes.
+pub(crate) fn conv_transpose_output_shape(
+    output_shape: &[i64],
+    spatial_rank: usize,
+) -> Result<Vec<usize>, ProcessError> {
+    if output_shape.len() != spatial_rank {
+        return Err(ProcessError::InvalidAttribute {
+            name: "output_shape".to_string(),
+            reason: format!("expected {spatial_rank} spatial dimensions, got {output_shape:?}"),
+        });
+    }
+    conv_transpose_ints("output_shape", output_shape, 0)
+}
+
+/// Reject a ConvTranspose whose pads derive from the input size while that size is unknown.
+///
+/// `SAME_UPPER`/`SAME_LOWER` and `output_shape` both compute the pads from the input spatial
+/// dimensions. burn's conv-transpose has no padding mode that could resolve them at forward
+/// time, so those dimensions must be static and non-zero.
+pub(crate) fn validate_conv_transpose_pads(
+    node: &RawNode,
+    auto_pad: &AutoPad,
+    has_output_shape: bool,
+) -> Result<(), ProcessError> {
+    let derived = matches!(auto_pad, AutoPad::SameUpper | AutoPad::SameLower);
+    if !derived && !has_output_shape {
+        return Ok(());
+    }
+    let source = if has_output_shape {
+        "output_shape".to_string()
+    } else {
+        format!("auto_pad {auto_pad}")
+    };
+    match static_spatial_dims(&node.inputs[0].ty) {
+        Some(dims) if !dims.contains(&0) => Ok(()),
+        Some(dims) => Err(ProcessError::Custom(format!(
+            "ConvTranspose pads from {source} need non-empty input spatial dimensions, got {dims:?}"
+        ))),
+        None => Err(ProcessError::Custom(format!(
+            "ConvTranspose pads from {source} need the input spatial dimensions, but they are \
+             dynamic. Re-export the model with a static input shape, or with explicit pads."
+        ))),
+    }
+}
+
+/// The geometry of a ConvTranspose, one entry per spatial axis, as ONNX gives it.
+pub(crate) struct ConvTransposeDims<'a> {
+    pub kernel: &'a [usize],
+    pub stride: &'a [usize],
+    pub dilation: &'a [usize],
+    /// Symmetric explicit pads, used when neither `auto_pad` nor `output_shape` is set.
+    pub padding: &'a [usize],
+    pub output_padding: &'a [usize],
+    pub groups: usize,
+    pub auto_pad: &'a AutoPad,
+    pub output_shape: Option<&'a [usize]>,
+}
+
+/// Set a ConvTranspose's output type: `[N, W[1] * groups, spatial...]`, with each dimension
+/// known only when what it derives from is known.
+///
+/// An explicit `output_shape` fixes the spatial size, SAME makes it `input * stride`, and
+/// otherwise it is `stride * (input - 1) + output_padding + (kernel - 1) * dilation + 1` less
+/// the pads (none for VALID).
+pub(crate) fn conv_transpose_output_type(
+    node: &mut RawNode,
+    dims: ConvTransposeDims<'_>,
+) -> Result<(), ProcessError> {
+    let tensor = match &node.inputs[0].ty {
+        ArgType::Tensor(tensor) => tensor.clone(),
+        other => {
+            return Err(ProcessError::TypeMismatch {
+                expected: "Tensor".to_string(),
+                actual: format!("{other:?}"),
+            });
+        }
+    };
+    let input_dim = |axis: usize| {
+        tensor
+            .static_shape
+            .as_ref()
+            .and_then(|shape| shape.get(axis).copied().flatten())
+    };
+    let out_channels = known_weight_shape(&node.inputs[1])
+        .and_then(|shape| shape.get(1).map(|per_group| per_group * dims.groups));
+
+    let mut static_shape = vec![input_dim(0), out_channels];
+    for axis in 0..dims.kernel.len() {
+        let size = match dims.output_shape {
+            Some(shape) => Some(shape[axis]),
+            None => input_dim(axis + 2).map(|input| match dims.auto_pad {
+                AutoPad::SameUpper | AutoPad::SameLower => input * dims.stride[axis],
+                _ => {
+                    let pads = match dims.auto_pad {
+                        AutoPad::Valid => 0,
+                        _ => 2 * dims.padding[axis],
+                    };
+                    (dims.stride[axis] * input.saturating_sub(1)
+                        + dims.output_padding[axis]
+                        + (dims.kernel[axis] - 1) * dims.dilation[axis]
+                        + 1)
+                    .saturating_sub(pads)
+                }
+            }),
+        };
+        static_shape.push(size);
+    }
+
+    node.outputs[0].ty = ArgType::Tensor(crate::ir::TensorType {
+        dtype: tensor.dtype,
+        rank: tensor.rank,
+        static_shape: Some(static_shape),
+    });
+    Ok(())
+}
+
 /// Padding configuration for 1D operations such as convolution
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PaddingConfig1d {

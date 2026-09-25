@@ -180,6 +180,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/conv_transpose1d/conv_transpose1d.onnx")
         .input("tests/conv_transpose2d/conv_transpose2d.onnx")
         .input("tests/conv_transpose3d/conv_transpose3d.onnx")
+        .input("tests/conv_transpose_auto_pad/conv_transpose_auto_pad.onnx")
         .input("tests/cos/cos.onnx")
         .input("tests/cosh/cosh.onnx")
         .input("tests/cumsum/cumsum.onnx")

@@ -45,6 +45,7 @@ pub mod constant_of_shape;
 pub mod conv;
 pub mod conv_runtime_weight;
 pub mod conv_transpose;
+pub mod conv_transpose_auto_pad;
 pub mod cos;
 pub mod cosh;
 pub mod cumsum;
