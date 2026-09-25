@@ -147,7 +147,14 @@ Read `DEVELOPMENT-GUIDE.md` for the full walkthrough with code examples. Checkli
    - Python script (uv format) + Rust test
    - Register in: `build.rs`, `test_mod.rs`
 
-4. Update `SUPPORTED-ONNX-OPS.md`
+4. **opset compliance**: `crates/onnx-ir/tests/scripts/`
+   - Add the op to `SUPPORTED_OPS` and write its generator in `gen_opset_compliance.py`
+   - Add its `min_opset` to `MIN_OPSET` in `gen_rust_tests.py` (dimensional variants and fused
+     ops like `Conv1d` or `Linear` also go in `SPEC_ALIASES`)
+   - Regenerate: `gen_opset_compliance.py`, then `gen_rust_tests.py`, then
+     `cargo insta test -p onnx-ir --test opset_compliance --accept`
+
+5. Update `SUPPORTED-ONNX-OPS.md`
 
 ## Code Review Checklist
 

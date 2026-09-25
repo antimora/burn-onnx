@@ -4924,7 +4924,7 @@ status = "pass"
 
 [test_scan_sum]
 status = "skip-codegen"
-reason = "codegen referenced a graph value with an empty name; an optional input was read without an is_optional() guard"
+reason = "Scan opset 8 (batch axis, sequence_lens input) is not supported; onnx-ir requires opset 9+"
 
 [test_scatter_elements_with_axis]
 status = "pass"

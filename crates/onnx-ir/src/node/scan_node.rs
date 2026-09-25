@@ -5,7 +5,8 @@
 //! **ONNX Spec**: <https://onnx.ai/onnx/operators/onnx__Scan.html>
 //!
 //! ## Opset Versions
-//! - **Opset 8**: Initial version
+//! - **Opset 8**: Initial version, with a batch axis on every input and a leading
+//!   `sequence_lens` input. Not supported: the processor requires opset 9+.
 //! - **Opset 9**: Added scan_input_axes
 //! - **Opset 11**: Clarified behavior
 //! - **Opset 16**: Further refinements
@@ -55,7 +56,7 @@ impl NodeProcessor for ScanProcessor {
         opset: usize,
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
-        crate::processor::validate_opset(opset, 8)?;
+        crate::processor::validate_opset(opset, 9)?;
 
         // Get config to determine number of state variables and scan inputs
         let config = self
@@ -348,12 +349,36 @@ mod tests {
 
         let processor = ScanProcessor;
         // Extract config first
-        let _config = processor.extract_config(&node, 8).unwrap();
+        let _config = processor.extract_config(&node, 9).unwrap();
 
-        let result = processor.infer_types(&mut node, 8, &OutputPreferences::default());
+        let result = processor.infer_types(&mut node, 9, &OutputPreferences::default());
 
         assert!(result.is_ok());
         // Should have 2 outputs: final_state and scan_output_seq
         assert_eq!(node.outputs.len(), 2);
+    }
+
+    #[test]
+    fn test_scan_rejects_opset_8() {
+        // Opset 8 adds a batch axis and a sequence_lens input that the processor does not model
+        let body = create_test_body(1, 1);
+        let mut node = TestNodeBuilder::new(NodeType::Scan, "test_scan")
+            .input_tensor_f32("initial_state", 2, Some(vec![2, 3]))
+            .input_tensor_f32("scan_input_seq", 3, Some(vec![4, 2, 3]))
+            .build();
+        node.attrs
+            .insert("body".to_string(), AttributeValue::Graph(body));
+        node.attrs
+            .insert("num_scan_inputs".to_string(), AttributeValue::Int64(1));
+
+        let result = ScanProcessor.infer_types(&mut node, 8, &OutputPreferences::default());
+
+        assert!(matches!(
+            result,
+            Err(ProcessError::UnsupportedOpset {
+                required: 9,
+                actual: 8
+            })
+        ));
     }
 }

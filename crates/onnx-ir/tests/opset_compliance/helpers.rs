@@ -37,3 +37,18 @@ pub fn find_node<'a>(graph: &'a OnnxGraph, name_prefix: &str) -> &'a Node {
             panic!("No node with prefix '{name_prefix}'. Available: {names:?}")
         })
 }
+
+/// Find the node with the given prefix whose output is a graph output.
+/// Lifted initializers share the `constant` prefix, so this picks the Constant op itself.
+pub fn find_graph_output_node<'a>(graph: &'a OnnxGraph, name_prefix: &str) -> &'a Node {
+    graph
+        .nodes
+        .iter()
+        .find(|n| {
+            n.name().starts_with(name_prefix)
+                && n.outputs()
+                    .iter()
+                    .any(|o| graph.outputs.iter().any(|g| g.name == o.name))
+        })
+        .unwrap_or_else(|| panic!("No '{name_prefix}' node feeds a graph output"))
+}

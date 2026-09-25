@@ -78,8 +78,12 @@ fn convert_nodes_impl(
         ) {
             // Extract outer-scope references from subgraphs BEFORE building them
             // These references need their types resolved from the parent graph
-            let outer_refs =
-                crate::proto_conversion::extract_node_outer_scope_references(node_proto);
+            // Sorted so the added inputs come in the same order on every run
+            let mut outer_refs: Vec<String> =
+                crate::proto_conversion::extract_node_outer_scope_references(node_proto)
+                    .into_iter()
+                    .collect();
+            outer_refs.sort();
 
             // Add outer-scope references as additional inputs to the node
             // This ensures:
@@ -491,6 +495,8 @@ fn convert_gemm_to_linear(node: &mut RawNode) {
         node.attrs.remove("beta");
         node.attrs.remove("transA");
         node.attrs.remove("transB");
+        // Opsets before 7 flag bias broadcasting explicitly; Linear always broadcasts it
+        node.attrs.remove("broadcast");
         // Mark that weights need transposition (Gemm layout is [out, in])
         node.attrs
             .insert("transpose_weight".to_string(), AttributeValue::Int64(1));

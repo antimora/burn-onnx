@@ -115,6 +115,62 @@ fn average_pool(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn average_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "averagepool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    AveragePool1d "averagepool1d1"
+      Inputs:
+        averagepool1d_input: F32[1, 3, 8]
+      Outputs:
+        averagepool1d1_out1: F32[?, ?, ?]
+      Config:
+        AvgPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            padding: Valid,
+            count_include_pad: false,
+            dilation: 1,
+            ceil_mode: false,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
+fn average_pool3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "averagepool3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    AveragePool3d "averagepool3d1"
+      Inputs:
+        averagepool3d_input: F32[1, 3, 8, 8, 8]
+      Outputs:
+        averagepool3d1_out1: F32[?, ?, ?, ?, ?]
+      Config:
+        AvgPool3dConfig {
+            kernel_size: [
+                2,
+                2,
+                2,
+            ],
+            strides: [
+                2,
+                2,
+                2,
+            ],
+            padding: Valid,
+            count_include_pad: false,
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            ceil_mode: false,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
 fn bernoulli(graph: &OnnxGraph) {
     let node = find_node(graph, "bernoulli");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -158,13 +214,69 @@ fn conv(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn conv1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "conv1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Conv1d "conv1d1"
+      Inputs:
+        conv1d_input: F32[1, 3, 5]
+        _: F32[2, 3, 3] [static(1)]
+      Outputs:
+        conv1d1_out1: F32[1, 2, 3]
+      Config:
+        Conv1dConfig {
+            kernel_size: 3,
+            stride: 1,
+            dilation: 1,
+            groups: 1,
+            padding: Valid,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
+fn conv3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "conv3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Conv3d "conv3d1"
+      Inputs:
+        conv3d_input: F32[1, 3, 5, 5, 5]
+        _: F32[2, 3, 3, 3, 3] [static(2)]
+      Outputs:
+        conv3d1_out1: F32[1, 2, 3, 3, 3]
+      Config:
+        Conv3dConfig {
+            kernel_size: [
+                3,
+                3,
+                3,
+            ],
+            stride: [
+                1,
+                1,
+                1,
+            ],
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            groups: 1,
+            padding: Valid,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
 fn conv_transpose(graph: &OnnxGraph) {
     let node = find_node(graph, "convtranspose2d");
     insta::assert_snapshot!(format!("{node}"), @r#"
     ConvTranspose2d "convtranspose2d1"
       Inputs:
         convtranspose_input: F32[1, 3, 5, 5]
-        _: F32[3, 2, 3, 3] [static(1)]
+        _: F32[3, 2, 3, 3] [static(3)]
       Outputs:
         convtranspose2d1_out1: F32[1, 2, 7, 7]
       Config:
@@ -186,6 +298,74 @@ fn conv_transpose(graph: &OnnxGraph) {
                 0,
             ],
             padding_out: [
+                0,
+                0,
+            ],
+            groups: 1,
+            auto_pad: NotSet,
+            output_shape: None,
+        }
+    "#);
+}
+
+#[rstest]
+fn conv_transpose1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "convtranspose1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    ConvTranspose1d "convtranspose1d1"
+      Inputs:
+        convtranspose1d_input: F32[1, 3, 5]
+        _: F32[3, 2, 3] [static(4)]
+      Outputs:
+        convtranspose1d1_out1: F32[1, 2, 7]
+      Config:
+        ConvTranspose1dConfig {
+            kernel_size: 3,
+            stride: 1,
+            dilation: 1,
+            groups: 1,
+            padding: 0,
+            padding_out: 0,
+            auto_pad: NotSet,
+            output_shape: None,
+        }
+    "#);
+}
+
+#[rstest]
+fn conv_transpose3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "convtranspose3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    ConvTranspose3d "convtranspose3d1"
+      Inputs:
+        convtranspose3d_input: F32[1, 3, 5, 5, 5]
+        _: F32[3, 2, 3, 3, 3] [static(5)]
+      Outputs:
+        convtranspose3d1_out1: F32[1, 2, 7, 7, 7]
+      Config:
+        ConvTranspose3dConfig {
+            kernel_size: [
+                3,
+                3,
+                3,
+            ],
+            stride: [
+                1,
+                1,
+                1,
+            ],
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            padding: [
+                0,
+                0,
+                0,
+            ],
+            padding_out: [
+                0,
                 0,
                 0,
             ],
@@ -227,7 +407,7 @@ fn deform_conv(graph: &OnnxGraph) {
     DeformConv "deformconv1"
       Inputs:
         deformconv_input: F32[1, 1, 3, 3]
-        _: F32[1, 1, 2, 2] [static(2)]
+        _: F32[1, 1, 2, 2] [static(6)]
         deformconv_offset: F32[1, 8, 2, 2]
       Outputs:
         deformconv1_out1: F32[1, 1, 2, 2]
@@ -249,6 +429,18 @@ fn deform_conv(graph: &OnnxGraph) {
             groups: 1,
             offset_groups: 1,
         }
+    "#);
+}
+
+#[rstest]
+fn det(graph: &OnnxGraph) {
+    let node = find_node(graph, "det");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Det "det1"
+      Inputs:
+        det_input: F32[2, 3, 3]
+      Outputs:
+        det1_out1: F32[2]
     "#);
 }
 
@@ -299,8 +491,8 @@ fn gru(graph: &OnnxGraph) {
     Gru "gru1"
       Inputs:
         gru_input: F32[1, 2, 3]
-        _: F32[1, 12, 3] [static(5)]
-        _: F32[1, 12, 4] [static(6)]
+        _: F32[1, 12, 3] [static(9)]
+        _: F32[1, 12, 4] [static(10)]
       Outputs:
         gru1_out1: F32[?, ?, ?, ?]
       Config:
@@ -346,6 +538,18 @@ fn global_lp_pool(graph: &OnnxGraph) {
         GlobalLpPoolConfig {
             p: 2.0,
         }
+    "#);
+}
+
+#[rstest]
+fn global_max_pool(graph: &OnnxGraph) {
+    let node = find_node(graph, "globalmaxpool");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    GlobalMaxPool "globalmaxpool1"
+      Inputs:
+        globalmaxpool_input: F32[1, 3, 8, 8]
+      Outputs:
+        globalmaxpool1_out1: F32[1, 3, 1, 1]
     "#);
 }
 
@@ -404,8 +608,8 @@ fn instance_normalization(graph: &OnnxGraph) {
     InstanceNormalization "instancenormalization1"
       Inputs:
         instancenormalization_input: F32[1, 3, 4, 4]
-        _: F32[3] [static(7)]
-        _: F32[3] [static(8)]
+        _: F32[3] [static(11)]
+        _: F32[3] [static(12)]
       Outputs:
         instancenormalization1_out1: F32[1, 3, 4, 4]
       Config:
@@ -422,8 +626,8 @@ fn lstm(graph: &OnnxGraph) {
     Lstm "lstm1"
       Inputs:
         lstm_input: F32[1, 2, 3]
-        _: F32[1, 16, 3] [static(9)]
-        _: F32[1, 16, 4] [static(10)]
+        _: F32[1, 16, 3] [static(13)]
+        _: F32[1, 16, 4] [static(14)]
       Outputs:
         lstm1_out1: F32[?, ?, ?, ?]
       Config:
@@ -494,6 +698,28 @@ fn lp_pool(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn lp_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "lppool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    LpPool1d "lppool1d1"
+      Inputs:
+        lppool1d_input: F32[1, 3, 8]
+      Outputs:
+        lppool1d1_out1: F32[1, 3, 8]
+      Config:
+        LpPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            padding: Valid,
+            dilation: 1,
+            ceil_mode: false,
+            auto_pad: NotSet,
+            p: 2.0,
+        }
+    "#);
+}
+
+#[rstest]
 fn max_pool(graph: &OnnxGraph) {
     let node = find_node(graph, "maxpool2d");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -525,6 +751,61 @@ fn max_pool(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn max_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "maxpool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    MaxPool1d "maxpool1d1"
+      Inputs:
+        maxpool1d_input: F32[1, 3, 8]
+      Outputs:
+        maxpool1d1_out1: F32[1, 3, 8]
+      Config:
+        MaxPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            dilation: 1,
+            padding: Valid,
+            ceil_mode: false,
+            auto_pad: NotSet,
+            storage_order: 0,
+        }
+    "#);
+}
+
+#[rstest]
+fn max_pool3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "maxpool3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    MaxPool3d "maxpool3d1"
+      Inputs:
+        maxpool3d_input: F32[1, 3, 8, 8, 8]
+      Outputs:
+        maxpool3d1_out1: F32[1, 3, 8, 8, 8]
+      Config:
+        MaxPool3dConfig {
+            kernel_size: [
+                2,
+                2,
+                2,
+            ],
+            strides: [
+                2,
+                2,
+                2,
+            ],
+            padding: Valid,
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            ceil_mode: false,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
 fn mish(graph: &OnnxGraph) {
     let node = find_node(graph, "mish");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -533,6 +814,31 @@ fn mish(graph: &OnnxGraph) {
         mish_input: F32[2, 3, 4]
       Outputs:
         mish1_out1: F32[2, 3, 4]
+    "#);
+}
+
+#[rstest]
+fn rnn(graph: &OnnxGraph) {
+    let node = find_node(graph, "rnn");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Rnn "rnn1"
+      Inputs:
+        rnn_input: F32[1, 2, 3]
+        _: F32[1, 4, 3] [static(15)]
+        _: F32[1, 4, 4] [static(16)]
+      Outputs:
+        rnn1_out1: F32[?, ?, ?, ?]
+      Config:
+        RnnConfig {
+            input_size: 3,
+            hidden_size: 4,
+            direction: Forward,
+            has_bias: false,
+            has_initial_h: false,
+            batch_first: false,
+            clip: None,
+            hidden_activation: Tanh,
+        }
     "#);
 }
 

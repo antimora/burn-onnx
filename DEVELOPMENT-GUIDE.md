@@ -348,7 +348,30 @@ For complete examples, see existing processors:
 
 See [NodeProcessor Trait](#nodeprocessor-trait) for the complete trait definition.
 
-### Step 6: Add Newly Supported Op!
+### Step 6: Add Opset Compliance Tests
+
+`crates/onnx-ir/tests/opset_compliance/` parses every supported op at each opset where its spec
+changed. The tests are generated, so edit the scripts rather than the Rust files:
+
+1. In `crates/onnx-ir/tests/scripts/gen_opset_compliance.py`, add the op to `SUPPORTED_OPS` and
+   write a `make_<op>` generator that builds a valid node for each opset in its version history.
+   Dimensional variants (`Conv1d`, `MaxPool3d`) and fused ops (`Linear`) are keyed by their onnx-ir
+   node type and listed in `SPEC_ALIASES` so they share the base op's versions.
+2. In `crates/onnx-ir/tests/scripts/gen_rust_tests.py`, add the processor's `min_opset` to
+   `MIN_OPSET`. Opsets below it are generated into an `_unsupported.onnx` fixture that must fail to
+   parse.
+3. Regenerate and accept the snapshots:
+
+```sh
+uv run --script crates/onnx-ir/tests/scripts/gen_opset_compliance.py
+python3 crates/onnx-ir/tests/scripts/gen_rust_tests.py
+cargo insta test -p onnx-ir --test opset_compliance --accept
+```
+
+`gen_rust_tests.py` rewrites every test file with empty snapshots, so check `git diff` for changed
+snapshots of existing ops before committing.
+
+### Step 7: Add Newly Supported Op!
 
 As a reward, add an extra check to `SUPPORTED-ONNX-OPS.md`!
 

@@ -105,6 +105,62 @@ fn average_pool(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn average_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "averagepool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    AveragePool1d "averagepool1d1"
+      Inputs:
+        averagepool1d_input: F32[1, 3, 8]
+      Outputs:
+        averagepool1d1_out1: F32[?, ?, ?]
+      Config:
+        AvgPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            padding: Valid,
+            count_include_pad: false,
+            dilation: 1,
+            ceil_mode: false,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
+fn average_pool3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "averagepool3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    AveragePool3d "averagepool3d1"
+      Inputs:
+        averagepool3d_input: F32[1, 3, 8, 8, 8]
+      Outputs:
+        averagepool3d1_out1: F32[?, ?, ?, ?, ?]
+      Config:
+        AvgPool3dConfig {
+            kernel_size: [
+                2,
+                2,
+                2,
+            ],
+            strides: [
+                2,
+                2,
+                2,
+            ],
+            padding: Valid,
+            count_include_pad: false,
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            ceil_mode: false,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
 fn batch_normalization(graph: &OnnxGraph) {
     let node = find_node(graph, "batchnormalization");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -283,6 +339,24 @@ fn less(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn linear(graph: &OnnxGraph) {
+    let node = find_node(graph, "linear");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Linear "linear1"
+      Inputs:
+        linear_a: F32[2, 3]
+        _: F32[4, 3] [static(10)]
+        _: F32[4] [static(11)]
+      Outputs:
+        linear1_out1: F32[2, 4]
+      Config:
+        LinearConfig {
+            transpose_weight: true,
+        }
+    "#);
+}
+
+#[rstest]
 fn mul(graph: &OnnxGraph) {
     let node = find_node(graph, "mul");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -315,7 +389,7 @@ fn p_relu(graph: &OnnxGraph) {
     PRelu "prelu1"
       Inputs:
         prelu_input: F32[2, 3, 4]
-        _: F32[1] [static(10)]
+        _: F32[1] [static(12)]
       Outputs:
         prelu1_out1: F32[2, 3, 4]
     "#);
@@ -331,6 +405,31 @@ fn pow(graph: &OnnxGraph) {
         pow_b: F32[2, 3, 4]
       Outputs:
         pow1_out1: F32[2, 3, 4]
+    "#);
+}
+
+#[rstest]
+fn rnn(graph: &OnnxGraph) {
+    let node = find_node(graph, "rnn");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Rnn "rnn1"
+      Inputs:
+        rnn_input: F32[1, 2, 3]
+        _: F32[1, 4, 3] [static(13)]
+        _: F32[1, 4, 4] [static(14)]
+      Outputs:
+        rnn1_out1: F32[?, ?, ?, ?]
+      Config:
+        RnnConfig {
+            input_size: 3,
+            hidden_size: 4,
+            direction: Forward,
+            has_bias: false,
+            has_initial_h: false,
+            batch_first: false,
+            clip: None,
+            hidden_activation: Tanh,
+        }
     "#);
 }
 

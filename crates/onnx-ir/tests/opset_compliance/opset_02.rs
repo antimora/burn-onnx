@@ -59,6 +59,28 @@ fn lp_pool(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn lp_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "lppool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    LpPool1d "lppool1d1"
+      Inputs:
+        lppool1d_input: F32[1, 3, 8]
+      Outputs:
+        lppool1d1_out1: F32[1, 3, 8]
+      Config:
+        LpPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            padding: Valid,
+            dilation: 1,
+            ceil_mode: false,
+            auto_pad: NotSet,
+            p: 2.0,
+        }
+    "#);
+}
+
+#[rstest]
 fn pad(graph: &OnnxGraph) {
     let node = find_node(graph, "pad");
     insta::assert_snapshot!(format!("{node}"), @r#"

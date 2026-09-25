@@ -76,6 +76,61 @@ fn max_pool(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn max_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "maxpool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    MaxPool1d "maxpool1d1"
+      Inputs:
+        maxpool1d_input: F32[1, 3, 8]
+      Outputs:
+        maxpool1d1_out1: F32[1, 3, 8]
+      Config:
+        MaxPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            dilation: 1,
+            padding: Valid,
+            ceil_mode: false,
+            auto_pad: NotSet,
+            storage_order: 0,
+        }
+    "#);
+}
+
+#[rstest]
+fn max_pool3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "maxpool3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    MaxPool3d "maxpool3d1"
+      Inputs:
+        maxpool3d_input: F32[1, 3, 8, 8, 8]
+      Outputs:
+        maxpool3d1_out1: F32[1, 3, 8, 8, 8]
+      Config:
+        MaxPool3dConfig {
+            kernel_size: [
+                2,
+                2,
+                2,
+            ],
+            strides: [
+                2,
+                2,
+                2,
+            ],
+            padding: Valid,
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            ceil_mode: false,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
 fn mean(graph: &OnnxGraph) {
     let node = find_node(graph, "mean");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -112,4 +167,15 @@ fn sum(graph: &OnnxGraph) {
       Outputs:
         sum1_out1: F32[2, 3, 4]
     "#);
+}
+
+/// Ops that require min_opset > 8: Scan
+#[test]
+fn unsupported_ops_fail() {
+    let err = load_model_result("opset_08_unsupported.onnx")
+        .expect_err("expected parse failure for unsupported ops at opset 8");
+    assert!(
+        err.to_string().contains("Unsupported opset version"),
+        "expected an unsupported opset error, got: {err}"
+    );
 }

@@ -1,10 +1,15 @@
 use crate::include_models;
-include_models!(gemm, gemm_no_c, gemm_non_unit_alpha_beta);
+include_models!(
+    gemm,
+    gemm_linear_opset6,
+    gemm_no_c,
+    gemm_non_unit_alpha_beta
+);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::{Device, Tensor, TensorData};
+    use burn::tensor::{Device, Tensor, TensorData, Tolerance};
 
     #[test]
     fn gemm_test() {
@@ -77,5 +82,27 @@ mod tests {
 
         // Verify the output
         output.to_data().assert_eq(&expected.to_data(), true);
+    }
+
+    #[test]
+    fn gemm_linear_opset6() {
+        // Opset 6 Gemm in the Linear pattern, with the pre-opset-7 `broadcast` attribute
+        let device = Default::default();
+        let model = gemm_linear_opset6::Model::default();
+
+        let input = Tensor::<2>::from_data(
+            TensorData::from([[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+            &device,
+        );
+        let output = model.forward(input);
+
+        // Expected values from onnx.reference.ReferenceEvaluator
+        let expected = TensorData::from([
+            [2.405_213_4f32, -1.560_968_2, -0.019_258_738, -2.343_752_1],
+            [5.423_629, 1.603_250_5, 5.612_26, -3.503_514_3],
+        ]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, Tolerance::default());
     }
 }
