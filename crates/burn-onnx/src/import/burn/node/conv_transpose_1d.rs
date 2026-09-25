@@ -8,7 +8,7 @@ fn resolve_padding(
         &node.inputs[0],
         super::conv_helpers::ConvTransposeGeometry {
             auto_pad: &node.config.auto_pad,
-            output_shape: node.config.output_shape.as_deref(),
+            output_shape: node.config.output_shape.as_ref().map(std::slice::from_ref),
             padding: std::slice::from_ref(&node.config.padding),
             padding_out: std::slice::from_ref(&node.config.padding_out),
             kernel: std::slice::from_ref(&node.config.kernel_size),
@@ -216,6 +216,31 @@ mod tests {
                 Some(bias),
                 burn::tensor::ops::ConvTransposeOptions::new([1], [1], [0], [1], 1),
             );
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_conv_transpose_1d_auto_pad_same_upper_runtime_weight() {
+        // Full length 7, SAME wants 6: the odd pad at the end is sliced off.
+        let config = ConvTranspose1dConfig::new(3, 2, 1, 1, 0, 0, AutoPad::SameUpper, None);
+        let node = ConvTranspose1dNodeBuilder::new("conv1")
+            .input_tensor_shape("input", vec![1, 1, 3], DType::F32)
+            .input_tensor_shape("weight", vec![1, 2, 3], DType::F32)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>, weight: Tensor<3>) -> Tensor<3> {
+            let output = burn::tensor::module::conv_transpose1d(
+                    input,
+                    weight,
+                    None,
+                    burn::tensor::ops::ConvTransposeOptions::new([2], [0], [0], [1], 1),
+                )
+                .slice(s![.., .., 0..6]);
             output
         }
         ");

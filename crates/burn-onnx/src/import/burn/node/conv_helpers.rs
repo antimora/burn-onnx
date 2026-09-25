@@ -1,5 +1,6 @@
-//! Codegen shared by the conv and conv-transpose nodes for weights that arrive at run
-//! time, which have no module to live in and go through burn's functional ops.
+//! Codegen shared by the conv and conv-transpose nodes: functional ops for weights that
+//! arrive at run time, which have no module to live in, and conv-transpose padding for both
+//! the module and the functional path.
 
 use super::prelude::*;
 use onnx_ir::node::padding::AutoPad;
@@ -105,8 +106,9 @@ pub(crate) struct ConvTransposeGeometry<'a> {
 pub(crate) struct TransposePadding {
     pub padding: Vec<usize>,
     pub padding_out: Vec<usize>,
-    /// Output length of each axis whose ONNX end pad exceeds what burn can crop. burn trims
-    /// `padding` from both ends and can only grow the end, so the rest is sliced off after.
+    /// Output length of each axis where ONNX trims more from the end than from the start.
+    /// burn trims `padding` from both ends and can only grow the end, so the excess is sliced
+    /// off after.
     pub crop: Vec<Option<usize>>,
 }
 
@@ -177,11 +179,68 @@ pub(crate) fn transpose_padding(
             AutoPad::SameUpper => total / 2,
             _ => total - total / 2,
         };
-        // burn keeps positions `begin..full - begin + padding_out`, ONNX wants `begin..begin + size`.
+        // With burn's `padding_out` set to `grow`, burn keeps positions `begin..full - begin +
+        // grow` and ONNX wants `begin..begin + size`. A negative `grow` becomes a crop.
         let grow = (2 * begin + size) as i64 - full as i64;
         resolved.padding.push(begin);
         resolved.padding_out.push(grow.max(0) as usize);
         resolved.crop.push((grow < 0).then_some(size));
     }
     resolved
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::tensor::DType;
+    use onnx_ir::ir::{ArgType, TensorType};
+
+    /// `(padding, padding_out, crop)` for one axis of size `input` with a 3-wide kernel.
+    fn resolve(
+        auto_pad: AutoPad,
+        output_shape: Option<usize>,
+        input: usize,
+        stride: usize,
+        output_padding: usize,
+    ) -> (usize, usize, Option<usize>) {
+        let input = Argument::new(
+            "input",
+            ArgType::Tensor(TensorType::new_known(DType::F32, vec![1, 1, input])),
+        );
+        let resolved = transpose_padding(
+            &input,
+            ConvTransposeGeometry {
+                auto_pad: &auto_pad,
+                output_shape: output_shape.as_ref().map(std::slice::from_ref),
+                padding: &[2],
+                padding_out: &[output_padding],
+                kernel: &[3],
+                stride: &[stride],
+                dilation: &[1],
+            },
+        );
+        (
+            resolved.padding[0],
+            resolved.padding_out[0],
+            resolved.crop[0],
+        )
+    }
+
+    #[test]
+    fn transpose_padding_rules() {
+        // Explicit pads pass through, VALID zeroes them.
+        assert_eq!(resolve(AutoPad::NotSet, None, 3, 2, 1), (2, 1, None));
+        assert_eq!(resolve(AutoPad::Valid, None, 3, 2, 1), (0, 1, None));
+        // Full 7, SAME wants 6: odd unit at the end is cropped, at the start it is trimmed.
+        assert_eq!(resolve(AutoPad::SameUpper, None, 3, 2, 0), (0, 0, Some(6)));
+        assert_eq!(resolve(AutoPad::SameLower, None, 3, 2, 0), (1, 1, None));
+        // output_padding feeds the SAME total: full 7 + 1, SAME wants 6, even split.
+        assert_eq!(resolve(AutoPad::SameUpper, None, 3, 2, 1), (1, 1, None));
+        // output_shape without auto_pad splits like SAME_LOWER.
+        assert_eq!(resolve(AutoPad::NotSet, Some(6), 3, 2, 0), (1, 1, None));
+        // output_shape past the full result grows the end with no pads.
+        assert_eq!(resolve(AutoPad::NotSet, Some(8), 3, 2, 0), (0, 1, None));
+        // Stride larger than the kernel extent: negative SAME total, grown at the end.
+        assert_eq!(resolve(AutoPad::SameUpper, None, 3, 4, 0), (0, 1, None));
+    }
 }

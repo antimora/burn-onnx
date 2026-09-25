@@ -8,7 +8,11 @@ fn resolve_padding(
         &node.inputs[0],
         super::conv_helpers::ConvTransposeGeometry {
             auto_pad: &node.config.auto_pad,
-            output_shape: node.config.output_shape.as_deref(),
+            output_shape: node
+                .config
+                .output_shape
+                .as_ref()
+                .map(|shape| shape.as_slice()),
             padding: &node.config.padding,
             padding_out: &node.config.padding_out,
             kernel: &node.config.kernel_size,
@@ -239,6 +243,35 @@ mod tests {
                     1,
                 ),
             );
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_conv_transpose_3d_output_shape_crops_one_axis() {
+        // Full sizes [4 + 1, 3, 6], requested [4, 3, 5] under SAME_UPPER: the first axis
+        // absorbs output_padding, only the last one needs a slice.
+        let config = ConvTranspose3dConfig::new(
+            [2, 2, 3],
+            [2, 1, 3],
+            [1, 1, 1],
+            [0, 0, 0],
+            [1, 0, 0],
+            1,
+            AutoPad::SameUpper,
+            Some([4, 3, 5]),
+        );
+        let node = ConvTranspose3dNodeBuilder::new("conv1")
+            .input_tensor_shape("input", vec![1, 1, 2, 2, 2], DType::F32)
+            .input_static_tensor_shape("weight", vec![1, 1, 2, 2, 3], DType::F32)
+            .output_tensor("output", 5, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<5>) -> Tensor<5> {
+            let output = self.conv1.forward(input).slice(s![.., .., .., .., 0..5]);
             output
         }
         ");

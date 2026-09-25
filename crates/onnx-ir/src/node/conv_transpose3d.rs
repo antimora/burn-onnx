@@ -12,7 +12,7 @@ use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
 
 use crate::ir::{Argument, Node, RawNode};
-use crate::node::padding::AutoPad;
+use crate::node::padding::{AutoPad, conv_transpose_ints as ints};
 
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
@@ -37,17 +37,19 @@ pub struct ConvTranspose3dConfig {
     pub stride: [usize; 3],
     /// Dilation of the convolutional kernel.
     pub dilation: [usize; 3],
-    /// Padding.
+    /// Symmetric explicit `pads`. Only used when `auto_pad` is `NotSet` and `output_shape` is
+    /// `None`.
     pub padding: [usize; 3],
     /// Output padding.
     pub padding_out: [usize; 3],
     /// Groups.
     pub groups: usize,
-    /// ONNX `auto_pad`. `SAME_UPPER`/`SAME_LOWER` derive the pads from the input size.
+    /// ONNX `auto_pad`. `VALID` means zero pads, `SAME_UPPER`/`SAME_LOWER` derive them from the
+    /// input size.
     pub auto_pad: AutoPad,
     /// ONNX `output_shape`, spatial dimensions only. When set, the pads derive from it and
     /// `padding` is ignored.
-    pub output_shape: Option<Vec<usize>>,
+    pub output_shape: Option<[usize; 3]>,
 }
 
 pub(crate) struct Convtranspose3dProcessor;
@@ -81,13 +83,22 @@ impl NodeProcessor for Convtranspose3dProcessor {
         crate::node::padding::validate_conv_transpose_pads(
             node,
             &config.auto_pad,
-            config.output_shape.as_deref(),
+            config.output_shape.is_some(),
         )?;
 
-        // Output type inference
-        crate::processor::same_as_input(node);
-
-        Ok(())
+        crate::node::padding::conv_transpose_output_type(
+            node,
+            crate::node::padding::ConvTransposeDims {
+                kernel: &config.kernel_size,
+                stride: &config.stride,
+                dilation: &config.dilation,
+                padding: &config.padding,
+                output_padding: &config.padding_out,
+                groups: config.groups,
+                auto_pad: &config.auto_pad,
+                output_shape: config.output_shape.as_ref().map(|shape| shape.as_slice()),
+            },
+        )
     }
 
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
@@ -103,12 +114,16 @@ impl NodeProcessor for Convtranspose3dProcessor {
         // Extract attributes
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "kernel_shape" => kernel_shape = value.clone().into_i64s(),
-                "strides" => stride = value.clone().into_i64s(),
+                "kernel_shape" => {
+                    kernel_shape = ints("kernel_shape", &value.clone().into_i64s(), 1)?
+                }
+                "strides" => stride = ints("strides", &value.clone().into_i64s(), 1)?,
                 "pads" => pads = value.clone().into_i64s(),
-                "dilations" => dilations = value.clone().into_i64s(),
-                "group" => group = value.clone().into_i64() as usize,
-                "output_padding" => output_padding = value.clone().into_i64s(),
+                "dilations" => dilations = ints("dilations", &value.clone().into_i64s(), 1)?,
+                "group" => group = ints("group", &[value.clone().into_i64()], 1)?[0],
+                "output_padding" => {
+                    output_padding = ints("output_padding", &value.clone().into_i64s(), 0)?
+                }
                 "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string())?,
                 "output_shape" => {
                     output_shape = Some(crate::node::padding::conv_transpose_output_shape(
@@ -153,30 +168,18 @@ impl NodeProcessor for Convtranspose3dProcessor {
 
             [weight_shape[2], weight_shape[3], weight_shape[4]]
         } else {
-            [
-                kernel_shape[0] as _,
-                kernel_shape[1] as _,
-                kernel_shape[2] as _,
-            ]
+            [kernel_shape[0], kernel_shape[1], kernel_shape[2]]
         };
 
         let config = ConvTranspose3dConfig::new(
             kernel_size,
-            [stride[0] as usize, stride[1] as usize, stride[2] as usize],
-            [
-                dilations[0] as usize,
-                dilations[1] as usize,
-                dilations[2] as usize,
-            ],
+            [stride[0], stride[1], stride[2]],
+            [dilations[0], dilations[1], dilations[2]],
             [pads[0] as usize, pads[1] as usize, pads[2] as usize],
-            [
-                output_padding[0] as usize,
-                output_padding[1] as usize,
-                output_padding[2] as usize,
-            ],
+            [output_padding[0], output_padding[1], output_padding[2]],
             group,
             auto_pad,
-            output_shape,
+            output_shape.map(|shape| [shape[0], shape[1], shape[2]]),
         );
 
         Ok(config)
@@ -439,5 +442,24 @@ mod tests {
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
         assert_eq!(config.kernel_size, [2, 2, 2]); // Inferred via weight tensor shape
+    }
+
+    #[test]
+    fn test_conv_transpose3d_ignores_unknown_attribute() {
+        let mut node = create_test_node(
+            vec![2, 2, 2],
+            vec![1, 1, 1],
+            vec![0, 0, 0, 0, 0, 0],
+            vec![1, 1, 1],
+            vec![0, 0, 0],
+            1,
+            false,
+            None,
+        )
+        .attr_int("some_future_attribute", 1)
+        .build_with_graph_data(16);
+        Convtranspose3dProcessor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .unwrap();
     }
 }

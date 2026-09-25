@@ -24,15 +24,18 @@ mod tests {
             &device,
         );
 
-        let (y1, y2, y3, y4) = model.forward(
+        let (y1, y2, y3, y4, y5, y6, y7) = model.forward(
             seq([1, 1, 3], 0.5),
             seq([1, 1, 2, 3], 0.4),
             seq([1, 1, 2, 2, 2], 0.3),
             seq([1, 1, 2, 2], 0.6),
+            seq([1, 1, 2, 2], 0.7),
+            seq([1, 1, 3], 0.5),
+            seq([1, 1, 2, 2], 0.5),
         );
 
-        // Ground truth from conv_transpose_auto_pad.py (ReferenceEvaluator, checked
-        // against ONNX Runtime).
+        // Ground truth from conv_transpose_auto_pad.py (ONNX Runtime, checked against the
+        // reference evaluator where it runs).
         let tolerance = Tolerance::absolute(1e-4);
         y1.to_data().assert_approx_eq::<f32>(
             &TensorData::from([[
@@ -83,6 +86,25 @@ mod tests {
                 [1.8, 1.9, 1.2, 1.6],
                 [2.0, 2.1, 2.0, 2.4],
                 [2.0, 2.0, 2.0, 2.0],
+            ]]]),
+            tolerance,
+        );
+        // The second layer crops to twice the first layer's output, not its input.
+        assert_eq!(y5.dims(), [1, 1, 8, 8]);
+        let y5_sum = y5.sum().into_scalar::<f32>();
+        assert!((y5_sum - -7.341).abs() < 1e-3, "y5 sum {y5_sum}");
+        // Odd total pad with no auto_pad: the extra unit is trimmed from the start.
+        y6.to_data().assert_approx_eq::<f32>(
+            &TensorData::from([[[0.5f32, 0.5, 0.25, 0.0, 0.0, 0.0]]]),
+            tolerance,
+        );
+        y7.to_data().assert_approx_eq::<f32>(
+            &TensorData::from([[[
+                [1.0f32, 0.75, 1.0, 0.375, 0.25],
+                [0.25, 0.0, -0.125, 0.0, -0.125],
+                [-0.5, -0.75, -1.75, -0.75, -0.75],
+                [0.0, 0.0, -0.125, 0.0, 0.125],
+                [0.0, 0.0, 0.25, 0.375, 0.5],
             ]]]),
             tolerance,
         );

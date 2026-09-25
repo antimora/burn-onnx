@@ -166,7 +166,7 @@ fn conv_transpose(graph: &OnnxGraph) {
         convtranspose_input: F32[1, 3, 5, 5]
         _: F32[3, 2, 3, 3] [static(1)]
       Outputs:
-        convtranspose2d1_out1: F32[1, 3, 5, 5]
+        convtranspose2d1_out1: F32[1, 2, 7, 7]
       Config:
         ConvTranspose2dConfig {
             kernel_size: [

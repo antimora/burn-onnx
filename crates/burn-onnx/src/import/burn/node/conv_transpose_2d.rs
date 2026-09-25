@@ -8,7 +8,11 @@ fn resolve_padding(
         &node.inputs[0],
         super::conv_helpers::ConvTransposeGeometry {
             auto_pad: &node.config.auto_pad,
-            output_shape: node.config.output_shape.as_deref(),
+            output_shape: node
+                .config
+                .output_shape
+                .as_ref()
+                .map(|shape| shape.as_slice()),
             padding: &node.config.padding,
             padding_out: &node.config.padding_out,
             kernel: &node.config.kernel_size,
@@ -242,7 +246,7 @@ mod tests {
     fn create_derived_pad_node(
         stride: [usize; 2],
         auto_pad: AutoPad,
-        output_shape: Option<Vec<usize>>,
+        output_shape: Option<[usize; 2]>,
         static_weight: bool,
     ) -> ConvTranspose2dNode {
         let config = ConvTranspose2dConfig::new(
@@ -298,7 +302,8 @@ mod tests {
 
     #[test]
     fn test_conv_transpose_2d_auto_pad_same_lower() {
-        // SAME_LOWER puts the odd pad at the start, which burn's padding_out absorbs.
+        // SAME_LOWER puts the odd pad at the start: burn trims it from both ends and
+        // padding_out restores the end.
         let node = create_derived_pad_node([2, 2], AutoPad::SameLower, None, false);
         let code = codegen_forward_default(&node);
         assert_snapshot!(code, @r"
@@ -317,7 +322,7 @@ mod tests {
     #[test]
     fn test_conv_transpose_2d_output_shape_field_init() {
         // Full size [9, 7], requested [10, 8]: the output grows by one at the end.
-        let node = create_derived_pad_node([3, 2], AutoPad::NotSet, Some(vec![10, 8]), true);
+        let node = create_derived_pad_node([3, 2], AutoPad::NotSet, Some([10, 8]), true);
         let code = codegen_field_init(&node);
         assert_snapshot!(code, @r"
         let conv1 = ConvTranspose2dConfig::new([1, 2], [3, 3])

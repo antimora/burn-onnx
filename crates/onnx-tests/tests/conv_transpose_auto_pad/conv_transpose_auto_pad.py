@@ -14,8 +14,12 @@
 #   y1: 1D SAME_UPPER, the odd pad lands at the end and is cropped off
 #   y2: 2D SAME_LOWER with dilation, the odd pad lands at the start
 #   y3: 3D SAME_UPPER with output_shape and output_padding
-#   y4: 2D output_shape larger than the full result, grown at the end
-# The reference evaluator is the ground truth; ONNX Runtime must agree with it.
+#   y4: 2D output_shape one past the full result on the first axis, grown at the end
+#   y5: two stacked 2D SAME_UPPER layers, the second sized from the first's output
+#   y6: 1D output_shape without auto_pad and a positive total pad, odd unit at the start
+#   y7: 2D VALID
+# ONNX Runtime is the ground truth. The reference evaluator must agree on every output
+# except y6, where its col2im shape check rejects the node.
 
 import numpy as np
 import onnx
@@ -35,12 +39,18 @@ def main():
         helper.make_tensor_value_info("x2", f, [1, 1, 2, 3]),
         helper.make_tensor_value_info("x3", f, [1, 1, 2, 2, 2]),
         helper.make_tensor_value_info("x4", f, [1, 1, 2, 2]),
+        helper.make_tensor_value_info("x5", f, [1, 1, 2, 2]),
+        helper.make_tensor_value_info("x6", f, [1, 1, 3]),
+        helper.make_tensor_value_info("x7", f, [1, 1, 2, 2]),
     ]
     outputs = [
         helper.make_tensor_value_info("y1", f, [1, 2, 6]),
         helper.make_tensor_value_info("y2", f, [1, 1, 4, 6]),
         helper.make_tensor_value_info("y3", f, [1, 1, 4, 3, 5]),
         helper.make_tensor_value_info("y4", f, [1, 1, 5, 4]),
+        helper.make_tensor_value_info("y5", f, [1, 1, 8, 8]),
+        helper.make_tensor_value_info("y6", f, [1, 1, 6]),
+        helper.make_tensor_value_info("y7", f, [1, 1, 5, 5]),
     ]
     initializers = [
         numpy_helper.from_array(seq([1, 2, 3], 0.3), "w1"),
@@ -50,6 +60,10 @@ def main():
         numpy_helper.from_array(np.array([0.25], dtype=np.float32), "b3"),
         numpy_helper.from_array(seq([1, 1, 2, 2], 0.5), "w4"),
         numpy_helper.from_array(np.array([2.0], dtype=np.float32), "b4"),
+        numpy_helper.from_array(seq([1, 2, 3, 3], 0.1), "w5a"),
+        numpy_helper.from_array(seq([2, 1, 3, 3], 0.05), "w5b"),
+        numpy_helper.from_array(seq([1, 1, 3], 0.5), "w6"),
+        numpy_helper.from_array(seq([1, 1, 3, 3], 0.25), "w7"),
     ]
     nodes = [
         helper.make_node(
@@ -75,6 +89,20 @@ def main():
         helper.make_node(
             "ConvTranspose", ["x4", "w4", "b4"], ["y4"], strides=[2, 2], output_shape=[5, 4]
         ),
+        helper.make_node(
+            "ConvTranspose", ["x5", "w5a"], ["h5"], auto_pad="SAME_UPPER", strides=[2, 2]
+        ),
+        helper.make_node(
+            "ConvTranspose", ["h5", "w5b"], ["y5"], auto_pad="SAME_UPPER", strides=[2, 2]
+        ),
+        helper.make_node("ConvTranspose", ["x6", "w6"], ["y6"], strides=[2], output_shape=[6]),
+        helper.make_node(
+            "ConvTranspose",
+            ["x7", "w7"],
+            ["y7"],
+            auto_pad="VALID",
+            strides=[2, 2],
+        ),
     ]
     graph = helper.make_graph(
         nodes, "conv_transpose_auto_pad", inputs, outputs, initializer=initializers
@@ -89,13 +117,33 @@ def main():
         "x2": seq([1, 1, 2, 3], 0.4),
         "x3": seq([1, 1, 2, 2, 2], 0.3),
         "x4": seq([1, 1, 2, 2], 0.6),
+        "x5": seq([1, 1, 2, 2], 0.7),
+        "x6": seq([1, 1, 3], 0.5),
+        "x7": seq([1, 1, 2, 2], 0.5),
     }
-    expected = ReferenceEvaluator(model).run(None, feeds)
-    actual = ort.InferenceSession(model.SerializeToString()).run(None, feeds)
-    for name, value, ort_value in zip(["y1", "y2", "y3", "y4"], expected, actual):
-        np.testing.assert_allclose(value, ort_value, atol=1e-5)
-        print(f"{name} {list(value.shape)} sum={value.sum():.5f}: {np.round(value, 5).tolist()}")
+    names = [out.name for out in outputs]
+    expected = dict(zip(names, ort.InferenceSession(model.SerializeToString()).run(None, feeds)))
 
+    # Cross-check against the reference evaluator on the graph without y6.
+    checked = [node for node in nodes if node.output[0] != "y6"]
+    reference_graph = helper.make_graph(
+        checked,
+        "reference",
+        [i for i in inputs if i.name != "x6"],
+        [o for o in outputs if o.name != "y6"],
+        initializer=initializers,
+    )
+    reference_model = helper.make_model(
+        reference_graph, opset_imports=[helper.make_opsetid("", 16)]
+    )
+    reference_feeds = {k: v for k, v in feeds.items() if k != "x6"}
+    reference = ReferenceEvaluator(reference_model).run(None, reference_feeds)
+    for output, value in zip(reference_graph.output, reference):
+        np.testing.assert_allclose(value, expected[output.name], atol=1e-5)
+
+    for name in names:
+        value = expected[name]
+        print(f"{name} {list(value.shape)} sum={value.sum():.5f}: {np.round(value, 5).tolist()}")
 
 if __name__ == "__main__":
     main()

@@ -16,7 +16,7 @@ use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
 
 use crate::ir::{Argument, Node, RawNode};
-use crate::node::padding::AutoPad;
+use crate::node::padding::{AutoPad, conv_transpose_ints as ints};
 
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
@@ -43,15 +43,17 @@ pub struct ConvTranspose1dConfig {
     pub dilation: usize,
     /// Number of groups
     pub groups: usize,
-    /// Padding size
+    /// Symmetric explicit `pads`. Only used when `auto_pad` is `NotSet` and `output_shape` is
+    /// `None`.
     pub padding: usize,
     /// Output padding size
     pub padding_out: usize,
-    /// ONNX `auto_pad`. `SAME_UPPER`/`SAME_LOWER` derive the pads from the input size.
+    /// ONNX `auto_pad`. `VALID` means zero pads, `SAME_UPPER`/`SAME_LOWER` derive them from the
+    /// input size.
     pub auto_pad: AutoPad,
     /// ONNX `output_shape`, spatial dimensions only. When set, the pads derive from it and
     /// `padding` is ignored.
-    pub output_shape: Option<Vec<usize>>,
+    pub output_shape: Option<usize>,
 }
 
 pub(crate) struct Convtranspose1dProcessor;
@@ -85,13 +87,22 @@ impl NodeProcessor for Convtranspose1dProcessor {
         crate::node::padding::validate_conv_transpose_pads(
             node,
             &config.auto_pad,
-            config.output_shape.as_deref(),
+            config.output_shape.is_some(),
         )?;
 
-        // Output type inference
-        crate::processor::same_as_input(node);
-
-        Ok(())
+        crate::node::padding::conv_transpose_output_type(
+            node,
+            crate::node::padding::ConvTransposeDims {
+                kernel: std::slice::from_ref(&config.kernel_size),
+                stride: std::slice::from_ref(&config.stride),
+                dilation: std::slice::from_ref(&config.dilation),
+                padding: std::slice::from_ref(&config.padding),
+                output_padding: std::slice::from_ref(&config.padding_out),
+                groups: config.groups,
+                auto_pad: &config.auto_pad,
+                output_shape: config.output_shape.as_ref().map(std::slice::from_ref),
+            },
+        )
     }
 
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
@@ -107,12 +118,16 @@ impl NodeProcessor for Convtranspose1dProcessor {
         // Extract attributes
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "kernel_shape" => kernel_shape = value.clone().into_i64s(),
-                "strides" => stride = value.clone().into_i64s(),
+                "kernel_shape" => {
+                    kernel_shape = ints("kernel_shape", &value.clone().into_i64s(), 1)?
+                }
+                "strides" => stride = ints("strides", &value.clone().into_i64s(), 1)?,
                 "pads" => pads = value.clone().into_i64s(),
-                "dilations" => dilations = value.clone().into_i64s(),
-                "group" => group = value.clone().into_i64() as usize,
-                "output_padding" => output_padding = value.clone().into_i64s(),
+                "dilations" => dilations = ints("dilations", &value.clone().into_i64s(), 1)?,
+                "group" => group = ints("group", &[value.clone().into_i64()], 1)?[0],
+                "output_padding" => {
+                    output_padding = ints("output_padding", &value.clone().into_i64s(), 0)?
+                }
                 "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string())?,
                 "output_shape" => {
                     output_shape = Some(crate::node::padding::conv_transpose_output_shape(
@@ -153,18 +168,18 @@ impl NodeProcessor for Convtranspose1dProcessor {
             weight_shape[2]
         } else {
             // Was set explicitly via attributes- use that
-            kernel_shape[0] as _
+            kernel_shape[0]
         };
 
         let config = ConvTranspose1dConfig::new(
             kernel_size,
-            stride[0] as usize,
-            dilations[0] as usize,
+            stride[0],
+            dilations[0],
             group,
             pads[0] as usize,
-            output_padding[0] as usize,
+            output_padding[0],
             auto_pad,
-            output_shape,
+            output_shape.map(|shape| shape[0]),
         );
 
         Ok(config)
@@ -384,5 +399,24 @@ mod tests {
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
         assert_eq!(config.kernel_size, 4); // Inferred via weight tensor shape
+    }
+
+    #[test]
+    fn test_conv_transpose1d_ignores_unknown_attribute() {
+        let mut node = create_test_node(
+            vec![4],
+            vec![1],
+            vec![0, 0],
+            vec![1],
+            1,
+            vec![0],
+            false,
+            None,
+        )
+        .attr_int("some_future_attribute", 1)
+        .build_with_graph_data(16);
+        Convtranspose1dProcessor
+            .infer_types(&mut node, 16, &OutputPreferences::new())
+            .unwrap();
     }
 }
