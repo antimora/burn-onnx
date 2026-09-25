@@ -4051,30 +4051,30 @@ status = "skip-compile"
 reason = "mismatched types: expected `bf16`, found floating-point number"
 
 [test_range_bfloat16_type_positive_delta_expanded]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"Failed to build Loop body: Type inference failed: Invalid type inference: Node 'identity2' output 'identity2_out1' has rank-0 tensor. Rank-0 tensors should be Scalar type instead.\")"
+status = "skip-compile"
+reason = "no method named `ceil` found for struct `bf16` in the current scope: method not found in `bf16`"
 
 [test_range_float16_type_positive_delta]
 status = "skip-compile"
 reason = "mismatched types: expected `f16`, found floating-point number"
 
 [test_range_float16_type_positive_delta_expanded]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"Failed to build Loop body: Type inference failed: Invalid type inference: Node 'identity2' output 'identity2_out1' has rank-0 tensor. Rank-0 tensors should be Scalar type instead.\")"
+status = "skip-compile"
+reason = "no method named `ceil` found for struct `half::f16` in the current scope: method not found in `half::f16`"
 
 [test_range_float_type_positive_delta]
 status = "pass"
 
 [test_range_float_type_positive_delta_expanded]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"Failed to build Loop body: Type inference failed: Invalid type inference: Node 'identity2' output 'identity2_out1' has rank-0 tensor. Rank-0 tensors should be Scalar type instead.\")"
+status = "skip-compile"
+reason = "mismatched types: expected `Tensor<_>`, found `f32`"
 
 [test_range_int32_type_negative_delta]
 status = "pass"
 
 [test_range_int32_type_negative_delta_expanded]
-status = "skip-codegen"
-reason = "Config extraction failed: Custom(\"Failed to build Loop body: Type inference failed: Invalid type inference: Node 'identity2' output 'identity2_out1' has rank-0 tensor. Rank-0 tensors should be Scalar type instead.\")"
+status = "skip-compile"
+reason = "mismatched types: expected `Tensor<_>`, found `f32`"
 
 [test_reciprocal]
 status = "pass"

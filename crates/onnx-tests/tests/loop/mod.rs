@@ -6,13 +6,14 @@ include_models!(
     loop_dynamic_cond,
     loop_multi_deps,
     loop_nested,
-    loop_scan_outputs
+    loop_scan_outputs,
+    loop_untyped_carried
 );
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::{Device, Tensor, TensorData};
+    use burn::tensor::{DType, Device, Int, Tensor, TensorData};
 
     #[test]
     fn loop_simple_3_iterations() {
@@ -409,5 +410,52 @@ mod tests {
         iteration_numbers
             .to_data()
             .assert_approx_eq::<f32>(&expected_iterations, burn::tensor::Tolerance::default());
+    }
+
+    #[test]
+    fn loop_untyped_carried_input() {
+        // The body's loop-carried inputs have no declared type; each takes the type of its
+        // v_initial (f32 [2, 3] and int64 [3]) instead of defaulting to a rank-0 tensor.
+        let device = Default::default();
+        let model: loop_untyped_carried::Model = Default::default();
+
+        let initial = Tensor::<2>::from_data(
+            TensorData::from([
+                [
+                    0.49671414494514465,
+                    -0.13826429843902588,
+                    0.6476885676383972,
+                ],
+                [
+                    1.5230298042297363,
+                    -0.2341533750295639,
+                    -0.23413695394992828,
+                ],
+            ]),
+            &device,
+        );
+        let x = Tensor::<2>::from_data(
+            TensorData::from([
+                [1.5792127847671509, 0.7674347162246704, -0.4694743752479553],
+                [0.5425600409507751, -0.4634176790714264, -0.4657297432422638],
+            ]),
+            &device,
+        );
+
+        let count_initial =
+            Tensor::<1, Int>::from_data(TensorData::from([10i64, 20, 30]), (&device, DType::I64));
+
+        let (output, count_final) = model.forward(3, true, initial, count_initial, x);
+
+        let expected = TensorData::from([
+            [5.2343525886535645, 2.1640398502349854, -0.7607345581054688],
+            [3.150710105895996, -1.624406337738037, -1.6313261985778809],
+        ]);
+        output
+            .to_data()
+            .assert_approx_eq::<f32>(&expected, burn::tensor::Tolerance::default());
+        count_final
+            .to_data()
+            .assert_eq(&TensorData::from([13i64, 23, 33]), true);
     }
 }

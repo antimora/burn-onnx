@@ -16,6 +16,7 @@ use onnx_ir_derive::NodeBuilder;
 use crate::ir::{ArgType, Argument, DType, Node, OnnxGraph, RawNode};
 use crate::processor::{
     NodeProcessor, OutputPreferences, ProcessError, build_outer_scope_from_inputs,
+    get_onnx_input_count,
 };
 
 /// Helper function to transform type for scan output concatenation
@@ -283,11 +284,28 @@ impl NodeProcessor for LoopProcessor {
             .clone();
 
         // Build outer scope types map from additional inputs (beyond ONNX inputs)
-        let outer_scope = build_outer_scope_from_inputs(node);
+        let mut outer_scope = build_outer_scope_from_inputs(node);
 
         // Handle DeferredGraph and Graph
         let body = match body_attr {
             crate::ir::AttributeValue::DeferredGraph(deferred) => {
+                // ONNX lets a body omit the type of a loop-carried input; it then takes the
+                // type of the matching v_initial. Without this the input would default to a
+                // rank-0 tensor. Graph inputs resolve before outer scope, so these entries
+                // only supply the type.
+                let onnx_input_count = get_onnx_input_count(node);
+                for (i, body_input) in deferred.proto.input.iter().enumerate().skip(2) {
+                    let typed = body_input
+                        .type_
+                        .as_ref()
+                        .is_some_and(|ty| ty.has_tensor_type());
+                    if typed || i >= onnx_input_count {
+                        continue;
+                    }
+                    let arg = Argument::new(body_input.name.clone(), node.inputs[i].ty.clone());
+                    outer_scope.insert(body_input.name.clone(), arg);
+                }
+
                 // Build the subgraph now with outer-scope types
                 log::debug!(
                     "Building deferred Loop body subgraph with {} outer-scope types",
