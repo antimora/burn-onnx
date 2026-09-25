@@ -21,7 +21,6 @@
 //!
 //! ## Missing Test Coverage
 //! - TODO: No test for Linear without bias (2 inputs only) - Optional bias not tested
-//! - TODO: No test validating weight tensor must be 2D - 1D or 3D+ weights should be rejected
 //! - TODO: No test for input rank validation - Spec requires specific input dimensions for matrix multiplication
 //! - TODO: No test for dtype mismatch between inputs - All inputs should have same dtype
 //! - TODO: No test for zero-size dimensions - Edge case for empty matrices
@@ -85,7 +84,6 @@ impl NodeProcessor for LinearProcessor {
         _opset: usize,
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
-        // TODO: Validate weight tensor (input 1) is exactly 2D - Higher or lower rank weights are invalid - burn/crates/onnx-ir/src/node/linear.rs:86
         // TODO: Validate all inputs have compatible dtypes - Type mismatch would cause runtime errors - burn/crates/onnx-ir/src/node/linear.rs:86
         // TODO: Validate input rank is compatible for matrix multiplication - At least 2D required - burn/crates/onnx-ir/src/node/linear.rs:86
 
@@ -101,6 +99,14 @@ impl NodeProcessor for LinearProcessor {
                     ),
                 });
             }
+        }
+
+        // Gemm's B is 2D by spec, but the Gemm fusion does not check it (MatMul fusion does)
+        let weight_rank = node.inputs[1].ty.rank();
+        if weight_rank != 2 {
+            return Err(ProcessError::Custom(format!(
+                "Linear expects weight tensor of rank 2, got rank {weight_rank}"
+            )));
         }
 
         let tensor = match &node.inputs[0].ty {
@@ -265,6 +271,21 @@ mod tests {
             result,
             Err(ProcessError::InvalidInputCount { .. })
         ));
+    }
+
+    #[test]
+    fn test_linear_rejects_non_2d_weight() {
+        let mut node = TestNodeBuilder::new(NodeType::Linear, "test_linear")
+            .input_tensor_f32("input", 2, None)
+            .input_tensor_f32_data("weight", vec![0.0; 60], vec![2, 10, 3])
+            .output_tensor_f32("output", 2, None)
+            .attr_int("transpose_weight", 1)
+            .build_with_graph_data(16);
+
+        let processor = LinearProcessor;
+        let prefs = OutputPreferences::new();
+        let result = processor.infer_types(&mut node, 16, &prefs);
+        assert!(matches!(result, Err(ProcessError::Custom(msg)) if msg.contains("rank 3")));
     }
 
     #[test]
