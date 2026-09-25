@@ -173,6 +173,31 @@ fn mul(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn rnn(graph: &OnnxGraph) {
+    let node = find_node(graph, "rnn");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Rnn "rnn1"
+      Inputs:
+        rnn_input: F32[1, 2, 3]
+        _: F32[1, 4, 3] [static(9)]
+        _: F32[1, 4, 4] [static(10)]
+      Outputs:
+        rnn1_out1: F32[?, ?, ?, ?]
+      Config:
+        RnnConfig {
+            input_size: 3,
+            hidden_size: 4,
+            direction: Forward,
+            has_bias: false,
+            has_initial_h: false,
+            batch_first: false,
+            clip: None,
+            hidden_activation: Tanh,
+        }
+    "#);
+}
+
+#[rstest]
 fn relu(graph: &OnnxGraph) {
     let node = find_node(graph, "relu");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -191,7 +216,7 @@ fn reshape(graph: &OnnxGraph) {
     Reshape "reshape1"
       Inputs:
         reshape_input: F32[2, 3, 4]
-        _: I64[2] [static(9)]
+        _: I64[2] [static(11)]
       Outputs:
         reshape1_out1: F32[6, 4]
       Config:

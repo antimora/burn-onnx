@@ -63,14 +63,57 @@ fn bitwise_xor(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn col2_im(graph: &OnnxGraph) {
+    let node = find_node(graph, "col2im");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Col2Im "col2im1"
+      Inputs:
+        col2im_input: F32[1, 4, 16]
+        _: I64[2] [static(0)]
+        _: I64[2] [static(1)]
+      Outputs:
+        col2im1_out1: F32[1, 1, 5, 5]
+      Config:
+        Col2ImConfig {
+            image_shape: Static(
+                [
+                    5,
+                    5,
+                ],
+            ),
+            block_shape: Static(
+                [
+                    2,
+                    2,
+                ],
+            ),
+            dilations: [
+                1,
+                1,
+            ],
+            pads: [
+                0,
+                0,
+                0,
+                0,
+            ],
+            strides: [
+                1,
+                1,
+            ],
+        }
+    "#);
+}
+
+#[rstest]
 fn group_normalization(graph: &OnnxGraph) {
     let node = find_node(graph, "groupnormalization");
     insta::assert_snapshot!(format!("{node}"), @r#"
     GroupNormalization "groupnormalization1"
       Inputs:
         groupnormalization_input: F32[1, 4, 3, 3]
-        _: F32[4] [static(0)]
-        _: F32[4] [static(1)]
+        _: F32[4] [static(2)]
+        _: F32[4] [static(3)]
       Outputs:
         groupnormalization1_out1: F32[1, 4, 3, 3]
       Config:
@@ -114,6 +157,28 @@ fn lp_pool(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn lp_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "lppool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    LpPool1d "lppool1d1"
+      Inputs:
+        lppool1d_input: F32[1, 3, 8]
+      Outputs:
+        lppool1d1_out1: F32[1, 3, 8]
+      Config:
+        LpPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            padding: Valid,
+            dilation: 1,
+            ceil_mode: false,
+            auto_pad: NotSet,
+            p: 2.0,
+        }
+    "#);
+}
+
+#[rstest]
 fn mish(graph: &OnnxGraph) {
     let node = find_node(graph, "mish");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -132,8 +197,8 @@ fn pad(graph: &OnnxGraph) {
     Pad "pad1"
       Inputs:
         pad_input: F32[2, 3]
-        _: I64[4] [static(2)]
-        _: ScalarNative(F32) [static(3)]
+        _: I64[4] [static(4)]
+        _: ScalarNative(F32) [static(5)]
       Outputs:
         pad1_out1: F32[2, 3]
       Config:
@@ -165,7 +230,7 @@ fn reduce_l1(graph: &OnnxGraph) {
     ReduceL1 "reducel11"
       Inputs:
         reducel1_input: F32[2, 3, 4]
-        _: I64[1] [static(4)]
+        _: I64[1] [static(6)]
       Outputs:
         reducel11_out1: F32[2, 1, 4]
       Config:
@@ -188,7 +253,7 @@ fn reduce_l2(graph: &OnnxGraph) {
     ReduceL2 "reducel21"
       Inputs:
         reducel2_input: F32[2, 3, 4]
-        _: I64[1] [static(5)]
+        _: I64[1] [static(7)]
       Outputs:
         reducel21_out1: F32[2, 1, 4]
       Config:
@@ -211,7 +276,7 @@ fn reduce_log_sum(graph: &OnnxGraph) {
     ReduceLogSum "reducelogsum1"
       Inputs:
         reducelogsum_input: F32[2, 3, 4]
-        _: I64[1] [static(6)]
+        _: I64[1] [static(8)]
       Outputs:
         reducelogsum1_out1: F32[2, 1, 4]
       Config:
@@ -234,7 +299,7 @@ fn reduce_log_sum_exp(graph: &OnnxGraph) {
     ReduceLogSumExp "reducelogsumexp1"
       Inputs:
         reducelogsumexp_input: F32[2, 3, 4]
-        _: I64[1] [static(7)]
+        _: I64[1] [static(9)]
       Outputs:
         reducelogsumexp1_out1: F32[2, 1, 4]
       Config:
@@ -257,7 +322,7 @@ fn reduce_max(graph: &OnnxGraph) {
     ReduceMax "reducemax1"
       Inputs:
         reducemax_input: F32[2, 3, 4]
-        _: I64[1] [static(8)]
+        _: I64[1] [static(10)]
       Outputs:
         reducemax1_out1: F32[2, 1, 4]
       Config:
@@ -280,7 +345,7 @@ fn reduce_mean(graph: &OnnxGraph) {
     ReduceMean "reducemean1"
       Inputs:
         reducemean_input: F32[2, 3, 4]
-        _: I64[1] [static(9)]
+        _: I64[1] [static(11)]
       Outputs:
         reducemean1_out1: F32[2, 1, 4]
       Config:
@@ -303,7 +368,7 @@ fn reduce_min(graph: &OnnxGraph) {
     ReduceMin "reducemin1"
       Inputs:
         reducemin_input: F32[2, 3, 4]
-        _: I64[1] [static(10)]
+        _: I64[1] [static(12)]
       Outputs:
         reducemin1_out1: F32[2, 1, 4]
       Config:
@@ -326,7 +391,7 @@ fn reduce_prod(graph: &OnnxGraph) {
     ReduceProd "reduceprod1"
       Inputs:
         reduceprod_input: F32[2, 3, 4]
-        _: I64[1] [static(11)]
+        _: I64[1] [static(13)]
       Outputs:
         reduceprod1_out1: F32[2, 1, 4]
       Config:
@@ -349,7 +414,7 @@ fn reduce_sum_square(graph: &OnnxGraph) {
     ReduceSumSquare "reducesumsquare1"
       Inputs:
         reducesumsquare_input: F32[2, 3, 4]
-        _: I64[1] [static(12)]
+        _: I64[1] [static(14)]
       Outputs:
         reducesumsquare1_out1: F32[2, 1, 4]
       Config:
@@ -372,9 +437,9 @@ fn resize(graph: &OnnxGraph) {
     Resize "resize1"
       Inputs:
         resize_input: F32[1, 1, 2, 2]
-        _: F32[0] [static(13)]
-        _: F32[0] [static(14)]
-        _: I64[4] [static(15)]
+        _: F32[0] [static(15)]
+        _: F32[0] [static(16)]
+        _: I64[4] [static(17)]
       Outputs:
         resize1_out1: F32[1, 1, 2, 2]
       Config:
@@ -406,7 +471,7 @@ fn scatter_elements(graph: &OnnxGraph) {
     ScatterElements "scatterelements1"
       Inputs:
         scatterelements_input: F32[3, 3]
-        constant17_out1: I64[1, 3] [constant]
+        constant19_out1: I64[1, 3] [constant]
         scatterelements_updates: F32[1, 3]
       Outputs:
         scatterelements1_out1: F32[3, 3]
@@ -425,7 +490,7 @@ fn scatter_nd(graph: &OnnxGraph) {
     ScatterND "scatternd1"
       Inputs:
         scatternd_input: F32[4, 4]
-        constant18_out1: I64[2, 1] [constant]
+        constant20_out1: I64[2, 1] [constant]
         scatternd_updates: F32[2, 4]
       Outputs:
         scatternd1_out1: F32[4, 4]
@@ -443,7 +508,7 @@ fn split(graph: &OnnxGraph) {
     Split "split1"
       Inputs:
         split_input: F32[2, 6]
-        _: I64[2] [static(18)]
+        _: I64[2] [static(20)]
       Outputs:
         split1_out1: F32[2, 3]
         split1_out2: F32[2, 3]

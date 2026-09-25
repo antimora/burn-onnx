@@ -20,6 +20,7 @@ Usage:
 import re
 import sys
 from pathlib import Path
+from functools import partial
 from typing import Optional
 
 import numpy as np
@@ -155,19 +156,35 @@ SUPPORTED_OPS = {
     "SpaceToDepth": "space_to_depth",
     "ScatterElements": "scatter_elements",
     "ScatterND": "scatter_nd",
+    "Scatter": "scatter",
     # Matrix
     "MatMul": "matmul",
     "Gemm": "gemm",
     "MatMulInteger": "matmul_integer",
+    "Linear": "linear",
+    "QLinearMatMul": "qlinear_matmul",
+    "Einsum": "einsum",
+    "Det": "det",
     # Conv (generates Conv2d test)
     "Conv": "conv",
+    "Conv1d": "conv1d",
+    "Conv3d": "conv3d",
     "ConvTranspose": "conv_transpose",
+    "ConvTranspose1d": "conv_transpose1d",
+    "ConvTranspose3d": "conv_transpose3d",
+    "Col2Im": "col2im",
     # Pooling
     "AveragePool": "avg_pool",
+    "AveragePool1d": "avg_pool1d",
+    "AveragePool3d": "avg_pool3d",
     "MaxPool": "max_pool",
+    "MaxPool1d": "max_pool1d",
+    "MaxPool3d": "max_pool3d",
+    "GlobalMaxPool": "global_max_pool",
     "GlobalAveragePool": "global_avg_pool",
     "GlobalLpPool": "global_lp_pool",
     "LpPool": "lp_pool",
+    "LpPool1d": "lp_pool1d",
     # Normalization
     "BatchNormalization": "batch_norm",
     "InstanceNormalization": "instance_norm",
@@ -175,10 +192,18 @@ SUPPORTED_OPS = {
     "GroupNormalization": "group_norm",
     "LpNormalization": "lp_normalization",
     "MeanVarianceNormalization": "mean_variance_normalization",
+    "LRN": "lrn",
     # Utility
     "Dropout": "dropout",
     "Identity": "identity",
     "Cast": "cast",
+    "CastLike": "cast_like",
+    "Shrink": "shrink",
+    "Unique": "unique",
+    "NonMaxSuppression": "non_max_suppression",
+    # Quantization
+    "QuantizeLinear": "quantize_linear",
+    "DequantizeLinear": "dequantize_linear",
     "Where": "where_op_gen",
     "NonZero": "nonzero",
     "Constant": "constant",
@@ -203,8 +228,13 @@ SUPPORTED_OPS = {
     # RNN
     "LSTM": "lstm",
     "GRU": "gru",
+    "RNN": "rnn",
+    # Attention
+    "Attention": "attention",
     # Control flow
     "If": "if_op",
+    "Loop": "loop",
+    "Scan": "scan",
     # DeformConv
     "DeformConv": "deform_conv",
     # Signal processing
@@ -581,35 +611,53 @@ def make_matmul_integer(op_name: str, opset: int):
     return [node], [a, b], [out], []
 
 
-def make_conv(op_name: str, opset: int):
-    """Generate a 2D convolution node."""
-    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3, 5, 5])
-    w_init = numpy_helper.from_array(np.ones([2, 3, 3, 3], dtype=np.float32), name=_p(op_name, "weight"))
+# Dimensional variants (Conv1d, MaxPool3d, ...) are keyed by the onnx-ir node type
+# and built from the base ONNX op, whose version history they share.
+SPEC_ALIASES = {
+    "Conv1d": "Conv",
+    "Conv3d": "Conv",
+    "ConvTranspose1d": "ConvTranspose",
+    "ConvTranspose3d": "ConvTranspose",
+    "AveragePool1d": "AveragePool",
+    "AveragePool3d": "AveragePool",
+    "MaxPool1d": "MaxPool",
+    "MaxPool3d": "MaxPool",
+    "LpPool1d": "LpPool",
+    # Gemm with alpha=1, beta=1, transB=1 and a constant weight is fused into Linear
+    "Linear": "Gemm",
+}
+
+
+def onnx_op_type(op_name: str) -> str:
+    return SPEC_ALIASES.get(op_name, op_name)
+
+
+def make_conv(op_name: str, opset: int, spatial: int = 2):
+    """Generate a convolution node with `spatial` spatial dims."""
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3] + [5] * spatial)
+    w_init = numpy_helper.from_array(np.ones([2, 3] + [3] * spatial, dtype=np.float32), name=_p(op_name, "weight"))
     out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
-    node = helper.make_node(op_name, [_p(op_name, "input"), _p(op_name, "weight")], [_p(op_name, "output")], name=_p(op_name, "node"), kernel_shape=[3, 3])
+    node = helper.make_node(onnx_op_type(op_name), [_p(op_name, "input"), _p(op_name, "weight")], [_p(op_name, "output")], name=_p(op_name, "node"), kernel_shape=[3] * spatial)
     return [node], [inp], [out], [w_init]
 
 
-def make_conv_transpose(op_name: str, opset: int):
-    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3, 5, 5])
-    w_init = numpy_helper.from_array(np.ones([3, 2, 3, 3], dtype=np.float32), name=_p(op_name, "weight"))
+def make_conv_transpose(op_name: str, opset: int, spatial: int = 2):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3] + [5] * spatial)
+    w_init = numpy_helper.from_array(np.ones([3, 2] + [3] * spatial, dtype=np.float32), name=_p(op_name, "weight"))
     out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
-    node = helper.make_node(op_name, [_p(op_name, "input"), _p(op_name, "weight")], [_p(op_name, "output")], name=_p(op_name, "node"), kernel_shape=[3, 3])
+    node = helper.make_node(onnx_op_type(op_name), [_p(op_name, "input"), _p(op_name, "weight")], [_p(op_name, "output")], name=_p(op_name, "node"), kernel_shape=[3] * spatial)
     return [node], [inp], [out], [w_init]
 
 
-def make_avg_pool(op_name: str, opset: int):
-    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3, 8, 8])
+def make_avg_pool(op_name: str, opset: int, spatial: int = 2):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3] + [8] * spatial)
     out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
-    node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"), kernel_shape=[2, 2], strides=[2, 2])
+    node = helper.make_node(onnx_op_type(op_name), [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"), kernel_shape=[2] * spatial, strides=[2] * spatial)
     return [node], [inp], [out], []
 
 
-def make_max_pool(op_name: str, opset: int):
-    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3, 8, 8])
-    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
-    node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"), kernel_shape=[2, 2], strides=[2, 2])
-    return [node], [inp], [out], []
+def make_max_pool(op_name: str, opset: int, spatial: int = 2):
+    return make_avg_pool(op_name, opset, spatial)
 
 
 def make_global_avg_pool(op_name: str, opset: int):
@@ -628,13 +676,13 @@ def make_global_lp_pool(op_name: str, opset: int):
     return [node], [inp], [out], []
 
 
-def make_lp_pool(op_name: str, opset: int):
-    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3, 8, 8])
+def make_lp_pool(op_name: str, opset: int, spatial: int = 2):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 3] + [8] * spatial)
     out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
     # `p` is a FLOAT attribute in opset 1 and an INT from opset 2 on. The opset-1 value
     # differs from the default of 2 so the snapshot shows the attribute was read.
     p_attr = 1.5 if opset < 2 else 2
-    node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"), kernel_shape=[2, 2], strides=[2, 2], p=p_attr)
+    node = helper.make_node(onnx_op_type(op_name), [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"), kernel_shape=[2] * spatial, strides=[2] * spatial, p=p_attr)
     return [node], [inp], [out], []
 
 
@@ -1142,6 +1190,212 @@ def make_thresholded_relu(op_name: str, opset: int):
     return [node], [inp], [out], []
 
 
+def make_linear(op_name: str, opset: int):
+    a = helper.make_tensor_value_info(_p(op_name, "a"), TensorProto.FLOAT, [2, 3])
+    w_init = numpy_helper.from_array(np.ones([4, 3], dtype=np.float32), name=_p(op_name, "weight"))
+    b_init = numpy_helper.from_array(np.zeros([4], dtype=np.float32), name=_p(op_name, "bias"))
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
+    kwargs = {"alpha": 1.0, "beta": 1.0, "transB": 1}
+    if opset < 7:
+        kwargs["broadcast"] = 1
+    node = helper.make_node(onnx_op_type(op_name), [_p(op_name, "a"), _p(op_name, "weight"), _p(op_name, "bias")], [_p(op_name, "output")], name=_p(op_name, "node"), **kwargs)
+    return [node], [a], [out], [w_init, b_init]
+
+
+def make_global_max_pool(op_name: str, opset: int):
+    return make_global_avg_pool(op_name, opset)
+
+
+def make_lrn(op_name: str, opset: int):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 4, 3, 3])
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [1, 4, 3, 3])
+    node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"), size=3)
+    return [node], [inp], [out], []
+
+
+def make_shrink(op_name: str, opset: int):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [2, 3, 4])
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [2, 3, 4])
+    node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"), lambd=0.5, bias=0.1)
+    return [node], [inp], [out], []
+
+
+def make_cast_like(op_name: str, opset: int):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [2, 3])
+    target = helper.make_tensor_value_info(_p(op_name, "target"), TensorProto.INT32, [1])
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.INT32, [2, 3])
+    node = helper.make_node(op_name, [_p(op_name, "input"), _p(op_name, "target")], [_p(op_name, "output")], name=_p(op_name, "node"))
+    return [node], [inp, target], [out], []
+
+
+def make_det(op_name: str, opset: int):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [2, 3, 3])
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [2])
+    node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"))
+    return [node], [inp], [out], []
+
+
+def make_einsum(op_name: str, opset: int):
+    a = helper.make_tensor_value_info(_p(op_name, "a"), TensorProto.FLOAT, [2, 3])
+    b = helper.make_tensor_value_info(_p(op_name, "b"), TensorProto.FLOAT, [3, 4])
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [2, 4])
+    node = helper.make_node(op_name, [_p(op_name, "a"), _p(op_name, "b")], [_p(op_name, "output")], name=_p(op_name, "node"), equation="ij,jk->ik")
+    return [node], [a, b], [out], []
+
+
+def make_unique(op_name: str, opset: int):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [6])
+    # Unique has no type inference in onnx-ir, so the output needs a declared rank
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, ["n"])
+    node = helper.make_node(op_name, [_p(op_name, "input")], [_p(op_name, "output")], name=_p(op_name, "node"), sorted=1)
+    return [node], [inp], [out], []
+
+
+def make_col2im(op_name: str, opset: int):
+    # 5x5 image, 2x2 blocks, stride 1: 4 * 4 = 16 blocks of 1 * 2 * 2 values
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 4, 16])
+    image_shape = numpy_helper.from_array(np.array([5, 5], dtype=np.int64), name=_p(op_name, "image_shape"))
+    block_shape = numpy_helper.from_array(np.array([2, 2], dtype=np.int64), name=_p(op_name, "block_shape"))
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
+    node = helper.make_node(op_name, [_p(op_name, "input"), _p(op_name, "image_shape"), _p(op_name, "block_shape")], [_p(op_name, "output")], name=_p(op_name, "node"))
+    return [node], [inp], [out], [image_shape, block_shape]
+
+
+def make_quantize_linear(op_name: str, opset: int):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [2, 3])
+    scale = numpy_helper.from_array(np.array(0.5, dtype=np.float32), name=_p(op_name, "scale"))
+    zero_point = numpy_helper.from_array(np.array(128, dtype=np.uint8), name=_p(op_name, "zero_point"))
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.UINT8, [2, 3])
+    node = helper.make_node(op_name, [_p(op_name, "input"), _p(op_name, "scale"), _p(op_name, "zero_point")], [_p(op_name, "output")], name=_p(op_name, "node"))
+    return [node], [inp], [out], [scale, zero_point]
+
+
+def make_dequantize_linear(op_name: str, opset: int):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.UINT8, [2, 3])
+    scale = numpy_helper.from_array(np.array(0.5, dtype=np.float32), name=_p(op_name, "scale"))
+    zero_point = numpy_helper.from_array(np.array(128, dtype=np.uint8), name=_p(op_name, "zero_point"))
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [2, 3])
+    node = helper.make_node(op_name, [_p(op_name, "input"), _p(op_name, "scale"), _p(op_name, "zero_point")], [_p(op_name, "output")], name=_p(op_name, "node"))
+    return [node], [inp], [out], [scale, zero_point]
+
+
+def make_qlinear_matmul(op_name: str, opset: int):
+    a = helper.make_tensor_value_info(_p(op_name, "a"), TensorProto.UINT8, [2, 3])
+    b = helper.make_tensor_value_info(_p(op_name, "b"), TensorProto.UINT8, [3, 4])
+    params = []
+    for prefix in ["a", "b", "y"]:
+        params.append(numpy_helper.from_array(np.array(0.5, dtype=np.float32), name=_p(op_name, f"{prefix}_scale")))
+        params.append(numpy_helper.from_array(np.array(128, dtype=np.uint8), name=_p(op_name, f"{prefix}_zero_point")))
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.UINT8, [2, 4])
+    inputs = [
+        _p(op_name, "a"), _p(op_name, "a_scale"), _p(op_name, "a_zero_point"),
+        _p(op_name, "b"), _p(op_name, "b_scale"), _p(op_name, "b_zero_point"),
+        _p(op_name, "y_scale"), _p(op_name, "y_zero_point"),
+    ]
+    node = helper.make_node(op_name, inputs, [_p(op_name, "output")], name=_p(op_name, "node"))
+    return [node], [a, b], [out], params
+
+
+def make_non_max_suppression(op_name: str, opset: int):
+    boxes = helper.make_tensor_value_info(_p(op_name, "boxes"), TensorProto.FLOAT, [1, 4, 4])
+    scores = helper.make_tensor_value_info(_p(op_name, "scores"), TensorProto.FLOAT, [1, 1, 4])
+    max_boxes = numpy_helper.from_array(np.array([2], dtype=np.int64), name=_p(op_name, "max_output_boxes_per_class"))
+    iou = numpy_helper.from_array(np.array([0.5], dtype=np.float32), name=_p(op_name, "iou_threshold"))
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.INT64, None)
+    node = helper.make_node(
+        op_name,
+        [_p(op_name, "boxes"), _p(op_name, "scores"), _p(op_name, "max_output_boxes_per_class"), _p(op_name, "iou_threshold")],
+        [_p(op_name, "output")],
+        name=_p(op_name, "node"),
+    )
+    return [node], [boxes, scores], [out], [max_boxes, iou]
+
+
+def make_scatter(op_name: str, opset: int):
+    return make_scatter_elements(op_name, opset)
+
+
+def make_attention(op_name: str, opset: int):
+    # 4D [batch, heads, seq, head_size]
+    q = helper.make_tensor_value_info(_p(op_name, "q"), TensorProto.FLOAT, [1, 2, 3, 4])
+    k = helper.make_tensor_value_info(_p(op_name, "k"), TensorProto.FLOAT, [1, 2, 5, 4])
+    v = helper.make_tensor_value_info(_p(op_name, "v"), TensorProto.FLOAT, [1, 2, 5, 4])
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [1, 2, 3, 4])
+    node = helper.make_node(op_name, [_p(op_name, "q"), _p(op_name, "k"), _p(op_name, "v")], [_p(op_name, "output")], name=_p(op_name, "node"))
+    return [node], [q, k, v], [out], []
+
+
+def make_rnn(op_name: str, opset: int):
+    inp = helper.make_tensor_value_info(_p(op_name, "input"), TensorProto.FLOAT, [1, 2, 3])
+    w_init = numpy_helper.from_array(np.zeros([1, 4, 3], dtype=np.float32), name=_p(op_name, "W"))
+    r_init = numpy_helper.from_array(np.zeros([1, 4, 4], dtype=np.float32), name=_p(op_name, "R"))
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, None)
+    node = helper.make_node(op_name, [_p(op_name, "input"), _p(op_name, "W"), _p(op_name, "R")], [_p(op_name, "output")], name=_p(op_name, "node"), hidden_size=4)
+    return [node], [inp], [out], [w_init, r_init]
+
+
+def make_loop(op_name: str, opset: int):
+    # Body: acc_out = acc_in + acc_in, cond passes through
+    body = helper.make_graph(
+        [
+            helper.make_node("Identity", [_p(op_name, "cond_in")], [_p(op_name, "cond_out")]),
+            helper.make_node("Add", [_p(op_name, "acc_in"), _p(op_name, "acc_in")], [_p(op_name, "acc_out")]),
+        ],
+        "loop_body",
+        [
+            helper.make_tensor_value_info(_p(op_name, "iter"), TensorProto.INT64, []),
+            helper.make_tensor_value_info(_p(op_name, "cond_in"), TensorProto.BOOL, []),
+            helper.make_tensor_value_info(_p(op_name, "acc_in"), TensorProto.FLOAT, [2, 3]),
+        ],
+        [
+            helper.make_tensor_value_info(_p(op_name, "cond_out"), TensorProto.BOOL, []),
+            helper.make_tensor_value_info(_p(op_name, "acc_out"), TensorProto.FLOAT, [2, 3]),
+        ],
+    )
+    max_trip = numpy_helper.from_array(np.array(3, dtype=np.int64), name=_p(op_name, "max_trip_count"))
+    cond = numpy_helper.from_array(np.array(True, dtype=bool), name=_p(op_name, "cond"))
+    acc = helper.make_tensor_value_info(_p(op_name, "acc"), TensorProto.FLOAT, [2, 3])
+    out = helper.make_tensor_value_info(_p(op_name, "output"), TensorProto.FLOAT, [2, 3])
+    node = helper.make_node(
+        op_name, [_p(op_name, "max_trip_count"), _p(op_name, "cond"), _p(op_name, "acc")], [_p(op_name, "output")], name=_p(op_name, "node"), body=body
+    )
+    return [node], [acc], [out], [max_trip, cond]
+
+
+def make_scan(op_name: str, opset: int):
+    # Body: running sum over the scanned axis, also emitted as a scan output
+    body = helper.make_graph(
+        [
+            helper.make_node("Add", [_p(op_name, "sum_in"), _p(op_name, "elem")], [_p(op_name, "sum_out")]),
+            helper.make_node("Identity", [_p(op_name, "sum_out")], [_p(op_name, "scan_out")]),
+        ],
+        "scan_body",
+        [
+            helper.make_tensor_value_info(_p(op_name, "sum_in"), TensorProto.FLOAT, [2]),
+            helper.make_tensor_value_info(_p(op_name, "elem"), TensorProto.FLOAT, [2]),
+        ],
+        [
+            helper.make_tensor_value_info(_p(op_name, "sum_out"), TensorProto.FLOAT, [2]),
+            helper.make_tensor_value_info(_p(op_name, "scan_out"), TensorProto.FLOAT, [2]),
+        ],
+    )
+    final = helper.make_tensor_value_info(_p(op_name, "final"), TensorProto.FLOAT, None)
+    scanned = helper.make_tensor_value_info(_p(op_name, "scanned"), TensorProto.FLOAT, None)
+    if opset < 9:
+        # Opset 8 has a leading batch axis on every input and an optional sequence_lens input
+        init = helper.make_tensor_value_info(_p(op_name, "init"), TensorProto.FLOAT, [1, 2])
+        seq = helper.make_tensor_value_info(_p(op_name, "seq"), TensorProto.FLOAT, [1, 3, 2])
+        inputs = ["", _p(op_name, "init"), _p(op_name, "seq")]
+    else:
+        init = helper.make_tensor_value_info(_p(op_name, "init"), TensorProto.FLOAT, [2])
+        seq = helper.make_tensor_value_info(_p(op_name, "seq"), TensorProto.FLOAT, [3, 2])
+        inputs = [_p(op_name, "init"), _p(op_name, "seq")]
+    node = helper.make_node(
+        op_name, inputs, [_p(op_name, "final"), _p(op_name, "scanned")], name=_p(op_name, "node"), body=body, num_scan_inputs=1
+    )
+    return [node], [init, seq], [final, scanned], []
+
+
 # ---------------------------------------------------------------------------
 # Generator dispatch
 # ---------------------------------------------------------------------------
@@ -1184,12 +1438,22 @@ GENERATORS = {
     "gemm": make_gemm,
     "matmul_integer": make_matmul_integer,
     "conv": make_conv,
+    "conv1d": partial(make_conv, spatial=1),
+    "conv3d": partial(make_conv, spatial=3),
     "conv_transpose": make_conv_transpose,
+    "conv_transpose1d": partial(make_conv_transpose, spatial=1),
+    "conv_transpose3d": partial(make_conv_transpose, spatial=3),
     "avg_pool": make_avg_pool,
+    "avg_pool1d": partial(make_avg_pool, spatial=1),
+    "avg_pool3d": partial(make_avg_pool, spatial=3),
     "max_pool": make_max_pool,
+    "max_pool1d": partial(make_max_pool, spatial=1),
+    "max_pool3d": partial(make_max_pool, spatial=3),
+    "global_max_pool": make_global_max_pool,
     "global_avg_pool": make_global_avg_pool,
     "global_lp_pool": make_global_lp_pool,
     "lp_pool": make_lp_pool,
+    "lp_pool1d": partial(make_lp_pool, spatial=1),
     "batch_norm": make_batch_norm,
     "instance_norm": make_instance_norm,
     "layer_norm": make_layer_norm,
@@ -1237,6 +1501,23 @@ GENERATORS = {
     "leaky_relu": make_leaky_relu,
     "prelu": make_prelu,
     "thresholded_relu": make_thresholded_relu,
+    "linear": make_linear,
+    "lrn": make_lrn,
+    "shrink": make_shrink,
+    "cast_like": make_cast_like,
+    "det": make_det,
+    "einsum": make_einsum,
+    "unique": make_unique,
+    "col2im": make_col2im,
+    "quantize_linear": make_quantize_linear,
+    "dequantize_linear": make_dequantize_linear,
+    "qlinear_matmul": make_qlinear_matmul,
+    "non_max_suppression": make_non_max_suppression,
+    "scatter": make_scatter,
+    "attention": make_attention,
+    "rnn": make_rnn,
+    "loop": make_loop,
+    "scan": make_scan,
 }
 
 
@@ -1249,10 +1530,11 @@ def build_opset_map(spec_versions: dict[str, list[int]]) -> dict[int, list[str]]
     """Build mapping: opset_version -> list of supported ops changed at that version."""
     opset_map: dict[int, list[str]] = {}
     for op_name, gen_key in SUPPORTED_OPS.items():
-        if op_name not in spec_versions:
-            print(f"  WARNING: {op_name} not found in specs, skipping", file=sys.stderr)
+        spec_name = onnx_op_type(op_name)
+        if spec_name not in spec_versions:
+            print(f"  WARNING: {spec_name} not found in specs, skipping", file=sys.stderr)
             continue
-        versions = spec_versions[op_name]
+        versions = spec_versions[spec_name]
         for v in versions:
             opset_map.setdefault(v, []).append(op_name)
     return opset_map

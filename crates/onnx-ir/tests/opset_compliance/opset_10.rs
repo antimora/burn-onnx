@@ -42,6 +42,82 @@ fn average_pool(graph: &OnnxGraph) {
     "#);
 }
 
+#[rstest]
+fn average_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "averagepool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    AveragePool1d "averagepool1d1"
+      Inputs:
+        averagepool1d_input: F32[1, 3, 8]
+      Outputs:
+        averagepool1d1_out1: F32[?, ?, ?]
+      Config:
+        AvgPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            padding: Valid,
+            count_include_pad: false,
+            dilation: 1,
+            ceil_mode: false,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
+fn average_pool3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "averagepool3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    AveragePool3d "averagepool3d1"
+      Inputs:
+        averagepool3d_input: F32[1, 3, 8, 8, 8]
+      Outputs:
+        averagepool3d1_out1: F32[?, ?, ?, ?, ?]
+      Config:
+        AvgPool3dConfig {
+            kernel_size: [
+                2,
+                2,
+                2,
+            ],
+            strides: [
+                2,
+                2,
+                2,
+            ],
+            padding: Valid,
+            count_include_pad: false,
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            ceil_mode: false,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
+fn dequantize_linear(graph: &OnnxGraph) {
+    let node = find_node(graph, "dequantizelinear");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    DequantizeLinear "dequantizelinear1"
+      Inputs:
+        dequantizelinear_input: U8[2, 3]
+        constant1_out1: ScalarTensor(F32) [constant]
+        constant2_out1: ScalarTensor(U8) [constant]
+      Outputs:
+        dequantizelinear1_out1: F32[2, 3]
+      Config:
+        DequantizeLinearConfig {
+            axis: None,
+            block_size: None,
+            output_dtype: None,
+        }
+    "#);
+}
+
 /// Dropout is eliminated during post-processing (no-op).
 /// Verify the model parses without error.
 #[test]
@@ -111,6 +187,61 @@ fn max_pool(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn max_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "maxpool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    MaxPool1d "maxpool1d1"
+      Inputs:
+        maxpool1d_input: F32[1, 3, 8]
+      Outputs:
+        maxpool1d1_out1: F32[1, 3, 8]
+      Config:
+        MaxPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            dilation: 1,
+            padding: Valid,
+            ceil_mode: false,
+            auto_pad: NotSet,
+            storage_order: 0,
+        }
+    "#);
+}
+
+#[rstest]
+fn max_pool3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "maxpool3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    MaxPool3d "maxpool3d1"
+      Inputs:
+        maxpool3d_input: F32[1, 3, 8, 8, 8]
+      Outputs:
+        maxpool3d1_out1: F32[1, 3, 8, 8, 8]
+      Config:
+        MaxPool3dConfig {
+            kernel_size: [
+                2,
+                2,
+                2,
+            ],
+            strides: [
+                2,
+                2,
+                2,
+            ],
+            padding: Valid,
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            ceil_mode: false,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
 fn mod_op(graph: &OnnxGraph) {
     let node = find_node(graph, "mod");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -128,13 +259,73 @@ fn mod_op(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn non_max_suppression(graph: &OnnxGraph) {
+    let node = find_node(graph, "nonmaxsuppression");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    NonMaxSuppression "nonmaxsuppression1"
+      Inputs:
+        nonmaxsuppression_boxes: F32[1, 4, 4]
+        nonmaxsuppression_scores: F32[1, 1, 4]
+        constant3_out1: I64[1] [constant]
+        constant4_out1: F32[1] [constant]
+      Outputs:
+        nonmaxsuppression1_out1: I64[?, 3]
+      Config:
+        NonMaxSuppressionConfig {
+            center_point_box: None,
+        }
+    "#);
+}
+
+#[rstest]
+fn q_linear_mat_mul(graph: &OnnxGraph) {
+    let node = find_node(graph, "qlinearmatmul");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    QLinearMatMul "qlinearmatmul1"
+      Inputs:
+        qlinearmatmul_a: U8[2, 3]
+        constant5_out1: ScalarTensor(F32) [constant]
+        constant6_out1: ScalarTensor(U8) [constant]
+        qlinearmatmul_b: U8[3, 4]
+        constant7_out1: ScalarTensor(F32) [constant]
+        constant8_out1: ScalarTensor(U8) [constant]
+        constant9_out1: ScalarTensor(F32) [constant]
+        constant10_out1: ScalarTensor(U8) [constant]
+      Outputs:
+        qlinearmatmul1_out1: U8[?, ?]
+    "#);
+}
+
+#[rstest]
+fn quantize_linear(graph: &OnnxGraph) {
+    let node = find_node(graph, "quantizelinear");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    QuantizeLinear "quantizelinear1"
+      Inputs:
+        quantizelinear_input: F32[2, 3]
+        constant11_out1: ScalarTensor(F32) [constant]
+        constant12_out1: ScalarTensor(U8) [constant]
+      Outputs:
+        quantizelinear1_out1: U8[2, 3]
+      Config:
+        QuantizeLinearConfig {
+            axis: None,
+            block_size: None,
+            output_dtype: None,
+            precision: None,
+            saturate: None,
+        }
+    "#);
+}
+
+#[rstest]
 fn resize(graph: &OnnxGraph) {
     let node = find_node(graph, "resize");
     insta::assert_snapshot!(format!("{node}"), @r#"
     Resize "resize1"
       Inputs:
         resize_input: F32[1, 1, 2, 2]
-        _: F32[4] [static(0)]
+        _: F32[4] [static(12)]
       Outputs:
         resize1_out1: F32[1, 1, 2, 2]
       Config:
@@ -166,9 +357,9 @@ fn slice(graph: &OnnxGraph) {
     Slice "slice1"
       Inputs:
         slice_input: F32[4, 6]
-        _: I64[2] [static(1)]
-        _: I64[2] [static(2)]
-        _: I64[2] [static(3)]
+        _: I64[2] [static(13)]
+        _: I64[2] [static(14)]
+        _: I64[2] [static(15)]
       Outputs:
         slice1_out1: F32[2, 3]
       Config:
@@ -228,7 +419,7 @@ fn top_k(graph: &OnnxGraph) {
     TopK "topk1"
       Inputs:
         topk_input: F32[3, 4]
-        _: I64[1] [static(4)]
+        _: I64[1] [static(16)]
       Outputs:
         topk1_out1: F32[?, ?]
         topk1_out2: I64[?, ?]
@@ -251,7 +442,7 @@ fn upsample(graph: &OnnxGraph) {
     Resize "upsample1"
       Inputs:
         upsample_input: F32[1, 1, 2, 2]
-        _: F32[4] [static(5)]
+        _: F32[4] [static(17)]
       Outputs:
         upsample1_out1: F32[1, 1, 4, 4]
       Config:

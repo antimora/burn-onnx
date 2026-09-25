@@ -249,6 +249,24 @@ fn leaky_relu(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn linear(graph: &OnnxGraph) {
+    let node = find_node(graph, "linear");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Linear "linear1"
+      Inputs:
+        linear_a: F32[2, 3]
+        _: F32[4, 3] [static(8)]
+        _: F32[4] [static(9)]
+      Outputs:
+        linear1_out1: F32[2, 4]
+      Config:
+        LinearConfig {
+            transpose_weight: true,
+        }
+    "#);
+}
+
+#[rstest]
 fn log(graph: &OnnxGraph) {
     let node = find_node(graph, "log");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -331,7 +349,7 @@ fn p_relu(graph: &OnnxGraph) {
     PRelu "prelu1"
       Inputs:
         prelu_input: F32[2, 3, 4]
-        _: F32[1] [static(8)]
+        _: F32[1] [static(10)]
       Outputs:
         prelu1_out1: F32[2, 3, 4]
     "#);
@@ -447,7 +465,7 @@ fn tile(graph: &OnnxGraph) {
     Tile "tile1"
       Inputs:
         tile_input: F32[2, 3]
-        _: I64[2] [static(9)]
+        _: I64[2] [static(11)]
       Outputs:
         tile1_out1: F32[2, 3]
       Config:

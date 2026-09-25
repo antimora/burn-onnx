@@ -47,6 +47,24 @@ fn bernoulli(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn cast_like(graph: &OnnxGraph) {
+    let node = find_node(graph, "castlike");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    CastLike "castlike1"
+      Inputs:
+        castlike_input: F32[2, 3]
+      Outputs:
+        castlike1_out1: I32[2, 3]
+      Config:
+        CastLikeConfig {
+            to: I32,
+            saturate: None,
+            round_mode: None,
+        }
+    "#);
+}
+
+#[rstest]
 fn pow(graph: &OnnxGraph) {
     let node = find_node(graph, "pow");
     insta::assert_snapshot!(format!("{node}"), @r#"

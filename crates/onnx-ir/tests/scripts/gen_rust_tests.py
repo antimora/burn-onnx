@@ -119,19 +119,35 @@ MIN_OPSET = {
     "SpaceToDepth": 1,
     "ScatterElements": 11,
     "ScatterND": 11,
+    "Scatter": 9,
     # Matrix
     "MatMul": 1,
     "Gemm": 1,
     "MatMulInteger": 10,
+    "Linear": 1,
+    "QLinearMatMul": 10,
+    "Einsum": 12,
+    "Det": 11,
     # Conv
     "Conv": 1,
+    "Conv1d": 1,
+    "Conv3d": 1,
     "ConvTranspose": 1,
+    "ConvTranspose1d": 1,
+    "ConvTranspose3d": 1,
+    "Col2Im": 18,
     # Pooling
     "AveragePool": 1,
+    "AveragePool1d": 1,
+    "AveragePool3d": 1,
     "MaxPool": 1,
+    "MaxPool1d": 1,
+    "MaxPool3d": 1,
+    "GlobalMaxPool": 1,
     "GlobalAveragePool": 1,
     "GlobalLpPool": 1,
     "LpPool": 1,
+    "LpPool1d": 1,
     # Normalization
     "BatchNormalization": 1,
     "InstanceNormalization": 1,
@@ -139,10 +155,18 @@ MIN_OPSET = {
     "GroupNormalization": 18,
     "LpNormalization": 1,
     "MeanVarianceNormalization": 9,
+    "LRN": 1,
     # Utility
     "Dropout": 1,
     "Identity": 1,
     "Cast": 1,
+    "CastLike": 15,
+    "Shrink": 9,
+    "Unique": 1,
+    "NonMaxSuppression": 10,
+    # Quantization
+    "QuantizeLinear": 10,
+    "DequantizeLinear": 10,
     "Where": 9,
     "NonZero": 9,
     "Constant": 1,
@@ -167,8 +191,13 @@ MIN_OPSET = {
     # RNN
     "LSTM": 1,
     "GRU": 1,
+    "RNN": 1,
+    # Attention
+    "Attention": 23,
     # Control flow
     "If": 1,
+    "Loop": 1,
+    "Scan": 9,
     # DeformConv
     "DeformConv": 19,
     # Signal processing
@@ -236,6 +265,8 @@ ONNX_TO_NODE_TYPE = {
     "LpPool": "LpPool2d",
     "LSTM": "Lstm",
     "GRU": "Gru",
+    "RNN": "Rnn",
+    "LRN": "Lrn",
 }
 
 

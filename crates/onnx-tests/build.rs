@@ -287,6 +287,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/gelu/gelu.onnx")
         .input("tests/gelu/gelu_tanh.onnx")
         .input("tests/gemm/gemm.onnx")
+        .input("tests/gemm/gemm_linear_opset6.onnx")
         .input("tests/gemm/gemm_no_c.onnx")
         .input("tests/gemm/gemm_non_unit_alpha_beta.onnx")
         .input("tests/global_avr_pool/global_avr_pool.onnx")

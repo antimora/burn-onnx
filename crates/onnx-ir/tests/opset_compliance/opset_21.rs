@@ -28,14 +28,32 @@ fn cast(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn cast_like(graph: &OnnxGraph) {
+    let node = find_node(graph, "castlike");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    CastLike "castlike1"
+      Inputs:
+        castlike_input: F32[2, 3]
+      Outputs:
+        castlike1_out1: I32[2, 3]
+      Config:
+        CastLikeConfig {
+            to: I32,
+            saturate: None,
+            round_mode: None,
+        }
+    "#);
+}
+
+#[rstest]
 fn constant(graph: &OnnxGraph) {
     let node = find_node(graph, "constant");
     insta::assert_snapshot!(format!("{node}"), @r#"
-    Constant "constant9"
+    Constant "constant2"
       Inputs:
-        _: F32[2, 3] [static(8)]
+        _: ScalarNative(F32) [static(1)]
       Outputs:
-        constant9_out1: F32[2, 3] [constant]
+        constant2_out1: ScalarTensor(F32) [constant]
     "#);
 }
 
@@ -80,6 +98,26 @@ fn constant_of_shape(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn dequantize_linear(graph: &OnnxGraph) {
+    let node = find_node(graph, "dequantizelinear");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    DequantizeLinear "dequantizelinear1"
+      Inputs:
+        dequantizelinear_input: U8[2, 3]
+        constant2_out1: ScalarTensor(F32) [constant]
+        constant3_out1: ScalarTensor(U8) [constant]
+      Outputs:
+        dequantizelinear1_out1: F32[2, 3]
+      Config:
+        DequantizeLinearConfig {
+            axis: None,
+            block_size: None,
+            output_dtype: None,
+        }
+    "#);
+}
+
+#[rstest]
 fn flatten(graph: &OnnxGraph) {
     let node = find_node(graph, "flatten");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -102,8 +140,8 @@ fn group_normalization(graph: &OnnxGraph) {
     GroupNormalization "groupnormalization1"
       Inputs:
         groupnormalization_input: F32[1, 4, 3, 3]
-        _: F32[4] [static(1)]
-        _: F32[4] [static(2)]
+        _: F32[4] [static(3)]
+        _: F32[4] [static(4)]
       Outputs:
         groupnormalization1_out1: F32[1, 4, 3, 3]
       Config:
@@ -137,7 +175,7 @@ fn if_op(graph: &OnnxGraph) {
                 nodes: [
                     Constant(
                         ConstantNode {
-                            name: "constant13",
+                            name: "constant29",
                             inputs: [
                                 Argument {
                                     name: "",
@@ -164,7 +202,7 @@ fn if_op(graph: &OnnxGraph) {
                             ],
                             outputs: [
                                 Argument {
-                                    name: "constant13_out1",
+                                    name: "constant29_out1",
                                     ty: Tensor(
                                         TensorType {
                                             dtype: F32,
@@ -190,7 +228,7 @@ fn if_op(graph: &OnnxGraph) {
                 inputs: [],
                 outputs: [
                     Argument {
-                        name: "constant13_out1",
+                        name: "constant29_out1",
                         ty: Tensor(
                             TensorType {
                                 dtype: F32,
@@ -228,7 +266,7 @@ fn if_op(graph: &OnnxGraph) {
                             next_id: 1,
                         },
                         constant_map: {
-                            "constant13_out1": 0,
+                            "constant29_out1": 0,
                         },
                     },
                 ),
@@ -237,7 +275,7 @@ fn if_op(graph: &OnnxGraph) {
                 nodes: [
                     Constant(
                         ConstantNode {
-                            name: "constant14",
+                            name: "constant30",
                             inputs: [
                                 Argument {
                                     name: "",
@@ -264,7 +302,7 @@ fn if_op(graph: &OnnxGraph) {
                             ],
                             outputs: [
                                 Argument {
-                                    name: "constant14_out1",
+                                    name: "constant30_out1",
                                     ty: Tensor(
                                         TensorType {
                                             dtype: F32,
@@ -290,7 +328,7 @@ fn if_op(graph: &OnnxGraph) {
                 inputs: [],
                 outputs: [
                     Argument {
-                        name: "constant14_out1",
+                        name: "constant30_out1",
                         ty: Tensor(
                             TensorType {
                                 dtype: F32,
@@ -328,12 +366,188 @@ fn if_op(graph: &OnnxGraph) {
                             next_id: 1,
                         },
                         constant_map: {
-                            "constant14_out1": 0,
+                            "constant30_out1": 0,
                         },
                     },
                 ),
             },
             scope_ref_names: [],
+        }
+    "#);
+}
+
+#[rstest]
+fn loop_op(graph: &OnnxGraph) {
+    let node = find_node(graph, "loop");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Loop "loop1"
+      Inputs:
+        constant6_out1: ScalarNative(I64) [constant]
+        constant7_out1: ScalarNative(Bool(Native)) [constant]
+        loop_acc: F32[2, 3]
+        loop_acc_in: F32[]
+        loop_cond_in: F32[]
+        loop_iter: F32[]
+      Outputs:
+        loop1_out1: F32[2, 3]
+      Config:
+        LoopConfig {
+            body: OnnxGraph {
+                nodes: [
+                    Add(
+                        AddNode {
+                            name: "add4",
+                            inputs: [
+                                Argument {
+                                    name: "loop_acc_in",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 2,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                    Some(
+                                                        3,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                                Argument {
+                                    name: "loop_acc_in",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 2,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                    Some(
+                                                        3,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                            ],
+                            outputs: [
+                                Argument {
+                                    name: "add4_out1",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 2,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                    Some(
+                                                        3,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                            ],
+                        },
+                    ),
+                ],
+                inputs: [
+                    Argument {
+                        name: "loop_iter",
+                        ty: ScalarNative(
+                            I64,
+                        ),
+                        value_source: Dynamic,
+                    },
+                    Argument {
+                        name: "loop_cond_in",
+                        ty: ScalarNative(
+                            Bool(
+                                Native,
+                            ),
+                        ),
+                        value_source: Dynamic,
+                    },
+                    Argument {
+                        name: "loop_acc_in",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 2,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                        Some(
+                                            3,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                ],
+                outputs: [
+                    Argument {
+                        name: "loop_cond_in",
+                        ty: ScalarNative(
+                            Bool(
+                                Native,
+                            ),
+                        ),
+                        value_source: Dynamic,
+                    },
+                    Argument {
+                        name: "add4_out1",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 2,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                        Some(
+                                            3,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                ],
+                value_store: Some(
+                    ValueStore {
+                        tensor_store: TensorStore {
+                            data: {},
+                            next_id: 0,
+                        },
+                        constant_map: {},
+                    },
+                ),
+            },
+            scope_ref_names: [
+                "loop_acc_in",
+                "loop_cond_in",
+                "loop_iter",
+            ],
         }
     "#);
 }
@@ -345,8 +559,8 @@ fn pad(graph: &OnnxGraph) {
     Pad "pad1"
       Inputs:
         pad_input: F32[2, 3]
-        _: I64[4] [static(3)]
-        _: ScalarNative(F32) [static(4)]
+        _: I64[4] [static(7)]
+        _: ScalarNative(F32) [static(8)]
       Outputs:
         pad1_out1: F32[2, 3]
       Config:
@@ -372,13 +586,54 @@ fn pad(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn q_linear_mat_mul(graph: &OnnxGraph) {
+    let node = find_node(graph, "qlinearmatmul");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    QLinearMatMul "qlinearmatmul1"
+      Inputs:
+        qlinearmatmul_a: U8[2, 3]
+        constant10_out1: ScalarTensor(F32) [constant]
+        constant11_out1: ScalarTensor(U8) [constant]
+        qlinearmatmul_b: U8[3, 4]
+        constant12_out1: ScalarTensor(F32) [constant]
+        constant13_out1: ScalarTensor(U8) [constant]
+        constant14_out1: ScalarTensor(F32) [constant]
+        constant15_out1: ScalarTensor(U8) [constant]
+      Outputs:
+        qlinearmatmul1_out1: U8[?, ?]
+    "#);
+}
+
+#[rstest]
+fn quantize_linear(graph: &OnnxGraph) {
+    let node = find_node(graph, "quantizelinear");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    QuantizeLinear "quantizelinear1"
+      Inputs:
+        quantizelinear_input: F32[2, 3]
+        constant16_out1: ScalarTensor(F32) [constant]
+        constant17_out1: ScalarTensor(U8) [constant]
+      Outputs:
+        quantizelinear1_out1: U8[2, 3]
+      Config:
+        QuantizeLinearConfig {
+            axis: None,
+            block_size: None,
+            output_dtype: None,
+            precision: None,
+            saturate: None,
+        }
+    "#);
+}
+
+#[rstest]
 fn reshape(graph: &OnnxGraph) {
     let node = find_node(graph, "reshape");
     insta::assert_snapshot!(format!("{node}"), @r#"
     Reshape "reshape1"
       Inputs:
         reshape_input: F32[2, 3, 4]
-        _: I64[2] [static(5)]
+        _: I64[2] [static(17)]
       Outputs:
         reshape1_out1: F32[6, 4]
       Config:
@@ -389,6 +644,179 @@ fn reshape(graph: &OnnxGraph) {
                     4,
                 ],
             ),
+        }
+    "#);
+}
+
+#[rstest]
+fn scan(graph: &OnnxGraph) {
+    let node = find_node(graph, "scan");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Scan "scan1"
+      Inputs:
+        scan_init: F32[2]
+        scan_seq: F32[3, 2]
+        scan_elem: F32[]
+        scan_sum_in: F32[]
+      Outputs:
+        scan1_out1: F32[2]
+        scan1_out2: F32[?, ?]
+      Config:
+        ScanConfig {
+            body: OnnxGraph {
+                nodes: [
+                    Add(
+                        AddNode {
+                            name: "add4",
+                            inputs: [
+                                Argument {
+                                    name: "scan_sum_in",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 1,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                                Argument {
+                                    name: "scan_elem",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 1,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                            ],
+                            outputs: [
+                                Argument {
+                                    name: "add4_out1",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 1,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                            ],
+                        },
+                    ),
+                ],
+                inputs: [
+                    Argument {
+                        name: "scan_sum_in",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 1,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                    Argument {
+                        name: "scan_elem",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 1,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                ],
+                outputs: [
+                    Argument {
+                        name: "add4_out1",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 1,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                    Argument {
+                        name: "add4_out1",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 1,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                ],
+                value_store: Some(
+                    ValueStore {
+                        tensor_store: TensorStore {
+                            data: {},
+                            next_id: 0,
+                        },
+                        constant_map: {},
+                    },
+                ),
+            },
+            num_scan_inputs: 1,
+            scan_input_directions: [],
+            scan_output_directions: [],
+            scan_input_axes: [],
+            scan_output_axes: [],
+            scope_ref_names: [
+                "scan_elem",
+                "scan_sum_in",
+            ],
         }
     "#);
 }
@@ -429,7 +857,7 @@ fn squeeze(graph: &OnnxGraph) {
     Squeeze "squeeze1"
       Inputs:
         squeeze_input: F32[1, 3, 1, 4]
-        _: I64[2] [static(6)]
+        _: I64[2] [static(18)]
       Outputs:
         squeeze1_out1: F32[3, 4]
       Config:
@@ -473,7 +901,7 @@ fn unsqueeze(graph: &OnnxGraph) {
     Unsqueeze "unsqueeze1"
       Inputs:
         unsqueeze_input: F32[3, 4]
-        _: I64[2] [static(7)]
+        _: I64[2] [static(19)]
       Outputs:
         unsqueeze1_out1: F32[1, 3, 4, 1]
       Config:

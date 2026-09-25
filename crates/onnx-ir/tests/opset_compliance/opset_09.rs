@@ -255,6 +255,24 @@ fn less(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn linear(graph: &OnnxGraph) {
+    let node = find_node(graph, "linear");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Linear "linear1"
+      Inputs:
+        linear_a: F32[2, 3]
+        _: F32[4, 3] [static(7)]
+        _: F32[4] [static(8)]
+      Outputs:
+        linear1_out1: F32[2, 4]
+      Config:
+        LinearConfig {
+            transpose_weight: true,
+        }
+    "#);
+}
+
+#[rstest]
 fn mat_mul(graph: &OnnxGraph) {
     let node = find_node(graph, "matmul");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -306,8 +324,8 @@ fn one_hot(graph: &OnnxGraph) {
     OneHot "onehot1"
       Inputs:
         onehot_indices: I64[3]
-        _: ScalarNative(I64) [static(7)]
-        _: F32[2] [static(8)]
+        _: ScalarNative(I64) [static(9)]
+        _: F32[2] [static(10)]
       Outputs:
         onehot1_out1: F32[?, ?]
       Config:
@@ -333,9 +351,218 @@ fn p_relu(graph: &OnnxGraph) {
     PRelu "prelu1"
       Inputs:
         prelu_input: F32[2, 3, 4]
-        _: F32[1] [static(9)]
+        _: F32[1] [static(11)]
       Outputs:
         prelu1_out1: F32[2, 3, 4]
+    "#);
+}
+
+#[rstest]
+fn scan(graph: &OnnxGraph) {
+    let node = find_node(graph, "scan");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Scan "scan1"
+      Inputs:
+        scan_init: F32[2]
+        scan_seq: F32[3, 2]
+        scan_elem: F32[]
+        scan_sum_in: F32[]
+      Outputs:
+        scan1_out1: F32[2]
+        scan1_out2: F32[?, ?]
+      Config:
+        ScanConfig {
+            body: OnnxGraph {
+                nodes: [
+                    Add(
+                        AddNode {
+                            name: "add2",
+                            inputs: [
+                                Argument {
+                                    name: "scan_sum_in",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 1,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                                Argument {
+                                    name: "scan_elem",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 1,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                            ],
+                            outputs: [
+                                Argument {
+                                    name: "add2_out1",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 1,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                            ],
+                        },
+                    ),
+                ],
+                inputs: [
+                    Argument {
+                        name: "scan_sum_in",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 1,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                    Argument {
+                        name: "scan_elem",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 1,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                ],
+                outputs: [
+                    Argument {
+                        name: "add2_out1",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 1,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                    Argument {
+                        name: "add2_out1",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 1,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                ],
+                value_store: Some(
+                    ValueStore {
+                        tensor_store: TensorStore {
+                            data: {},
+                            next_id: 0,
+                        },
+                        constant_map: {},
+                    },
+                ),
+            },
+            num_scan_inputs: 1,
+            scan_input_directions: [],
+            scan_output_directions: [],
+            scan_input_axes: [],
+            scan_output_axes: [],
+            scope_ref_names: [
+                "scan_elem",
+                "scan_sum_in",
+            ],
+        }
+    "#);
+}
+
+#[rstest]
+fn scatter(graph: &OnnxGraph) {
+    let node = find_node(graph, "scatter");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    ScatterElements "scatter1"
+      Inputs:
+        scatter_input: F32[3, 3]
+        constant13_out1: I64[1, 3] [constant]
+        scatter_updates: F32[1, 3]
+      Outputs:
+        scatter1_out1: F32[3, 3]
+      Config:
+        ScatterElementsConfig {
+            axis: 0,
+            reduction: None,
+        }
+    "#);
+}
+
+#[rstest]
+fn shrink(graph: &OnnxGraph) {
+    let node = find_node(graph, "shrink");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Shrink "shrink1"
+      Inputs:
+        shrink_input: F32[2, 3, 4]
+      Outputs:
+        shrink1_out1: F32[2, 3, 4]
+      Config:
+        ShrinkConfig {
+            lambda: 0.5,
+            bias: 0.10000000149011612,
+        }
     "#);
 }
 
@@ -370,7 +597,7 @@ fn upsample(graph: &OnnxGraph) {
     Resize "upsample1"
       Inputs:
         upsample_input: F32[1, 1, 2, 2]
-        _: F32[4] [static(10)]
+        _: F32[4] [static(13)]
       Outputs:
         upsample1_out1: F32[1, 1, 4, 4]
       Config:

@@ -117,6 +117,62 @@ fn average_pool(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn average_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "averagepool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    AveragePool1d "averagepool1d1"
+      Inputs:
+        averagepool1d_input: F32[1, 3, 8]
+      Outputs:
+        averagepool1d1_out1: F32[?, ?, ?]
+      Config:
+        AvgPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            padding: Valid,
+            count_include_pad: false,
+            dilation: 1,
+            ceil_mode: false,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
+fn average_pool3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "averagepool3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    AveragePool3d "averagepool3d1"
+      Inputs:
+        averagepool3d_input: F32[1, 3, 8, 8, 8]
+      Outputs:
+        averagepool3d1_out1: F32[?, ?, ?, ?, ?]
+      Config:
+        AvgPool3dConfig {
+            kernel_size: [
+                2,
+                2,
+                2,
+            ],
+            strides: [
+                2,
+                2,
+                2,
+            ],
+            padding: Valid,
+            count_include_pad: false,
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            ceil_mode: false,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
 fn batch_normalization(graph: &OnnxGraph) {
     let node = find_node(graph, "batchnormalization");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -217,11 +273,11 @@ fn concat(graph: &OnnxGraph) {
 fn constant(graph: &OnnxGraph) {
     let node = find_node(graph, "constant");
     insta::assert_snapshot!(format!("{node}"), @r#"
-    Constant "constant9"
+    Constant "constant13"
       Inputs:
-        _: I64[2] [static(8)]
+        _: I64[2] [static(12)]
       Outputs:
-        constant9_out1: I64[2] [constant]
+        constant13_out1: I64[2] [constant]
     "#);
 }
 
@@ -257,13 +313,69 @@ fn conv(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn conv1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "conv1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Conv1d "conv1d1"
+      Inputs:
+        conv1d_input: F32[1, 3, 5]
+        _: F32[2, 3, 3] [static(5)]
+      Outputs:
+        conv1d1_out1: F32[1, 2, 3]
+      Config:
+        Conv1dConfig {
+            kernel_size: 3,
+            stride: 1,
+            dilation: 1,
+            groups: 1,
+            padding: Valid,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
+fn conv3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "conv3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Conv3d "conv3d1"
+      Inputs:
+        conv3d_input: F32[1, 3, 5, 5, 5]
+        _: F32[2, 3, 3, 3, 3] [static(6)]
+      Outputs:
+        conv3d1_out1: F32[1, 2, 3, 3, 3]
+      Config:
+        Conv3dConfig {
+            kernel_size: [
+                3,
+                3,
+                3,
+            ],
+            stride: [
+                1,
+                1,
+                1,
+            ],
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            groups: 1,
+            padding: Valid,
+            auto_pad: NotSet,
+        }
+    "#);
+}
+
+#[rstest]
 fn conv_transpose(graph: &OnnxGraph) {
     let node = find_node(graph, "convtranspose2d");
     insta::assert_snapshot!(format!("{node}"), @r#"
     ConvTranspose2d "convtranspose2d1"
       Inputs:
         convtranspose_input: F32[1, 3, 5, 5]
-        _: F32[3, 2, 3, 3] [static(5)]
+        _: F32[3, 2, 3, 3] [static(7)]
       Outputs:
         convtranspose2d1_out1: F32[1, 2, 7, 7]
       Config:
@@ -285,6 +397,74 @@ fn conv_transpose(graph: &OnnxGraph) {
                 0,
             ],
             padding_out: [
+                0,
+                0,
+            ],
+            groups: 1,
+            auto_pad: NotSet,
+            output_shape: None,
+        }
+    "#);
+}
+
+#[rstest]
+fn conv_transpose1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "convtranspose1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    ConvTranspose1d "convtranspose1d1"
+      Inputs:
+        convtranspose1d_input: F32[1, 3, 5]
+        _: F32[3, 2, 3] [static(8)]
+      Outputs:
+        convtranspose1d1_out1: F32[1, 2, 7]
+      Config:
+        ConvTranspose1dConfig {
+            kernel_size: 3,
+            stride: 1,
+            dilation: 1,
+            groups: 1,
+            padding: 0,
+            padding_out: 0,
+            auto_pad: NotSet,
+            output_shape: None,
+        }
+    "#);
+}
+
+#[rstest]
+fn conv_transpose3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "convtranspose3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    ConvTranspose3d "convtranspose3d1"
+      Inputs:
+        convtranspose3d_input: F32[1, 3, 5, 5, 5]
+        _: F32[3, 2, 3, 3, 3] [static(9)]
+      Outputs:
+        convtranspose3d1_out1: F32[1, 2, 7, 7, 7]
+      Config:
+        ConvTranspose3dConfig {
+            kernel_size: [
+                3,
+                3,
+                3,
+            ],
+            stride: [
+                1,
+                1,
+                1,
+            ],
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            padding: [
+                0,
+                0,
+                0,
+            ],
+            padding_out: [
+                0,
                 0,
                 0,
             ],
@@ -408,8 +588,8 @@ fn gru(graph: &OnnxGraph) {
     Gru "gru1"
       Inputs:
         gru_input: F32[1, 2, 3]
-        _: F32[1, 12, 3] [static(6)]
-        _: F32[1, 12, 4] [static(7)]
+        _: F32[1, 12, 3] [static(10)]
+        _: F32[1, 12, 4] [static(11)]
       Outputs:
         gru1_out1: F32[?, ?, ?, ?]
       Config:
@@ -437,7 +617,7 @@ fn gather(graph: &OnnxGraph) {
     Gather "gather1"
       Inputs:
         gather_input: F32[3, 4]
-        constant9_out1: I64[2] [constant]
+        constant13_out1: I64[2] [constant]
       Outputs:
         gather1_out1: F32[?, ?]
       Config:
@@ -454,8 +634,8 @@ fn gemm(graph: &OnnxGraph) {
     Gemm "gemm1"
       Inputs:
         gemm_a: F32[2, 3]
-        constant10_out1: F32[3, 4] [constant]
-        constant11_out1: F32[4] [constant]
+        constant14_out1: F32[3, 4] [constant]
+        constant15_out1: F32[4] [constant]
       Outputs:
         gemm1_out1: F32[?, ?]
       Config:
@@ -493,6 +673,18 @@ fn global_lp_pool(graph: &OnnxGraph) {
         GlobalLpPoolConfig {
             p: 2.0,
         }
+    "#);
+}
+
+#[rstest]
+fn global_max_pool(graph: &OnnxGraph) {
+    let node = find_node(graph, "globalmaxpool");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    GlobalMaxPool "globalmaxpool1"
+      Inputs:
+        globalmaxpool_input: F32[1, 3, 8, 8]
+      Outputs:
+        globalmaxpool1_out1: F32[1, 3, 1, 1]
     "#);
 }
 
@@ -564,7 +756,7 @@ fn if_op(graph: &OnnxGraph) {
                 nodes: [
                     Constant(
                         ConstantNode {
-                            name: "constant22",
+                            name: "constant36",
                             inputs: [
                                 Argument {
                                     name: "",
@@ -591,7 +783,7 @@ fn if_op(graph: &OnnxGraph) {
                             ],
                             outputs: [
                                 Argument {
-                                    name: "constant22_out1",
+                                    name: "constant36_out1",
                                     ty: Tensor(
                                         TensorType {
                                             dtype: F32,
@@ -617,7 +809,7 @@ fn if_op(graph: &OnnxGraph) {
                 inputs: [],
                 outputs: [
                     Argument {
-                        name: "constant22_out1",
+                        name: "constant36_out1",
                         ty: Tensor(
                             TensorType {
                                 dtype: F32,
@@ -655,7 +847,7 @@ fn if_op(graph: &OnnxGraph) {
                             next_id: 1,
                         },
                         constant_map: {
-                            "constant22_out1": 0,
+                            "constant36_out1": 0,
                         },
                     },
                 ),
@@ -664,7 +856,7 @@ fn if_op(graph: &OnnxGraph) {
                 nodes: [
                     Constant(
                         ConstantNode {
-                            name: "constant23",
+                            name: "constant37",
                             inputs: [
                                 Argument {
                                     name: "",
@@ -691,7 +883,7 @@ fn if_op(graph: &OnnxGraph) {
                             ],
                             outputs: [
                                 Argument {
-                                    name: "constant23_out1",
+                                    name: "constant37_out1",
                                     ty: Tensor(
                                         TensorType {
                                             dtype: F32,
@@ -717,7 +909,7 @@ fn if_op(graph: &OnnxGraph) {
                 inputs: [],
                 outputs: [
                     Argument {
-                        name: "constant23_out1",
+                        name: "constant37_out1",
                         ty: Tensor(
                             TensorType {
                                 dtype: F32,
@@ -755,7 +947,7 @@ fn if_op(graph: &OnnxGraph) {
                             next_id: 1,
                         },
                         constant_map: {
-                            "constant23_out1": 0,
+                            "constant37_out1": 0,
                         },
                     },
                 ),
@@ -772,13 +964,32 @@ fn instance_normalization(graph: &OnnxGraph) {
     InstanceNormalization "instancenormalization1"
       Inputs:
         instancenormalization_input: F32[1, 3, 4, 4]
-        _: F32[3] [static(11)]
-        _: F32[3] [static(12)]
+        _: F32[3] [static(15)]
+        _: F32[3] [static(16)]
       Outputs:
         instancenormalization1_out1: F32[1, 3, 4, 4]
       Config:
         InstanceNormConfig {
             epsilon: 9.999999747378752e-6,
+        }
+    "#);
+}
+
+#[rstest]
+fn lrn(graph: &OnnxGraph) {
+    let node = find_node(graph, "lrn");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Lrn "lrn1"
+      Inputs:
+        lrn_input: F32[1, 4, 3, 3]
+      Outputs:
+        lrn1_out1: F32[1, 4, 3, 3]
+      Config:
+        LrnConfig {
+            alpha: 0.0001,
+            beta: 0.75,
+            bias: 1.0,
+            size: 3,
         }
     "#);
 }
@@ -790,8 +1001,8 @@ fn lstm(graph: &OnnxGraph) {
     Lstm "lstm1"
       Inputs:
         lstm_input: F32[1, 2, 3]
-        _: F32[1, 16, 3] [static(13)]
-        _: F32[1, 16, 4] [static(14)]
+        _: F32[1, 16, 3] [static(17)]
+        _: F32[1, 16, 4] [static(18)]
       Outputs:
         lstm1_out1: F32[?, ?, ?, ?]
       Config:
@@ -843,6 +1054,24 @@ fn less(graph: &OnnxGraph) {
 }
 
 #[rstest]
+fn linear(graph: &OnnxGraph) {
+    let node = find_node(graph, "linear");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Linear "linear1"
+      Inputs:
+        linear_a: F32[2, 3]
+        _: F32[4, 3] [static(19)]
+        _: F32[4] [static(20)]
+      Outputs:
+        linear1_out1: F32[2, 4]
+      Config:
+        LinearConfig {
+            transpose_weight: true,
+        }
+    "#);
+}
+
+#[rstest]
 fn log(graph: &OnnxGraph) {
     let node = find_node(graph, "log");
     insta::assert_snapshot!(format!("{node}"), @r#"
@@ -866,6 +1095,182 @@ fn log_softmax(graph: &OnnxGraph) {
       Config:
         LogSoftmaxConfig {
             axis: 1,
+        }
+    "#);
+}
+
+#[rstest]
+fn loop_op(graph: &OnnxGraph) {
+    let node = find_node(graph, "loop");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Loop "loop1"
+      Inputs:
+        constant22_out1: ScalarNative(I64) [constant]
+        constant23_out1: ScalarNative(Bool(Native)) [constant]
+        loop_acc: F32[2, 3]
+        loop_acc_in: F32[]
+        loop_cond_in: F32[]
+        loop_iter: F32[]
+      Outputs:
+        loop1_out1: F32[2, 3]
+      Config:
+        LoopConfig {
+            body: OnnxGraph {
+                nodes: [
+                    Add(
+                        AddNode {
+                            name: "add6",
+                            inputs: [
+                                Argument {
+                                    name: "loop_acc_in",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 2,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                    Some(
+                                                        3,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                                Argument {
+                                    name: "loop_acc_in",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 2,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                    Some(
+                                                        3,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                            ],
+                            outputs: [
+                                Argument {
+                                    name: "add6_out1",
+                                    ty: Tensor(
+                                        TensorType {
+                                            dtype: F32,
+                                            rank: 2,
+                                            static_shape: Some(
+                                                [
+                                                    Some(
+                                                        2,
+                                                    ),
+                                                    Some(
+                                                        3,
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
+                                    value_source: Dynamic,
+                                },
+                            ],
+                        },
+                    ),
+                ],
+                inputs: [
+                    Argument {
+                        name: "loop_iter",
+                        ty: ScalarNative(
+                            I64,
+                        ),
+                        value_source: Dynamic,
+                    },
+                    Argument {
+                        name: "loop_cond_in",
+                        ty: ScalarNative(
+                            Bool(
+                                Native,
+                            ),
+                        ),
+                        value_source: Dynamic,
+                    },
+                    Argument {
+                        name: "loop_acc_in",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 2,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                        Some(
+                                            3,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                ],
+                outputs: [
+                    Argument {
+                        name: "loop_cond_in",
+                        ty: ScalarNative(
+                            Bool(
+                                Native,
+                            ),
+                        ),
+                        value_source: Dynamic,
+                    },
+                    Argument {
+                        name: "add6_out1",
+                        ty: Tensor(
+                            TensorType {
+                                dtype: F32,
+                                rank: 2,
+                                static_shape: Some(
+                                    [
+                                        Some(
+                                            2,
+                                        ),
+                                        Some(
+                                            3,
+                                        ),
+                                    ],
+                                ),
+                            },
+                        ),
+                        value_source: Dynamic,
+                    },
+                ],
+                value_store: Some(
+                    ValueStore {
+                        tensor_store: TensorStore {
+                            data: {},
+                            next_id: 0,
+                        },
+                        constant_map: {},
+                    },
+                ),
+            },
+            scope_ref_names: [
+                "loop_acc_in",
+                "loop_cond_in",
+                "loop_iter",
+            ],
         }
     "#);
 }
@@ -911,6 +1316,28 @@ fn lp_pool(graph: &OnnxGraph) {
                 1,
                 1,
             ],
+            ceil_mode: false,
+            auto_pad: NotSet,
+            p: 1.5,
+        }
+    "#);
+}
+
+#[rstest]
+fn lp_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "lppool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    LpPool1d "lppool1d1"
+      Inputs:
+        lppool1d_input: F32[1, 3, 8]
+      Outputs:
+        lppool1d1_out1: F32[1, 3, 8]
+      Config:
+        LpPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            padding: Valid,
+            dilation: 1,
             ceil_mode: false,
             auto_pad: NotSet,
             p: 1.5,
@@ -971,6 +1398,61 @@ fn max_pool(graph: &OnnxGraph) {
             ceil_mode: false,
             auto_pad: NotSet,
             storage_order: 0,
+        }
+    "#);
+}
+
+#[rstest]
+fn max_pool1d(graph: &OnnxGraph) {
+    let node = find_node(graph, "maxpool1d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    MaxPool1d "maxpool1d1"
+      Inputs:
+        maxpool1d_input: F32[1, 3, 8]
+      Outputs:
+        maxpool1d1_out1: F32[1, 3, 8]
+      Config:
+        MaxPool1dConfig {
+            kernel_size: 2,
+            stride: 2,
+            dilation: 1,
+            padding: Valid,
+            ceil_mode: false,
+            auto_pad: NotSet,
+            storage_order: 0,
+        }
+    "#);
+}
+
+#[rstest]
+fn max_pool3d(graph: &OnnxGraph) {
+    let node = find_node(graph, "maxpool3d");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    MaxPool3d "maxpool3d1"
+      Inputs:
+        maxpool3d_input: F32[1, 3, 8, 8, 8]
+      Outputs:
+        maxpool3d1_out1: F32[1, 3, 8, 8, 8]
+      Config:
+        MaxPool3dConfig {
+            kernel_size: [
+                2,
+                2,
+                2,
+            ],
+            strides: [
+                2,
+                2,
+                2,
+            ],
+            padding: Valid,
+            dilation: [
+                1,
+                1,
+                1,
+            ],
+            ceil_mode: false,
+            auto_pad: NotSet,
         }
     "#);
 }
@@ -1058,7 +1540,7 @@ fn p_relu(graph: &OnnxGraph) {
     PRelu "prelu1"
       Inputs:
         prelu_input: F32[2, 3, 4]
-        _: F32[1] [static(15)]
+        _: F32[1] [static(23)]
       Outputs:
         prelu1_out1: F32[2, 3, 4]
     "#);
@@ -1105,6 +1587,31 @@ fn pow(graph: &OnnxGraph) {
         pow_b: F32[2, 3, 4]
       Outputs:
         pow1_out1: F32[2, 3, 4]
+    "#);
+}
+
+#[rstest]
+fn rnn(graph: &OnnxGraph) {
+    let node = find_node(graph, "rnn");
+    insta::assert_snapshot!(format!("{node}"), @r#"
+    Rnn "rnn1"
+      Inputs:
+        rnn_input: F32[1, 2, 3]
+        _: F32[1, 4, 3] [static(24)]
+        _: F32[1, 4, 4] [static(25)]
+      Outputs:
+        rnn1_out1: F32[?, ?, ?, ?]
+      Config:
+        RnnConfig {
+            input_size: 3,
+            hidden_size: 4,
+            direction: Forward,
+            has_bias: false,
+            has_initial_h: false,
+            batch_first: false,
+            clip: None,
+            hidden_activation: Tanh,
+        }
     "#);
 }
 
@@ -1711,7 +2218,7 @@ fn tile(graph: &OnnxGraph) {
     Tile "tile1"
       Inputs:
         tile_input: F32[2, 3]
-        _: I64[2] [static(16)]
+        _: I64[2] [static(26)]
       Outputs:
         tile1_out1: F32[2, 3]
       Config:
