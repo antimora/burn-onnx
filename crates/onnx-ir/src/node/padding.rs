@@ -296,6 +296,8 @@ pub(crate) fn pool_output_type(node: &mut RawNode) -> Result<(), ProcessError> {
         if kernel < 1 || stride < 1 || dilation < 1 {
             return None;
         }
+        // SAME pads make the span a multiple of the stride, so floor and ceil agree and
+        // `ceil_mode`, however a processor reads it, cannot change the size.
         if matches!(auto_pad, AutoPad::SameUpper | AutoPad::SameLower) {
             return usize::try_from((input + stride - 1) / stride).ok();
         }
