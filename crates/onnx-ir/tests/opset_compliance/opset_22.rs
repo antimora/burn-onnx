@@ -190,6 +190,8 @@ fn conv_transpose(graph: &OnnxGraph) {
                 0,
             ],
             groups: 1,
+            auto_pad: NotSet,
+            output_shape: None,
         }
     "#);
 }

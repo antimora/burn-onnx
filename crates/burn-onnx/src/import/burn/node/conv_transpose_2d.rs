@@ -1,6 +1,23 @@
 use super::prelude::*;
 use burn_pack::Tensor as PackTensor;
 
+fn resolve_padding(
+    node: &onnx_ir::node::conv_transpose2d::ConvTranspose2dNode,
+) -> super::conv_helpers::TransposePadding {
+    super::conv_helpers::transpose_padding(
+        &node.inputs[0],
+        super::conv_helpers::ConvTransposeGeometry {
+            auto_pad: &node.config.auto_pad,
+            output_shape: node.config.output_shape.as_deref(),
+            padding: &node.config.padding,
+            padding_out: &node.config.padding_out,
+            kernel: &node.config.kernel_size,
+            stride: &node.config.stride,
+            dilation: &node.config.dilation,
+        },
+    )
+}
+
 impl NodeCodegen for onnx_ir::node::conv_transpose2d::ConvTranspose2dNode {
     fn inputs(&self) -> &[Argument] {
         // Filter inputs only dynamic and constant
@@ -26,8 +43,9 @@ impl NodeCodegen for onnx_ir::node::conv_transpose2d::ConvTranspose2dNode {
         let stride = self.config.stride.to_tokens();
         let dilation = self.config.dilation.to_tokens();
         let groups = groups.to_tokens();
-        let padding = self.config.padding.to_tokens();
-        let padding_out = self.config.padding_out.to_tokens();
+        let resolved = resolve_padding(self);
+        let padding = resolved.padding.to_tokens();
+        let padding_out = resolved.padding_out.to_tokens();
         let bias = self.inputs.get(2).is_some_and(|bias| !bias.is_optional());
 
         Some(Field::new(
@@ -51,14 +69,16 @@ impl NodeCodegen for onnx_ir::node::conv_transpose2d::ConvTranspose2dNode {
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
         let input = scope.arg(self.inputs.first().unwrap());
         let output = arg_to_ident(self.outputs.first().unwrap());
+        let resolved = resolve_padding(self);
+        let crop = resolved.crop_tokens();
 
         // A runtime weight has no module to live in, so the functional op takes it.
         if !self.inputs[1].is_static() {
             let weight = scope.arg(&self.inputs[1]);
             let bias = super::conv_helpers::optional_input(scope, self.inputs.get(2));
             let stride = self.config.stride.to_tokens();
-            let padding = self.config.padding.to_tokens();
-            let padding_out = self.config.padding_out.to_tokens();
+            let padding = resolved.padding.to_tokens();
+            let padding_out = resolved.padding_out.to_tokens();
             let dilation = self.config.dilation.to_tokens();
             let groups = self.config.groups.to_tokens();
             return quote! {
@@ -73,13 +93,13 @@ impl NodeCodegen for onnx_ir::node::conv_transpose2d::ConvTranspose2dNode {
                         #dilation,
                         #groups,
                     ),
-                );
+                )#crop;
             };
         }
         let field = Ident::new(&self.name, Span::call_site());
 
         quote! {
-            let #output = self.#field.forward(#input);
+            let #output = self.#field.forward(#input)#crop;
         }
     }
     fn register_imports(&self, imports: &mut BurnImports) {
@@ -131,9 +151,19 @@ mod tests {
     use onnx_ir::node::conv_transpose2d::{
         ConvTranspose2dConfig, ConvTranspose2dNode, ConvTranspose2dNodeBuilder,
     };
+    use onnx_ir::node::padding::AutoPad;
 
     fn create_conv_transpose_2d_node(name: &str) -> ConvTranspose2dNode {
-        let config = ConvTranspose2dConfig::new([3, 3], [1, 1], [1, 1], [1, 1], [0, 0], 1);
+        let config = ConvTranspose2dConfig::new(
+            [3, 3],
+            [1, 1],
+            [1, 1],
+            [1, 1],
+            [0, 0],
+            1,
+            AutoPad::NotSet,
+            None,
+        );
 
         ConvTranspose2dNodeBuilder::new(name)
             .input_tensor("input", 4, DType::F32)
@@ -170,7 +200,16 @@ mod tests {
     #[test]
     fn test_conv_transpose_2d_runtime_weight() {
         let node = {
-            let config = ConvTranspose2dConfig::new([3, 3], [1, 1], [1, 1], [1, 1], [0, 0], 1);
+            let config = ConvTranspose2dConfig::new(
+                [3, 3],
+                [1, 1],
+                [1, 1],
+                [1, 1],
+                [0, 0],
+                1,
+                AutoPad::NotSet,
+                None,
+            );
 
             ConvTranspose2dNodeBuilder::new("conv1")
                 .input_tensor("input", 4, DType::F32)
@@ -194,6 +233,111 @@ mod tests {
                 Some(bias),
                 burn::tensor::ops::ConvTransposeOptions::new([1, 1], [1, 1], [0, 0], [1, 1], 1),
             );
+            output
+        }
+        ");
+    }
+
+    /// A `[1, 1, 3, 3]` input with a 3x3 kernel and no bias.
+    fn create_derived_pad_node(
+        stride: [usize; 2],
+        auto_pad: AutoPad,
+        output_shape: Option<Vec<usize>>,
+        static_weight: bool,
+    ) -> ConvTranspose2dNode {
+        let config = ConvTranspose2dConfig::new(
+            [3, 3],
+            stride,
+            [1, 1],
+            [0, 0],
+            [0, 0],
+            1,
+            auto_pad,
+            output_shape,
+        );
+        let builder = ConvTranspose2dNodeBuilder::new("conv1").input_tensor_shape(
+            "input",
+            vec![1, 1, 3, 3],
+            DType::F32,
+        );
+        let builder = if static_weight {
+            builder.input_static_tensor_shape("weight", vec![1, 2, 3, 3], DType::F32)
+        } else {
+            builder.input_tensor_shape("weight", vec![1, 2, 3, 3], DType::F32)
+        };
+        builder
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build()
+    }
+
+    #[test]
+    fn test_conv_transpose_2d_auto_pad_same_upper_crops_end() {
+        // Full length 7, SAME wants 6: the odd pad goes at the end, past what burn can trim.
+        let node = create_derived_pad_node([2, 2], AutoPad::SameUpper, None, false);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<4>, weight: Tensor<4>) -> Tensor<4> {
+            let output = burn::tensor::module::conv_transpose2d(
+                    input,
+                    weight,
+                    None,
+                    burn::tensor::ops::ConvTransposeOptions::new(
+                        [2, 2],
+                        [0, 0],
+                        [0, 0],
+                        [1, 1],
+                        1,
+                    ),
+                )
+                .slice(s![.., .., 0..6, 0..6]);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_conv_transpose_2d_auto_pad_same_lower() {
+        // SAME_LOWER puts the odd pad at the start, which burn's padding_out absorbs.
+        let node = create_derived_pad_node([2, 2], AutoPad::SameLower, None, false);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<4>, weight: Tensor<4>) -> Tensor<4> {
+            let output = burn::tensor::module::conv_transpose2d(
+                input,
+                weight,
+                None,
+                burn::tensor::ops::ConvTransposeOptions::new([2, 2], [1, 1], [1, 1], [1, 1], 1),
+            );
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_conv_transpose_2d_output_shape_field_init() {
+        // Full size [9, 7], requested [10, 8]: the output grows by one at the end.
+        let node = create_derived_pad_node([3, 2], AutoPad::NotSet, Some(vec![10, 8]), true);
+        let code = codegen_field_init(&node);
+        assert_snapshot!(code, @r"
+        let conv1 = ConvTranspose2dConfig::new([1, 2], [3, 3])
+            .with_stride([3, 2])
+            .with_padding([0, 0])
+            .with_padding_out([1, 1])
+            .with_dilation([1, 1])
+            .with_groups(1)
+            .with_bias(false)
+            .init(device);
+        ");
+    }
+
+    #[test]
+    fn test_conv_transpose_2d_auto_pad_same_upper_module_crop() {
+        let node = create_derived_pad_node([2, 2], AutoPad::SameUpper, None, true);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
+            let output = self.conv1.forward(input).slice(s![.., .., 0..6, 0..6]);
             output
         }
         ");

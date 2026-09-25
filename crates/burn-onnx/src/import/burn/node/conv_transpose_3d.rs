@@ -1,6 +1,23 @@
 use super::prelude::*;
 use burn_pack::Tensor as PackTensor;
 
+fn resolve_padding(
+    node: &onnx_ir::node::conv_transpose3d::ConvTranspose3dNode,
+) -> super::conv_helpers::TransposePadding {
+    super::conv_helpers::transpose_padding(
+        &node.inputs[0],
+        super::conv_helpers::ConvTransposeGeometry {
+            auto_pad: &node.config.auto_pad,
+            output_shape: node.config.output_shape.as_deref(),
+            padding: &node.config.padding,
+            padding_out: &node.config.padding_out,
+            kernel: &node.config.kernel_size,
+            stride: &node.config.stride,
+            dilation: &node.config.dilation,
+        },
+    )
+}
+
 impl NodeCodegen for onnx_ir::node::conv_transpose3d::ConvTranspose3dNode {
     fn inputs(&self) -> &[Argument] {
         // Filter inputs only dynamic and constant
@@ -26,8 +43,9 @@ impl NodeCodegen for onnx_ir::node::conv_transpose3d::ConvTranspose3dNode {
         let stride = self.config.stride.to_tokens();
         let dilation = self.config.dilation.to_tokens();
         let groups = groups.to_tokens();
-        let padding = self.config.padding.to_tokens();
-        let padding_out = self.config.padding_out.to_tokens();
+        let resolved = resolve_padding(self);
+        let padding = resolved.padding.to_tokens();
+        let padding_out = resolved.padding_out.to_tokens();
         let bias = self.inputs.get(2).is_some_and(|bias| !bias.is_optional());
 
         Some(Field::new(
@@ -51,14 +69,16 @@ impl NodeCodegen for onnx_ir::node::conv_transpose3d::ConvTranspose3dNode {
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
         let input = scope.arg(self.inputs.first().unwrap());
         let output = arg_to_ident(self.outputs.first().unwrap());
+        let resolved = resolve_padding(self);
+        let crop = resolved.crop_tokens();
 
         // A runtime weight has no module to live in, so the functional op takes it.
         if !self.inputs[1].is_static() {
             let weight = scope.arg(&self.inputs[1]);
             let bias = super::conv_helpers::optional_input(scope, self.inputs.get(2));
             let stride = self.config.stride.to_tokens();
-            let padding = self.config.padding.to_tokens();
-            let padding_out = self.config.padding_out.to_tokens();
+            let padding = resolved.padding.to_tokens();
+            let padding_out = resolved.padding_out.to_tokens();
             let dilation = self.config.dilation.to_tokens();
             let groups = self.config.groups.to_tokens();
             return quote! {
@@ -73,13 +93,13 @@ impl NodeCodegen for onnx_ir::node::conv_transpose3d::ConvTranspose3dNode {
                         #dilation,
                         #groups,
                     ),
-                );
+                )#crop;
             };
         }
         let field = Ident::new(&self.name, Span::call_site());
 
         quote! {
-            let #output = self.#field.forward(#input);
+            let #output = self.#field.forward(#input)#crop;
         }
     }
     fn register_imports(&self, imports: &mut BurnImports) {
@@ -131,10 +151,19 @@ mod tests {
     use onnx_ir::node::conv_transpose3d::{
         ConvTranspose3dConfig, ConvTranspose3dNode, ConvTranspose3dNodeBuilder,
     };
+    use onnx_ir::node::padding::AutoPad;
 
     fn create_conv_transpose_3d_node(name: &str) -> ConvTranspose3dNode {
-        let config =
-            ConvTranspose3dConfig::new([3, 3, 3], [1, 1, 1], [1, 1, 1], [1, 1, 1], [0, 0, 0], 1);
+        let config = ConvTranspose3dConfig::new(
+            [3, 3, 3],
+            [1, 1, 1],
+            [1, 1, 1],
+            [1, 1, 1],
+            [0, 0, 0],
+            1,
+            AutoPad::NotSet,
+            None,
+        );
 
         ConvTranspose3dNodeBuilder::new(name)
             .input_tensor("input", 5, DType::F32)
@@ -178,6 +207,8 @@ mod tests {
                 [1, 1, 1],
                 [0, 0, 0],
                 1,
+                AutoPad::NotSet,
+                None,
             );
 
             ConvTranspose3dNodeBuilder::new("conv1")

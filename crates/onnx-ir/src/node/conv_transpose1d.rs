@@ -16,6 +16,7 @@ use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
 
 use crate::ir::{Argument, Node, RawNode};
+use crate::node::padding::AutoPad;
 
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
@@ -46,6 +47,11 @@ pub struct ConvTranspose1dConfig {
     pub padding: usize,
     /// Output padding size
     pub padding_out: usize,
+    /// ONNX `auto_pad`. `SAME_UPPER`/`SAME_LOWER` derive the pads from the input size.
+    pub auto_pad: AutoPad,
+    /// ONNX `output_shape`, spatial dimensions only. When set, the pads derive from it and
+    /// `padding` is ignored.
+    pub output_shape: Option<Vec<usize>>,
 }
 
 pub(crate) struct Convtranspose1dProcessor;
@@ -72,30 +78,15 @@ impl NodeProcessor for Convtranspose1dProcessor {
     fn infer_types(
         &self,
         node: &mut RawNode,
-        _opset: usize,
+        opset: usize,
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
-        // Validate attributes before extracting config
-        for (key, value) in node.attrs.iter() {
-            match key.as_str() {
-                "kernel_shape" | "strides" | "pads" | "dilations" | "group" | "output_padding" => {}
-                "auto_pad" => {
-                    let auto_pad = value.clone().into_string();
-                    if auto_pad != "NOTSET" {
-                        return Err(ProcessError::InvalidAttribute {
-                            name: "auto_pad".to_string(),
-                            reason: format!("Unsupported 'auto_pad' value: {auto_pad}"),
-                        });
-                    }
-                }
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for ConvTranspose1d: {key}"),
-                    });
-                }
-            }
-        }
+        let config = self.extract_config(node, opset)?;
+        crate::node::padding::validate_conv_transpose_pads(
+            node,
+            &config.auto_pad,
+            config.output_shape.as_deref(),
+        )?;
 
         // Output type inference
         crate::processor::same_as_input(node);
@@ -110,6 +101,8 @@ impl NodeProcessor for Convtranspose1dProcessor {
         let mut dilations = vec![1]; // Default dilation to 1
         let mut group: usize = 1; // Default group to 1
         let mut output_padding = vec![0]; // Default output padding to 0
+        let mut auto_pad = AutoPad::NotSet;
+        let mut output_shape = None;
 
         // Extract attributes
         for (key, value) in node.attrs.iter() {
@@ -120,13 +113,22 @@ impl NodeProcessor for Convtranspose1dProcessor {
                 "dilations" => dilations = value.clone().into_i64s(),
                 "group" => group = value.clone().into_i64() as usize,
                 "output_padding" => output_padding = value.clone().into_i64s(),
-                "auto_pad" => {}
+                "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string())?,
+                "output_shape" => {
+                    output_shape = Some(crate::node::padding::conv_transpose_output_shape(
+                        &value.clone().into_i64s(),
+                        1,
+                    )?)
+                }
                 _ => {}
             }
         }
 
-        // Check the pads are symmetric
-        if pads.len() != 2 || pads[0] != pads[1] {
+        // Check the pads are symmetric. `auto_pad` and `output_shape` take the place of `pads`.
+        if auto_pad == AutoPad::NotSet
+            && output_shape.is_none()
+            && (pads.len() != 2 || pads[0] != pads[1])
+        {
             return Err(ProcessError::Custom(format!(
                 "Asymmetric padding is not supported for ConvTranspose1d: {pads:?}"
             )));
@@ -161,6 +163,8 @@ impl NodeProcessor for Convtranspose1dProcessor {
             group,
             pads[0] as usize,
             output_padding[0] as usize,
+            auto_pad,
+            output_shape,
         );
 
         Ok(config)
@@ -338,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn test_conv_transpose1d_config_autopad_not_supported() {
+    fn test_conv_transpose1d_config_autopad_same_dynamic_input() {
         let node = create_test_node(
             vec![4],
             vec![1],
@@ -354,7 +358,10 @@ mod tests {
         let processor = Convtranspose1dProcessor;
         let prefs = OutputPreferences::new();
         let result = processor.infer_types(&mut node, 16, &prefs);
-        assert!(matches!(result, Err(ProcessError::InvalidAttribute { .. })));
+        assert!(
+            matches!(result, Err(ProcessError::Custom(ref msg)) if msg.contains("dynamic")),
+            "{result:?}"
+        );
     }
 
     #[test]

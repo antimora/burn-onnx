@@ -87,3 +87,101 @@ pub(crate) fn functional_conv(
         },
     }
 }
+
+/// A conv-transpose's geometry, one entry per spatial axis, as ONNX gives it.
+pub(crate) struct ConvTransposeGeometry<'a> {
+    pub auto_pad: &'a AutoPad,
+    pub output_shape: Option<&'a [usize]>,
+    /// Symmetric explicit pads, used when neither `auto_pad` nor `output_shape` is set.
+    pub padding: &'a [usize],
+    /// ONNX `output_padding`.
+    pub padding_out: &'a [usize],
+    pub kernel: &'a [usize],
+    pub stride: &'a [usize],
+    pub dilation: &'a [usize],
+}
+
+/// burn's `padding` and `padding_out` for a conv-transpose, per spatial axis.
+pub(crate) struct TransposePadding {
+    pub padding: Vec<usize>,
+    pub padding_out: Vec<usize>,
+    /// Output length of each axis whose ONNX end pad exceeds what burn can crop. burn trims
+    /// `padding` from both ends and can only grow the end, so the rest is sliced off after.
+    pub crop: Vec<Option<usize>>,
+}
+
+impl TransposePadding {
+    /// `.slice(..)` cropping the conv output, or nothing when no axis needs it.
+    pub(crate) fn crop_tokens(&self) -> TokenStream {
+        if self.crop.iter().all(Option::is_none) {
+            return quote! {};
+        }
+        let axes = self.crop.iter().map(|len| match len {
+            Some(len) => {
+                let len = len.to_tokens();
+                quote! { 0..#len }
+            }
+            None => quote! { .. },
+        });
+        quote! { .slice(s![.., .., #(#axes),*]) }
+    }
+}
+
+/// Resolve `auto_pad` and `output_shape` into burn's conv-transpose padding.
+///
+/// Per the ONNX spec, the total padding of an axis is `full + output_padding - output_size`,
+/// where `full` is the length of the transposed convolution before any padding and
+/// `output_size` is `output_shape` or, for SAME, `input_size * stride`. SAME_UPPER puts the
+/// odd unit at the end, every other mode at the start. A negative total is clamped to zero and
+/// the output grows at the end instead, as ONNX Runtime does.
+pub(crate) fn transpose_padding(
+    input: &Argument,
+    geometry: ConvTransposeGeometry<'_>,
+) -> TransposePadding {
+    let ConvTransposeGeometry {
+        auto_pad,
+        output_shape,
+        padding,
+        padding_out,
+        kernel,
+        stride,
+        dilation,
+    } = geometry;
+    let rank = padding.len();
+    let same = matches!(auto_pad, AutoPad::SameUpper | AutoPad::SameLower);
+    if !same && output_shape.is_none() {
+        let padding = match auto_pad {
+            AutoPad::Valid => vec![0; rank],
+            _ => padding.to_vec(),
+        };
+        return TransposePadding {
+            padding,
+            padding_out: padding_out.to_vec(),
+            crop: vec![None; rank],
+        };
+    }
+
+    let input_spatial = onnx_ir::node::padding::static_spatial_dims(&input.ty)
+        .expect("ConvTranspose: onnx-ir rejects derived pads on a dynamic input");
+    let mut resolved = TransposePadding {
+        padding: Vec::with_capacity(rank),
+        padding_out: Vec::with_capacity(rank),
+        crop: Vec::with_capacity(rank),
+    };
+    for axis in 0..rank {
+        let full =
+            stride[axis] * (input_spatial[axis] - 1) + (kernel[axis] - 1) * dilation[axis] + 1;
+        let size = output_shape.map_or(input_spatial[axis] * stride[axis], |shape| shape[axis]);
+        let total = (full + padding_out[axis]).saturating_sub(size);
+        let begin = match auto_pad {
+            AutoPad::SameUpper => total / 2,
+            _ => total - total / 2,
+        };
+        // burn keeps positions `begin..full - begin + padding_out`, ONNX wants `begin..begin + size`.
+        let grow = (2 * begin + size) as i64 - full as i64;
+        resolved.padding.push(begin);
+        resolved.padding_out.push(grow.max(0) as usize);
+        resolved.crop.push((grow < 0).then_some(size));
+    }
+    resolved
+}

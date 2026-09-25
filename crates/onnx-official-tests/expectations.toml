@@ -1888,8 +1888,7 @@ status = "pass"
 status = "pass"
 
 [test_convtranspose_autopad_same]
-status = "skip-codegen"
-reason = "Node 'convtranspose2d1' (ConvTranspose2d): Invalid attribute 'auto_pad': Unsupported 'auto_pad' value: SAME_UPPER"
+status = "pass"
 
 [test_convtranspose_dilations]
 status = "pass"
@@ -1901,12 +1900,10 @@ status = "pass"
 status = "pass"
 
 [test_convtranspose_kernel_shape]
-status = "skip-codegen"
-reason = "Node 'convtranspose2d1' (ConvTranspose2d): Invalid attribute 'output_shape': Unexpected attribute for ConvTranspose2d: output_shape"
+status = "pass"
 
 [test_convtranspose_output_shape]
-status = "skip-codegen"
-reason = "Node 'convtranspose2d1' (ConvTranspose2d): Invalid attribute 'output_shape': Unexpected attribute for ConvTranspose2d: output_shape"
+status = "pass"
 
 [test_convtranspose_pad]
 status = "pass"

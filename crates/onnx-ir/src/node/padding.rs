@@ -187,6 +187,53 @@ pub(crate) fn validate_auto_pad(node: &RawNode) -> Result<(), ProcessError> {
     }
 }
 
+/// The spatial `output_shape` attribute of a ConvTranspose over `spatial_rank` axes.
+pub(crate) fn conv_transpose_output_shape(
+    output_shape: &[i64],
+    spatial_rank: usize,
+) -> Result<Vec<usize>, ProcessError> {
+    if output_shape.len() != spatial_rank {
+        return Err(ProcessError::InvalidAttribute {
+            name: "output_shape".to_string(),
+            reason: format!("expected {spatial_rank} spatial dimensions, got {output_shape:?}"),
+        });
+    }
+    output_shape
+        .iter()
+        .map(|&dim| {
+            usize::try_from(dim).map_err(|_| ProcessError::InvalidAttribute {
+                name: "output_shape".to_string(),
+                reason: format!("dimensions must not be negative, got {output_shape:?}"),
+            })
+        })
+        .collect()
+}
+
+/// Reject a ConvTranspose whose pads derive from the input size while that size is unknown.
+///
+/// `SAME_UPPER`/`SAME_LOWER` and `output_shape` both compute the pads from the input spatial
+/// dimensions. Unlike Conv, there is no forward-time fallback for a transposed convolution, so
+/// those dimensions must be static.
+pub(crate) fn validate_conv_transpose_pads(
+    node: &RawNode,
+    auto_pad: &AutoPad,
+    output_shape: Option<&[usize]>,
+) -> Result<(), ProcessError> {
+    let derived = matches!(auto_pad, AutoPad::SameUpper | AutoPad::SameLower);
+    if !derived && output_shape.is_none() || static_spatial_dims(&node.inputs[0].ty).is_some() {
+        return Ok(());
+    }
+    let source = if output_shape.is_some() {
+        "output_shape".to_string()
+    } else {
+        format!("auto_pad {auto_pad}")
+    };
+    Err(ProcessError::Custom(format!(
+        "ConvTranspose pads from {source} need the input spatial dimensions, but they are \
+         dynamic. Re-export the model with a static input shape, or with explicit pads."
+    )))
+}
+
 /// Padding configuration for 1D operations such as convolution
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum PaddingConfig1d {
