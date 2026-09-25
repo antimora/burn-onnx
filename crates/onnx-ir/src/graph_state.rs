@@ -226,8 +226,9 @@ impl GraphState {
                     graph_input_map.insert(sanitized, idx);
                 }
 
-                // Try to convert from proto, but if no type is available (common for subgraph
-                // inputs that reference outer scope), use the outer scope argument
+                // Try to convert from proto. A subgraph input may omit its type; then take it
+                // from outer_scope_types, where the owning node puts the type it binds (Loop
+                // maps each untyped loop-carried input to its v_initial type)
                 let arg = match Argument::try_from(x.clone()) {
                     Ok(arg) => arg,
                     Err(_) => {

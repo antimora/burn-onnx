@@ -695,8 +695,9 @@ pub fn extract_outer_scope_references(
         .collect();
 
     // Helper: check if an input is an outer-scope reference.
-    // In ONNX subgraphs, inputs WITHOUT a corresponding initializer are outer-scope references
-    // (they must be provided by the parent graph). Inputs WITH initializers are locally defined.
+    // Inputs WITHOUT a corresponding initializer are counted as references here. Loop/Scan body
+    // inputs are bound by the node, not the parent graph, so callers remove them again.
+    // Inputs WITH initializers are locally defined.
     let is_outer_scope_input = |name: &str| -> bool {
         !name.is_empty() && !initializer_names.contains(&sanitize_name(name))
     };
@@ -730,7 +731,7 @@ pub fn extract_outer_scope_references(
     // Collect all referenced names
     let mut referenced_names: HashSet<String> = HashSet::new();
 
-    // Subgraph inputs without initializers are outer-scope references
+    // Subgraph inputs without initializers (callers drop Loop/Scan body inputs)
     for input in &graph_proto.input {
         if is_outer_scope_input(&input.name) {
             referenced_names.insert(sanitize_name(&input.name));
@@ -939,8 +940,8 @@ impl TryFrom<ValueInfoProto> for Argument {
             .ok_or(ParseError::VariantNotFound("missing type".into()))?;
 
         if !proto_type.has_tensor_type() {
-            // Return error instead of panicking - this can happen for subgraph inputs
-            // that reference outer scope values without explicit type info
+            // Return error instead of panicking: subgraph inputs may omit their type, and
+            // the caller then takes it from the owning node
             return Err(ParseError::VariantNotFound(format!(
                 "Unsupported argument type: no tensor_type in {:?}",
                 proto_type
@@ -1061,5 +1062,35 @@ mod tests {
 
         // Trailing underscores removed
         assert_eq!(sanitize_name("name_:"), "name");
+    }
+
+    #[test]
+    fn test_body_inputs_are_not_outer_scope_refs() {
+        use crate::protos::{AttributeProto, GraphProto, ValueInfoProto};
+
+        let mut body = GraphProto::new();
+        for name in ["iter", "cond_in", "prev"] {
+            let mut vi = ValueInfoProto::new();
+            vi.name = name.to_string();
+            body.input.push(vi);
+        }
+        let mut add = NodeProto::new();
+        add.op_type = "Add".to_string();
+        add.input = vec!["prev".to_string(), "x".to_string()];
+        add.output = vec!["next".to_string()];
+        body.node.push(add);
+
+        let mut attr = AttributeProto::new();
+        attr.name = "body".to_string();
+        attr.type_ = AttributeType::GRAPH.into();
+        attr.g = ::protobuf::MessageField::some(body);
+        for op_type in ["Loop", "Scan"] {
+            let mut node = NodeProto::new();
+            node.op_type = op_type.to_string();
+            node.attribute.push(attr.clone());
+
+            let refs = extract_node_outer_scope_references(&node);
+            assert_eq!(refs, ["x".to_string()].into_iter().collect(), "{op_type}");
+        }
     }
 }
