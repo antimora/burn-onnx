@@ -190,7 +190,7 @@ fn max_pool(graph: &OnnxGraph) {
       Inputs:
         maxpool_input: F32[1, 3, 8, 8]
       Outputs:
-        maxpool2d1_out1: F32[1, 3, 8, 8]
+        maxpool2d1_out1: F32[1, 3, 4, 4]
       Config:
         MaxPool2dConfig {
             kernel_size: [
@@ -221,7 +221,7 @@ fn max_pool1d(graph: &OnnxGraph) {
       Inputs:
         maxpool1d_input: F32[1, 3, 8]
       Outputs:
-        maxpool1d1_out1: F32[1, 3, 8]
+        maxpool1d1_out1: F32[1, 3, 4]
       Config:
         MaxPool1dConfig {
             kernel_size: 2,
@@ -243,7 +243,7 @@ fn max_pool3d(graph: &OnnxGraph) {
       Inputs:
         maxpool3d_input: F32[1, 3, 8, 8, 8]
       Outputs:
-        maxpool3d1_out1: F32[1, 3, 8, 8, 8]
+        maxpool3d1_out1: F32[1, 3, 4, 4, 4]
       Config:
         MaxPool3dConfig {
             kernel_size: [

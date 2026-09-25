@@ -171,7 +171,7 @@ impl NodeProcessor for LpPool1dProcessor {
 
         crate::node::padding::validate_auto_pad(node)?;
 
-        crate::processor::same_as_input(node);
+        crate::node::padding::pool_output_type(node)?;
 
         Ok(())
     }

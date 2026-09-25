@@ -58,6 +58,17 @@ impl NodeCodegen for onnx_ir::max_pool1d::MaxPool1dNode {
             Some(float_input) => restore_dtype(self, quote! { self.#field.forward(#float_input) }),
             None => quote! { self.#field.forward(#input) },
         };
+        let config = &self.config;
+        let pooled = crate::burn::codegen::trim_ceil_pool(
+            pooled,
+            &input,
+            &config.auto_pad,
+            config.ceil_mode,
+            &[config.padding.as_tuple()],
+            &[config.kernel_size],
+            &[config.stride],
+            &[config.dilation],
+        );
         quote! {
             let #output = #pooled;
         }
@@ -326,6 +337,45 @@ mod tests {
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
             let output = self.pool1.forward(input);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_max_pool1d_forward_ceil_mode_asymmetric_padding() {
+        let config = MaxPool1dConfig::new(
+            3,
+            2,
+            1,
+            PaddingConfig1d::Explicit(1, 2),
+            true,
+            AutoPad::NotSet,
+        );
+        let node = MaxPool1dNodeBuilder::new("pool1")
+            .input_tensor("input", 3, DType::F32)
+            .output_tensor("output", 3, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<3>) -> Tensor<3> {
+            let output = {
+                let dims = input.dims();
+                let out_len = |
+                    size: usize,
+                    begin: usize,
+                    end: usize,
+                    extent: usize,
+                    stride: usize|
+                {
+                    let len = (size + begin + end + stride - 1 - extent) / stride + 1;
+                    if (len - 1) * stride >= size + begin { len - 1 } else { len }
+                };
+                let pooled = self.pool1.forward(input);
+                pooled
+                    .slice(s![.., .., 0..out_len(dims[2usize], 1usize, 2usize, 3usize, 2usize)])
+            };
             output
         }
         ");

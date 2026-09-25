@@ -118,7 +118,7 @@ impl NodeProcessor for MaxPool3dProcessor {
             )));
         }
 
-        crate::processor::same_as_input(node);
+        crate::node::padding::pool_output_type(node)?;
 
         Ok(())
     }

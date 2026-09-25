@@ -148,8 +148,7 @@ impl NodeProcessor for MaxPool1dProcessor {
 
         crate::node::padding::validate_auto_pad(node)?;
 
-        // Output type is same as input
-        crate::processor::same_as_input(node);
+        crate::node::padding::pool_output_type(node)?;
 
         // The optional Indices output holds int64 positions into the flattened input.
         if let Some(indices) = node.outputs.get_mut(1) {

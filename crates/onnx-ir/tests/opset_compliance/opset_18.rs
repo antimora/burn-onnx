@@ -133,7 +133,7 @@ fn lp_pool(graph: &OnnxGraph) {
       Inputs:
         lppool_input: F32[1, 3, 8, 8]
       Outputs:
-        lppool2d1_out1: F32[1, 3, 8, 8]
+        lppool2d1_out1: F32[1, 3, 4, 4]
       Config:
         LpPool2dConfig {
             kernel_size: [
@@ -164,7 +164,7 @@ fn lp_pool1d(graph: &OnnxGraph) {
       Inputs:
         lppool1d_input: F32[1, 3, 8]
       Outputs:
-        lppool1d1_out1: F32[1, 3, 8]
+        lppool1d1_out1: F32[1, 3, 4]
       Config:
         LpPool1dConfig {
             kernel_size: 2,

@@ -247,6 +247,97 @@ pub(crate) fn validate_conv_transpose_pads(
     }
 }
 
+/// Set a MaxPool or LpPool output type: the input's `[N, C]` followed by each spatial size.
+///
+/// A spatial size is known when its input size is known and the attributes give a valid
+/// window. SAME gives `ceil(input / stride)`. Otherwise the size is
+/// `floor((input + pads - (kernel - 1) * dilation - 1) / stride) + 1` (no pads for VALID), with
+/// ceil instead of floor under `ceil_mode`, which also drops a last window that would start in
+/// the end padding.
+pub(crate) fn pool_output_type(node: &mut RawNode) -> Result<(), ProcessError> {
+    let tensor = match &node.inputs[0].ty {
+        ArgType::Tensor(tensor) => tensor.clone(),
+        other => {
+            return Err(ProcessError::TypeMismatch {
+                expected: "Tensor".to_string(),
+                actual: format!("{other:?}"),
+            });
+        }
+    };
+    let ints = |name: &str| match node.attrs.get(name) {
+        Some(AttributeValue::Int64s(values)) => Some(values.clone()),
+        _ => None,
+    };
+    let kernel = ints("kernel_shape");
+    let strides = ints("strides");
+    let pads = ints("pads");
+    let dilations = ints("dilations");
+    // Processors disagree on other values (MaxPool reads `== 1`, LpPool `!= 0`).
+    let ceil_mode = match node.attrs.get("ceil_mode") {
+        None | Some(AttributeValue::Int64(0)) => Some(false),
+        Some(AttributeValue::Int64(1)) => Some(true),
+        _ => None,
+    };
+    let auto_pad = match node.attrs.get("auto_pad") {
+        Some(AttributeValue::String(value)) => AutoPad::parse(value)?,
+        _ => AutoPad::NotSet,
+    };
+
+    let spatial_rank = tensor.rank.saturating_sub(2);
+    let spatial_size = |axis: usize, input: usize| -> Option<usize> {
+        let at = |values: &Option<Vec<i64>>, index: usize, default: i64| match values {
+            Some(values) => values.get(index).copied(),
+            None => Some(default),
+        };
+        let input = input as i64;
+        let kernel = kernel.as_ref()?.get(axis).copied()?;
+        let stride = at(&strides, axis, 1)?;
+        let dilation = at(&dilations, axis, 1)?;
+        if kernel < 1 || stride < 1 || dilation < 1 {
+            return None;
+        }
+        // SAME pads make the span a multiple of the stride, so floor and ceil agree and
+        // `ceil_mode`, however a processor reads it, cannot change the size.
+        if matches!(auto_pad, AutoPad::SameUpper | AutoPad::SameLower) {
+            return usize::try_from((input + stride - 1) / stride).ok();
+        }
+        let (pad_begin, pad_end) = match auto_pad {
+            AutoPad::Valid => (0, 0),
+            _ => (at(&pads, axis, 0)?, at(&pads, axis + spatial_rank, 0)?),
+        };
+        let span = input + pad_begin + pad_end - ((kernel - 1) * dilation + 1);
+        let size = if ceil_mode? {
+            let size = (span + stride - 1).div_euclid(stride) + 1;
+            if (size - 1) * stride >= input + pad_begin {
+                size - 1
+            } else {
+                size
+            }
+        } else {
+            span.div_euclid(stride) + 1
+        };
+        usize::try_from(size).ok().filter(|&size| size > 0)
+    };
+
+    let static_shape = tensor.static_shape.as_ref().map(|shape| {
+        shape
+            .iter()
+            .enumerate()
+            .map(|(axis, &dim)| match axis {
+                0 | 1 => dim,
+                _ => dim.and_then(|input| spatial_size(axis - 2, input)),
+            })
+            .collect()
+    });
+
+    node.outputs[0].ty = ArgType::Tensor(crate::ir::TensorType {
+        dtype: tensor.dtype,
+        rank: tensor.rank,
+        static_shape,
+    });
+    Ok(())
+}
+
 /// The geometry of a ConvTranspose, one entry per spatial axis, as ONNX gives it.
 pub(crate) struct ConvTransposeDims<'a> {
     pub kernel: &'a [usize],
@@ -833,5 +924,82 @@ mod tests {
     fn test_padding_config_3d_negative() {
         let pads = vec![-1, -1, -1, -1, -1, -1];
         let _ = padding_config_3d(&pads);
+    }
+
+    /// Output static shape of a MaxPool with input `[None, 3, spatial...]` and the attributes
+    /// `attrs` adds.
+    fn pool_shape(
+        spatial: &[Option<usize>],
+        attrs: impl FnOnce(TestNodeBuilder) -> TestNodeBuilder,
+    ) -> Vec<Option<usize>> {
+        let mut static_shape = vec![None, Some(3)];
+        static_shape.extend_from_slice(spatial);
+        let rank = static_shape.len();
+        let builder = TestNodeBuilder::new(NodeType::MaxPool2d, "test_pool")
+            .add_input(
+                "data",
+                ArgType::Tensor(TensorType {
+                    dtype: DType::F32,
+                    rank,
+                    static_shape: Some(static_shape),
+                }),
+            )
+            .output_tensor_f32("output", rank, None);
+        let mut node = attrs(builder).build();
+        pool_output_type(&mut node).unwrap();
+        node.outputs[0].ty.static_shape().unwrap().clone()
+    }
+
+    #[test]
+    fn test_pool_output_type_asymmetric_pads_and_dilation() {
+        // H: 10 + 1 + 2 - 5 = 8, / 2 + 1 = 5. W: 10 - 3 = 7, / 1 + 1 = 8.
+        let shape = pool_shape(&[Some(10), Some(10)], |node| {
+            node.attr_ints("kernel_shape", vec![3, 3])
+                .attr_ints("strides", vec![2, 1])
+                .attr_ints("pads", vec![1, 0, 2, 0])
+                .attr_ints("dilations", vec![2, 1])
+        });
+        assert_eq!(shape, vec![None, Some(3), Some(5), Some(8)]);
+    }
+
+    #[test]
+    fn test_pool_output_type_ceil_mode_asymmetric_pads_drops_window() {
+        // 5 + 0 + 2 - 3 = 4, ceil(4 / 3) + 1 = 3, but the 3rd window starts at 6 >= 5.
+        let shape = pool_shape(&[Some(5)], |node| {
+            node.attr_ints("kernel_shape", vec![3])
+                .attr_ints("strides", vec![3])
+                .attr_ints("pads", vec![0, 2])
+                .attr_int("ceil_mode", 1)
+        });
+        assert_eq!(shape, vec![None, Some(3), Some(2)]);
+    }
+
+    #[test]
+    fn test_pool_output_type_valid_ignores_pads() {
+        let shape = pool_shape(&[Some(6), Some(6), Some(6)], |node| {
+            node.attr_ints("kernel_shape", vec![2, 2, 2])
+                .attr_ints("pads", vec![1, 1, 1, 1, 1, 1])
+                .attr_string("auto_pad", "VALID")
+        });
+        assert_eq!(shape, vec![None, Some(3), Some(5), Some(5), Some(5)]);
+    }
+
+    #[test]
+    fn test_pool_output_type_unknown_spatial_dims() {
+        // A dynamic input dim, and a kernel larger than the input, both leave the size unknown.
+        let shape = pool_shape(&[None, Some(2)], |node| {
+            node.attr_ints("kernel_shape", vec![3, 3])
+        });
+        assert_eq!(shape, vec![None, Some(3), None, None]);
+    }
+
+    #[test]
+    fn test_pool_output_type_unrecognized_ceil_mode() {
+        let shape = pool_shape(&[Some(7)], |node| {
+            node.attr_ints("kernel_shape", vec![2])
+                .attr_ints("strides", vec![2])
+                .attr_int("ceil_mode", 2)
+        });
+        assert_eq!(shape, vec![None, Some(3), None]);
     }
 }

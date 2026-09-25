@@ -909,5 +909,6 @@ fn add_simplify_inputs(model_gen: &mut ModelGen) {
         .input("tests/simplify/simplify_expand_shape_chain.onnx")
         .input("tests/simplify/simplify_squeeze_shape_dim.onnx")
         .input("tests/simplify/simplify_reshape_concat_shape.onnx")
-        .input("tests/simplify/simplify_resize_sizes_from_shape.onnx");
+        .input("tests/simplify/simplify_resize_sizes_from_shape.onnx")
+        .input("tests/simplify/simplify_pool_output_dims.onnx");
 }

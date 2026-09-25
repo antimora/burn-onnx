@@ -61,12 +61,27 @@ impl NodeCodegen for onnx_ir::lp_pool2d::LpPool2dNode {
         }
         let kernel_size = (self.config.kernel_size[0] * self.config.kernel_size[1]) as f32;
 
-        quote! {
-            let #output = self
+        let pooled = quote! {
+            self
                 .#field
                 .forward(#input.abs().powf_scalar(#p))
                 .mul_scalar(#kernel_size)
-                .powf_scalar(#p_inv);
+                .powf_scalar(#p_inv)
+        };
+        let config = &self.config;
+        let (top, left, bottom, right) = config.padding.as_tuple();
+        let pooled = crate::burn::codegen::trim_ceil_pool(
+            pooled,
+            &input,
+            &config.auto_pad,
+            config.ceil_mode,
+            &[(top, bottom), (left, right)],
+            &config.kernel_size,
+            &config.strides,
+            &config.dilation,
+        );
+        quote! {
+            let #output = #pooled;
         }
     }
 
@@ -114,6 +129,55 @@ mod tests {
                 .forward(input.abs().powf_scalar(2f32))
                 .mul_scalar(6f32)
                 .powf_scalar(0.5f32);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_lp_pool2d_forward_ceil_mode_asymmetric_padding() {
+        let config = LpPool2dConfig::new(
+            [2, 3],
+            [1, 2],
+            PaddingConfig2d::Explicit(0, 1, 1, 0),
+            [1, 1],
+            true,
+            AutoPad::NotSet,
+            2.0,
+        );
+        let node = LpPool2dNodeBuilder::new("pool1")
+            .input_tensor("input", 4, DType::F32)
+            .output_tensor("output", 4, DType::F32)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<4>) -> Tensor<4> {
+            let output = {
+                let dims = input.dims();
+                let out_len = |
+                    size: usize,
+                    begin: usize,
+                    end: usize,
+                    extent: usize,
+                    stride: usize|
+                {
+                    let len = (size + begin + end + stride - 1 - extent) / stride + 1;
+                    if (len - 1) * stride >= size + begin { len - 1 } else { len }
+                };
+                let pooled = self
+                    .pool1
+                    .forward(input.abs().powf_scalar(2f32))
+                    .mul_scalar(6f32)
+                    .powf_scalar(0.5f32);
+                pooled
+                    .slice(
+                        s![
+                            .., .., 0..out_len(dims[2usize], 0usize, 1usize, 2usize, 1usize), 0
+                            ..out_len(dims[3usize], 1usize, 0usize, 3usize, 2usize)
+                        ],
+                    )
+            };
             output
         }
         ");
