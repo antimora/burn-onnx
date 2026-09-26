@@ -439,6 +439,11 @@ into single optimized operations:
   (Transpose + MatMul + Div/Mul + Softmax + MatMul) exported by PyTorch's ONNX
   exporter are coalesced into a single Attention node, enabling Burn's optimized
   attention primitives.
+- **`SplitToSequence` -> `SequenceAt`**: PyTorch exports `unbind` and `chunk` as
+  a `SplitToSequence` whose output is only read by `SequenceAt` at constant
+  positions. Each read is rewritten into a `Gather` or `Slice` of the input, so
+  these models import without sequence types. This rewrite always runs, even with
+  simplification disabled. Other uses of sequences are still unsupported.
 
 ## Extending burn-onnx
 

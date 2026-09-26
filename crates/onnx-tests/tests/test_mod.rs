@@ -160,6 +160,7 @@ pub mod softplus;
 pub mod softsign;
 pub mod space_to_depth;
 pub mod split;
+pub mod split_to_sequence;
 pub mod sqrt;
 pub mod squeeze;
 pub mod stft;

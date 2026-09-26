@@ -44,6 +44,7 @@ mod idempotent;
 mod identity_element;
 mod permute_reshape;
 mod redundant_nodes;
+pub(crate) mod split_to_sequence;
 
 use std::{cell::RefCell, rc::Rc};
 
