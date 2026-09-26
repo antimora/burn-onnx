@@ -556,13 +556,19 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
         state.processed_nodes = nodes;
     }
 
+    // Sequence values have no IR type, so the common SplitToSequence -> SequenceAt
+    // pattern is rewritten into tensor ops before type inference would reject it.
+    // Not gated on `simplify`: without it the model cannot be imported at all.
+    log::debug!(" PHASE 2c: SplitToSequence rewrite ");
+    crate::simplify::split_to_sequence::rewrite_split_to_sequence(&mut state_rc.borrow_mut());
+
     // Coverage runs before type inference: an uncovered custom op would get
     // the same-as-input fallback there, and a possibly-wrong guessed type
     // then fails a *downstream* node with an unrelated cascade error before
     // any friendly summary could be produced. Hook-less parses skip this and
     // keep the tolerant fallback (useful for inspection/debugging).
     if let Some(inference) = hooks.inference() {
-        log::debug!(" PHASE 2c: Custom-op coverage check ");
+        log::debug!(" PHASE 2d: Custom-op coverage check ");
         check_custom_op_coverage(&state_rc.borrow().processed_nodes, inference.as_ref())?;
     }
 
@@ -589,7 +595,7 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
     ))
 }
 
-/// Phase 2c: verify every custom op is covered by the registered hooks.
+/// Phase 2d: verify every custom op is covered by the registered hooks.
 ///
 /// Aggregates all uncovered `(domain, op_type)` pairs with usage counts so
 /// the user sees the complete list at once instead of failing one op at a

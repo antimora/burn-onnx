@@ -390,6 +390,42 @@ impl GraphState {
         &self.node_output_map
     }
 
+    /// Renamed (`<node>_out<N>`) names of the node outputs that are graph outputs
+    pub(crate) fn node_graph_outputs(&self) -> HashSet<String> {
+        self.outputs
+            .iter()
+            .filter_map(|x| self.node_output_map.get(&x.name))
+            .map(|&(node_idx, output_idx)| {
+                self.processed_nodes[node_idx].outputs[output_idx]
+                    .name
+                    .clone()
+            })
+            .collect()
+    }
+
+    /// Remove the nodes at `indices` (strictly ascending), keeping `node_output_map` in step.
+    /// The caller makes sure nothing still reads their outputs.
+    pub(crate) fn remove_nodes(&mut self, indices: &[usize]) {
+        debug_assert!(indices.windows(2).all(|w| w[0] < w[1]));
+        if indices.is_empty() {
+            return;
+        }
+        self.node_output_map
+            .retain(|_, (node_idx, _)| match indices.binary_search(node_idx) {
+                Ok(_) => false,
+                Err(shift) => {
+                    *node_idx -= shift;
+                    true
+                }
+            });
+        let mut idx = 0;
+        self.processed_nodes.retain(|_| {
+            let keep = indices.binary_search(&idx).is_err();
+            idx += 1;
+            keep
+        });
+    }
+
     /// Get reference to the name registry (if available)
     pub(crate) fn name_registry(&self) -> Option<&NameRegistry> {
         self.name_registry.as_ref()
