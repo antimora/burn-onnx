@@ -131,13 +131,6 @@ impl NodeCodegen for onnx_ir::node::resize::ResizeNode {
         } else {
             // Runtime resize - use tensor operations directly
             //
-            // TODO: Refactor burn::tensor::module::interpolate to accept output_size and scale_factor
-            // via InterpolateOptions (similar to Interpolate2d module) instead of requiring
-            // output_size as a separate parameter. This would:
-            // 1. Simplify this codegen by passing scales directly to InterpolateOptions
-            // 2. Move the size computation (input_dims * scales) into the interpolate function
-            // 3. Align the low-level API with the high-level Interpolate2d module API
-            // See: https://github.com/tracel-ai/burn/issues/4368
             let mode = match self.config.mode {
                 ResizeMode::Nearest => quote! { burn::tensor::ops::InterpolateMode::Nearest },
                 ResizeMode::Linear => quote! { burn::tensor::ops::InterpolateMode::Bilinear },
@@ -162,8 +155,9 @@ impl NodeCodegen for onnx_ir::node::resize::ResizeNode {
                                 let target_width = #sizes_name[3] as usize;
                                 burn::tensor::module::interpolate(
                                     #input,
-                                    [target_height, target_width],
-                                    burn::tensor::ops::InterpolateOptions::new(#mode).with_align_corners(#align_corners)
+                                    burn::tensor::ops::InterpolateOptions::new(#mode)
+                                        .with_output_size([target_height, target_width])
+                                        .with_align_corners(#align_corners)
                                 )
                             };
                         }
@@ -178,8 +172,9 @@ impl NodeCodegen for onnx_ir::node::resize::ResizeNode {
                                 let target_width = sizes_array[3] as usize;
                                 burn::tensor::module::interpolate(
                                     #input,
-                                    [target_height, target_width],
-                                    burn::tensor::ops::InterpolateOptions::new(#mode).with_align_corners(#align_corners)
+                                    burn::tensor::ops::InterpolateOptions::new(#mode)
+                                        .with_output_size([target_height, target_width])
+                                        .with_align_corners(#align_corners)
                                 )
                             };
                         }
@@ -202,8 +197,9 @@ impl NodeCodegen for onnx_ir::node::resize::ResizeNode {
                                 let target_width = ((input_dims[3] as f64) * (#scales_name[3] as f64)) as usize;
                                 burn::tensor::module::interpolate(
                                     #input,
-                                    [target_height, target_width],
-                                    burn::tensor::ops::InterpolateOptions::new(#mode).with_align_corners(#align_corners)
+                                    burn::tensor::ops::InterpolateOptions::new(#mode)
+                                        .with_output_size([target_height, target_width])
+                                        .with_align_corners(#align_corners)
                                 )
                             };
                         }
@@ -220,8 +216,9 @@ impl NodeCodegen for onnx_ir::node::resize::ResizeNode {
                                 let target_width = ((input_dims[3] as f64) * (scales_array[3] as f64)) as usize;
                                 burn::tensor::module::interpolate(
                                     #input,
-                                    [target_height, target_width],
-                                    burn::tensor::ops::InterpolateOptions::new(#mode).with_align_corners(#align_corners)
+                                    burn::tensor::ops::InterpolateOptions::new(#mode)
+                                        .with_output_size([target_height, target_width])
+                                        .with_align_corners(#align_corners)
                                 )
                             };
                         }
@@ -474,10 +471,10 @@ mod tests {
                 let target_width = target_size[3] as usize;
                 burn::tensor::module::interpolate(
                     input,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Nearest,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };
@@ -511,10 +508,10 @@ mod tests {
                 let target_width = new_dims[3] as usize;
                 burn::tensor::module::interpolate(
                     img,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Bilinear,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };
@@ -548,10 +545,10 @@ mod tests {
                 let target_width = output_shape[3] as usize;
                 burn::tensor::module::interpolate(
                     source,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Bicubic,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };
@@ -588,10 +585,10 @@ mod tests {
                 let target_width = target_size[3] as usize;
                 burn::tensor::module::interpolate(
                     input,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Bilinear,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(true),
                 )
             };
@@ -629,10 +626,10 @@ mod tests {
                 let target_width = sizes_array[3] as usize;
                 burn::tensor::module::interpolate(
                     x,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Nearest,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };
@@ -668,10 +665,10 @@ mod tests {
                 let target_width = sizes_array[3] as usize;
                 burn::tensor::module::interpolate(
                     frame,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Bilinear,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };
@@ -707,10 +704,10 @@ mod tests {
                 let target_width = sizes_array[3] as usize;
                 burn::tensor::module::interpolate(
                     input_data,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Bicubic,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };
@@ -748,10 +745,10 @@ mod tests {
                 let target_width = ((input_dims[3] as f64) * (scale_factors[3] as f64)) as usize;
                 burn::tensor::module::interpolate(
                     input,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Nearest,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };
@@ -786,10 +783,10 @@ mod tests {
                 let target_width = ((input_dims[3] as f64) * (scale_vals[3] as f64)) as usize;
                 burn::tensor::module::interpolate(
                     image,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Bilinear,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };
@@ -824,10 +821,10 @@ mod tests {
                 let target_width = ((input_dims[3] as f64) * (cubic_scales[3] as f64)) as usize;
                 burn::tensor::module::interpolate(
                     features,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Bicubic,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };
@@ -866,10 +863,10 @@ mod tests {
                 let target_width = ((input_dims[3] as f64) * (scales_array[3] as f64)) as usize;
                 burn::tensor::module::interpolate(
                     x,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Nearest,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };
@@ -906,10 +903,10 @@ mod tests {
                 let target_width = ((input_dims[3] as f64) * (scales_array[3] as f64)) as usize;
                 burn::tensor::module::interpolate(
                     frame,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Bilinear,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };
@@ -946,10 +943,10 @@ mod tests {
                 let target_width = ((input_dims[3] as f64) * (scales_array[3] as f64)) as usize;
                 burn::tensor::module::interpolate(
                     data,
-                    [target_height, target_width],
                     burn::tensor::ops::InterpolateOptions::new(
                             burn::tensor::ops::InterpolateMode::Bicubic,
                         )
+                        .with_output_size([target_height, target_width])
                         .with_align_corners(false),
                 )
             };

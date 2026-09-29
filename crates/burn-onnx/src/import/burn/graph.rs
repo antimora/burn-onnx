@@ -83,13 +83,13 @@ impl BurnGraph {
         // tensor rather than by the whole model.
         let tensors = self.collect_all_tensors();
 
-        // Write burnpack file. The atomic variant builds the container in a scratch file
-        // and renames it into place, so a deferred provider failing mid-write can't leave
-        // a truncated .bpk behind.
+        // Write burnpack file. `write_to_file` builds the container in a scratch file and
+        // renames it into place, so a deferred provider failing mid-write can't leave a
+        // truncated .bpk behind.
         let burnpack_file = out_file.with_extension("bpk");
         Writer::new(tensors)
             .with_metadata("producer", "burn-onnx")
-            .write_to_file_atomic(&burnpack_file)
+            .write_to_file(&burnpack_file)
             .unwrap_or_else(|e| {
                 panic!(
                     "Failed to write burnpack file {}: {e}",

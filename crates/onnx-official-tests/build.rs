@@ -933,7 +933,7 @@ fn emit_single_test(buf: &mut String, name: &str, meta: &TestMeta, mode: TestMod
     // ---- Compare outputs ----
     //
     // We build `expected_<i>_data: TensorData` first and then compare
-    // its `.shape` (a burn `Shape`) to `actual.shape` (also a `Shape`).
+    // its `.shape()` (a burn `Shape`) to `actual.shape()` (also a `Shape`).
     // Comparing raw `Vec<usize>` from the loader to the `Shape` field
     // would be a type mismatch, and asking the generated harness to
     // call `.into()` is both noisy and order-dependent.
@@ -962,7 +962,7 @@ fn emit_single_test(buf: &mut String, name: &str, meta: &TestMeta, mode: TestMod
         writeln!(
             buf,
             "    assert_eq!(\
-             actual_{idx}_data.shape, expected_{idx}_data.shape, \
+             actual_{idx}_data.shape(), expected_{idx}_data.shape(), \
              \"{name} output_{idx} shape mismatch\");"
         )
         .unwrap();
