@@ -302,8 +302,8 @@ def _gen_write_output(idx, var_expr, rust_type):
         return (
             f"    {{\n"
             f"        let data = {var_expr}.to_data();\n"
-            f"        let shape: Vec<usize> = data.shape.iter().copied().collect();\n"
-            f"        let dtype = format!(\"{{:?}}\", data.dtype).to_lowercase();\n"
+            f"        let shape: Vec<usize> = data.shape().iter().copied().collect();\n"
+            f"        let dtype = format!(\"{{:?}}\", data.dtype()).to_lowercase();\n"
             f"        let path = format!(\"{{output_dir}}/output_{idx}.bin\");\n"
             f"        std::fs::write(&path, data.as_bytes()).expect(\"write output\");\n"
             f"        out_infos.push(serde_json::json!({{\"file\": path, \"shape\": shape, \"dtype\": dtype}}));\n"
