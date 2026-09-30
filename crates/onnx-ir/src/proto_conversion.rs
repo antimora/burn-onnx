@@ -1,10 +1,10 @@
 use std::path::Path;
-use std::str::{FromStr, from_utf8};
+use std::str::FromStr;
 
 use super::graph_state::GraphState;
 use super::ir::{
     ArgType, Argument, AttributeValue, Attributes, CustomIdentity, NodeType, RawNode, TensorData,
-    TensorDataExt, TensorType,
+    TensorType,
 };
 use super::protos::{
     AttributeProto, NodeProto, TensorProto, ValueInfoProto,
@@ -117,153 +117,6 @@ pub fn element_type_from_proto(dt_i32: i32) -> Result<DType, String> {
     }
 }
 
-/// Create an Argument and TensorData from an ONNX initializer
-///
-/// Converts ONNX tensor initializers (weights, biases, etc.) into IR types.
-/// Handles various ONNX encoding quirks including scalars and empty tensors.
-///
-/// Returns (Argument with type info, TensorData with actual values)
-pub fn argument_from_initializer(initializer: &TensorProto) -> (Argument, TensorData) {
-    use crate::ir::ValueSource;
-
-    let name = initializer.name.clone();
-
-    // 1) Canonical path first.
-    match TensorData::try_from(initializer.clone()) {
-        Ok(td) => {
-            let arg = if td.shape().is_empty() {
-                // rank-0 (scalar)
-                Argument {
-                    name,
-                    ty: ArgType::ScalarNative(td.elem_type()),
-                    value_source: ValueSource::Constant, // Initializers are constants
-                    value_store: None,
-                }
-            } else {
-                Argument {
-                    name,
-                    ty: ArgType::Tensor(TensorType {
-                        dtype: td.elem_type(),
-                        rank: td.shape().len(),
-                        static_shape: Some(td.shape().iter().map(|&d| Some(d)).collect()),
-                    }),
-                    value_source: ValueSource::Constant, // Initializers are constants
-                    value_store: None,
-                }
-            };
-            (arg, td)
-        }
-        Err(orig_err) => {
-            // 2) Fallback handling for scalars & empty tensors, with precise diagnostics.
-            let dims: Vec<i64> = initializer.dims.clone();
-            if dims.iter().any(|&d| d < 0) {
-                panic!(
-                    "invalid tensor shape (negative dims) for initializer '{}': {:?}",
-                    name, dims
-                );
-            }
-
-            // Element count implied by dims (treat [] as scalar => 1).
-            let dim_elems: usize = if dims.is_empty() {
-                1
-            } else {
-                dims.iter().map(|&d| d as usize).product()
-            };
-
-            // Payload len across typed fields (best-effort).
-            let payload_len = {
-                let i32n = initializer.int32_data.len();
-                let i64n = initializer.int64_data.len();
-                let f32n = initializer.float_data.len();
-                let f64n = initializer.double_data.len();
-                let sn = initializer.string_data.len();
-                let typed = *[i32n, i64n, f32n, f64n, sn].iter().max().unwrap_or(&0);
-                if typed > 0 {
-                    typed
-                } else {
-                    // raw_data fallback: many exporters put single scalars here
-                    if !initializer.raw_data.is_empty() && dim_elems == 1 {
-                        1
-                    } else {
-                        0
-                    }
-                }
-            };
-
-            // 2.a) Accept scalar encodings: [] or [1] with one element.
-            let looks_scalar = dims.is_empty() || (dims.len() == 1 && dims[0] == 1);
-            if looks_scalar && payload_len == 1 {
-                let td = TensorData::try_from(initializer.clone()).unwrap_or_else(|_| {
-                    panic!(
-                        "failed to decode scalar initializer '{}': dims={:?}",
-                        name, dims
-                    )
-                });
-                let arg = Argument {
-                    name,
-                    ty: ArgType::ScalarNative(td.elem_type()),
-                    value_source: ValueSource::Constant, // Initializers are constants
-                    value_store: None,
-                };
-                return (arg, td);
-            }
-
-            // 2.b) Accept EMPTY tensors: dim_elems == 0 with payload_len == 0.
-            if dim_elems == 0 && payload_len == 0 && !dims.is_empty() {
-                // Map ONNX data_type -> DType.
-                // (Covers common types used in initializers; extend as needed.)
-                let dtype = element_type_from_proto(initializer.data_type).unwrap_or_else(|e| {
-                    panic!(
-                        "unsupported empty-tensor data_type={} for '{}': {}",
-                        initializer.data_type, name, e
-                    )
-                });
-
-                // Build empty tensor using burn-tensor
-                let shape_usize: Vec<usize> = dims.iter().map(|&d| d as usize).collect();
-
-                let td = match dtype {
-                    DType::F16 => TensorData::new(Vec::<half::f16>::new(), shape_usize.clone()),
-                    DType::BF16 => TensorData::new(Vec::<half::bf16>::new(), shape_usize.clone()),
-                    DType::F32 => TensorData::new(Vec::<f32>::new(), shape_usize.clone()),
-                    DType::F64 => TensorData::new(Vec::<f64>::new(), shape_usize.clone()),
-                    DType::I8 => TensorData::new(Vec::<i8>::new(), shape_usize.clone()),
-                    DType::I16 => TensorData::new(Vec::<i16>::new(), shape_usize.clone()),
-                    DType::I32 => TensorData::new(Vec::<i32>::new(), shape_usize.clone()),
-                    DType::I64 => TensorData::new(Vec::<i64>::new(), shape_usize.clone()),
-                    DType::U8 => TensorData::new(Vec::<u8>::new(), shape_usize.clone()),
-                    DType::U16 => TensorData::new(Vec::<u16>::new(), shape_usize.clone()),
-                    DType::U32 => TensorData::new(Vec::<u32>::new(), shape_usize.clone()),
-                    DType::U64 => TensorData::new(Vec::<u64>::new(), shape_usize.clone()),
-                    DType::Bool(_) => TensorData::new(Vec::<bool>::new(), shape_usize.clone()),
-                    _ => panic!(
-                        "Unsupported dtype {:?} for empty tensor '{}' (data_type={})",
-                        dtype, name, initializer.data_type
-                    ),
-                };
-
-                let arg = Argument {
-                    name,
-                    ty: ArgType::Tensor(TensorType {
-                        dtype,
-                        rank: shape_usize.len(),
-                        static_shape: Some(shape_usize.iter().map(|&d| Some(d)).collect()),
-                    }),
-                    value_source: ValueSource::Constant, // Initializers are constants
-                    value_store: None,
-                };
-                return (arg, td);
-            }
-
-            // Not scalar, not empty-tensor; fail with context.
-            panic!(
-                "invalid tensor '{}' (dims {:?} => {} elems) with payload {} elems; original error: {:?}",
-                name, dims, dim_elems, payload_len, orig_err
-            );
-        }
-    }
-}
-
 /// Create an Argument and TensorDataRef from an ONNX initializer (zero-copy path)
 ///
 /// This is the preferred path for mmap loading - it creates TensorDataRef directly
@@ -336,14 +189,52 @@ pub fn tensor_data_ref_from_proto(
     tensor: TensorProto,
     base_path: Option<&Path>,
 ) -> Result<TensorDataRef, ParseError> {
-    let shape = convert_shape(tensor.dims.clone());
     let elem = element_type_from_proto(tensor.data_type).map_err(ParseError::VariantNotFound)?;
+    let shape = tensor
+        .dims
+        .iter()
+        .map(|&d| usize::try_from(d))
+        .collect::<Result<Vec<usize>, _>>()
+        .map_err(|_| {
+            ParseError::VariantNotFound(format!(
+                "tensor '{}' has a negative dimension: {:?}",
+                tensor.name, tensor.dims
+            ))
+        })?;
+    // The byte count the shape implies. Payloads are checked against it here, so a truncated or
+    // oversized tensor is a parse error instead of a panic when the data is first read.
+    let expected_len = shape
+        .iter()
+        .try_fold(elem.size(), |acc, &d| acc.checked_mul(d))
+        .ok_or_else(|| {
+            ParseError::VariantNotFound(format!(
+                "tensor '{}' shape {:?} overflows the addressable size",
+                tensor.name, shape
+            ))
+        })?;
 
     // Check if this tensor uses external data storage
     if tensor.data_location.enum_value() == Ok(DataLocation::EXTERNAL) {
-        return create_external_data_ref(&tensor, base_path, shape, elem);
+        return create_external_data_ref(&tensor, base_path, shape, elem, expected_len as u64);
     }
 
+    let name = tensor.name.clone();
+    let bytes = embedded_bytes(tensor, elem)?;
+    if bytes.len() != expected_len {
+        return Err(ParseError::VariantNotFound(format!(
+            "tensor '{}' with shape {:?} and dtype {:?} needs {} bytes, payload has {}",
+            name,
+            shape,
+            elem,
+            expected_len,
+            bytes.len()
+        )));
+    }
+    Ok(TensorDataRef::new(bytes, shape, elem))
+}
+
+/// Extract a tensor's embedded payload (raw_data or the typed fields) as bytes.
+fn embedded_bytes(tensor: TensorProto, elem: DType) -> Result<bytes::Bytes, ParseError> {
     // Embedded data path: use raw_data directly when available (zero-copy from mmap)
     // Note: For Bool, raw bytes are stored as u8 (0 or 1) and will be reinterpreted
     // as bool during to_tensor_data(). TensorData::as_slice handles this via transmute.
@@ -361,7 +252,7 @@ pub fn tensor_data_ref_from_proto(
             | DType::U32
             | DType::U16
             | DType::U8
-            | DType::Bool(_) => Ok(TensorDataRef::new(tensor.raw_data, shape, elem)),
+            | DType::Bool(_) => Ok(tensor.raw_data),
             _ => Err(ParseError::VariantNotFound(format!(
                 "Unsupported dtype {:?}",
                 elem
@@ -422,7 +313,7 @@ pub fn tensor_data_ref_from_proto(
                 )));
             }
         };
-        Ok(TensorDataRef::new(raw_bytes, shape, elem))
+        Ok(raw_bytes)
     }
 }
 
@@ -435,6 +326,7 @@ fn create_external_data_ref(
     base_path: Option<&Path>,
     shape: Vec<usize>,
     dtype: DType,
+    expected_len: u64,
 ) -> Result<TensorDataRef, ParseError> {
     // Parse external_data key-value pairs
     let entries = tensor
@@ -462,16 +354,40 @@ fn create_external_data_ref(
         .resolve_path(base)
         .map_err(ParseError::VariantNotFound)?;
 
-    // Calculate the length if not specified
-    // When length is not provided, we need to calculate it from shape and dtype
-    let length = external_info.length.unwrap_or_else(|| {
-        let num_elements: usize = if shape.is_empty() {
-            1 // scalar
-        } else {
-            shape.iter().product()
-        };
-        (num_elements * dtype.size()) as u64
-    });
+    // When length is not provided, it is the size the shape and dtype imply
+    let length = external_info.length.unwrap_or(expected_len);
+    if length != expected_len {
+        return Err(ParseError::VariantNotFound(format!(
+            "tensor '{}' with shape {:?} and dtype {:?} needs {} bytes, external_data length is {}",
+            tensor.name, shape, dtype, expected_len, length
+        )));
+    }
+
+    // The data is read lazily, so check now that the range exists rather than fail on first use
+    let file_len = std::fs::metadata(&file_path)
+        .map_err(|e| {
+            ParseError::VariantNotFound(format!(
+                "tensor '{}': cannot read external data file '{}': {}",
+                tensor.name,
+                file_path.display(),
+                e
+            ))
+        })?
+        .len();
+    if external_info
+        .offset
+        .checked_add(length)
+        .is_none_or(|end| end > file_len)
+    {
+        return Err(ParseError::VariantNotFound(format!(
+            "tensor '{}': external data range {}+{} exceeds '{}' ({} bytes)",
+            tensor.name,
+            external_info.offset,
+            length,
+            file_path.display(),
+            file_len
+        )));
+    }
 
     log::debug!(
         "Creating external data ref for '{}': file={}, offset={}, length={}",
@@ -520,13 +436,21 @@ impl TryFrom<AttributeProto> for AttributeValue {
     type Error = ParseError;
 
     fn try_from(attr: AttributeProto) -> Result<AttributeValue, Self::Error> {
-        let value = match attr.type_.unwrap() {
+        let attr_type = attr
+            .type_
+            .enum_value()
+            .map_err(|v| ParseError::VariantNotFound(format!("attribute type {v}")))?;
+        let value = match attr_type {
             AttributeType::FLOAT => AttributeValue::Float32(attr.f),
             AttributeType::INT => AttributeValue::Int64(attr.i),
             AttributeType::STRING => AttributeValue::String(to_string(attr.s)),
 
-            // warning: tensor can be empty TODO: check if it is empty
-            AttributeType::TENSOR => AttributeValue::Tensor(TensorData::try_from(attr.t.unwrap())?),
+            AttributeType::TENSOR => {
+                let tensor = attr.t.into_option().ok_or_else(|| {
+                    ParseError::VariantNotFound("TENSOR attribute without a tensor".to_string())
+                })?;
+                AttributeValue::Tensor(TensorData::try_from(tensor)?)
+            }
 
             // Graph attributes (used by If, Loop, Scan)
             AttributeType::GRAPH => {
@@ -570,7 +494,17 @@ pub fn convert_vec_attrs_proto(attrs: Vec<AttributeProto>) -> Attributes {
         {
             continue;
         }
-        result.insert(attr.name.clone(), AttributeValue::try_from(attr).unwrap());
+        let name = attr.name.clone();
+        match AttributeValue::try_from(attr) {
+            Ok(value) => {
+                result.insert(name, value);
+            }
+            // An attribute this crate cannot represent is dropped like an unknown one, so a
+            // model that carries it for another runtime still imports
+            Err(ParseError::VariantNotFound(reason)) => {
+                log::warn!("Skipping attribute '{name}': {reason}");
+            }
+        }
     }
     result
 }
@@ -663,15 +597,11 @@ pub(crate) fn convert_node_proto(
 }
 
 fn to_string(bytes: bytes::Bytes) -> String {
-    from_utf8(&bytes).unwrap().to_string()
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn to_string_vec(bytes: Vec<bytes::Bytes>) -> Vec<String> {
     bytes.into_iter().map(to_string).collect()
-}
-
-fn convert_shape(shape: Vec<i64>) -> Vec<usize> {
-    shape.iter().map(|s| *s as usize).collect()
 }
 
 /// Extract outer-scope references from a GraphProto

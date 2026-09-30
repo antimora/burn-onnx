@@ -101,7 +101,7 @@ impl NodeProcessor for BatchNormProcessor {
     ) -> Result<(), ProcessError> {
         // Reject training mode since training-specific outputs are not supported
         if let Some(training_mode) = node.attrs.get("training_mode")
-            && training_mode.clone().into_i64() != 0
+            && training_mode.clone().into_i64()? != 0
         {
             return Err(ProcessError::Custom(
                 "BatchNorm: training_mode=1 is not supported (only inference mode)".to_string(),
@@ -172,8 +172,8 @@ impl NodeProcessor for BatchNormProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "momentum" => momentum = value.clone().into_f32(),
-                "epsilon" => epsilon = value.clone().into_f32(),
+                "momentum" => momentum = value.clone().into_f32()?,
+                "epsilon" => epsilon = value.clone().into_f32()?,
                 // Deprecated attributes from older opsets (safe to ignore)
                 "spatial" | "consumed_inputs" | "is_test" | "training_mode" => {}
                 _ => {}
@@ -196,17 +196,15 @@ impl NodeProcessor for BatchNormProcessor {
         }
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::BatchNormalization(BatchNormalizationNode {
+        Ok(Node::BatchNormalization(BatchNormalizationNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

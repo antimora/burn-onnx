@@ -126,41 +126,52 @@ impl NodeProcessor for TileProcessor {
 
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
         // Extract repeats config (always an input, all opset versions)
-        fn get_repeats(node: &RawNode) -> TileInput {
+        fn get_repeats(node: &RawNode) -> Result<TileInput, ProcessError> {
             if let Some(input) = node.inputs.get(1) {
                 match input.value() {
                     None => {
                         // Runtime input - store reference instead of cloning the argument
-                        TileInput::Runtime(RuntimeInputRef::new(input.name.clone(), 1))
+                        Ok(TileInput::Runtime(RuntimeInputRef::new(
+                            input.name.clone(),
+                            1,
+                        )))
                     }
                     Some(tensor_data) => {
-                        let i64_values: Vec<i64> = tensor_data.try_into_vec().unwrap();
-                        let repeats = i64_values.iter().map(|&x| x as usize).collect();
-                        TileInput::Static(repeats)
+                        let i64_values = tensor_data.to_i64_vec().map_err(|e| {
+                            ProcessError::Custom(format!("Tile: cannot read repeats: {e:?}"))
+                        })?;
+                        let repeats = i64_values
+                            .iter()
+                            .map(|&x| usize::try_from(x))
+                            .collect::<Result<Vec<usize>, _>>()
+                            .map_err(|_| {
+                                ProcessError::Custom(format!(
+                                    "Tile: repeats must be non-negative, got {i64_values:?}"
+                                ))
+                            })?;
+                        Ok(TileInput::Static(repeats))
                     }
                 }
             } else {
                 // No repeats input provided - default to empty
-                TileInput::Static(vec![])
+                Ok(TileInput::Static(vec![]))
             }
         }
 
-        let repeats = get_repeats(node);
+        let repeats = get_repeats(node)?;
         let config = TileConfig { repeats };
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Tile(TileNode {
+        Ok(Node::Tile(TileNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

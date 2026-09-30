@@ -146,7 +146,7 @@ impl TensorDataRef {
         let mmap = unsafe { memmap2::Mmap::map(&file)? };
 
         let start = offset as usize;
-        let end = start + length as usize;
+        let end = start.saturating_add(length as usize);
 
         if end > mmap.len() {
             return Err(std::io::Error::new(
@@ -199,7 +199,7 @@ impl TensorDataRef {
 /// Convert from TensorData to TensorDataRef
 ///
 /// This is used for compatibility with existing code that produces TensorData,
-/// such as the fallback paths in argument_from_initializer for scalars and empty tensors.
+/// such as tensors built by tests and graph rewrites.
 impl From<TensorData> for TensorDataRef {
     fn from(tensor_data: TensorData) -> Self {
         // Extract bytes from TensorData's internal storage

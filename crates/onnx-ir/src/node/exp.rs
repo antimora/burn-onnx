@@ -55,11 +55,11 @@ impl NodeProcessor for ExpProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        Node::Exp(ExpNode {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(Node::Exp(ExpNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
-        })
+        }))
     }
 }

@@ -53,11 +53,11 @@ impl NodeProcessor for AsinProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        Node::Asin(AsinNode {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(Node::Asin(AsinNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
-        })
+        }))
     }
 }

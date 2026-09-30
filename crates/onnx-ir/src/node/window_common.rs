@@ -32,7 +32,7 @@ impl Default for WindowSize {
 pub(crate) fn resolve_output_dtype(node: &RawNode, op_name: &str) -> Result<DType, ProcessError> {
     let dtype = match node.attrs.get("output_datatype") {
         Some(val) => {
-            let dt_i32 = val.clone().into_i32();
+            let dt_i32 = val.clone().into_i32()?;
             element_type_from_proto(dt_i32).map_err(|e| ProcessError::InvalidAttribute {
                 name: "output_datatype".to_string(),
                 reason: format!("{op_name}: {e}"),

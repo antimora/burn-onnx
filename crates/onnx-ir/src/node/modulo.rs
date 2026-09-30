@@ -163,17 +163,15 @@ impl NodeProcessor for ModuloProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Mod(ModNode {
+        Ok(Node::Mod(ModNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

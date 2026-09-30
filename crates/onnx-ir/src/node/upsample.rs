@@ -26,7 +26,7 @@
 //! - Rank 3 and rank 4 input only (rank 4 when the scales arrive at runtime).
 //! - Batch and channel scales must be 1, and spatial scales must be finite and at least 1.
 //! - `nearest` only. `linear` is refused because Burn cannot place samples asymmetrically.
-//! - A scale must divide its dimension evenly; see [`validate_nearest_scales`].
+//! - A scale must divide its dimension evenly; see `validate_nearest_scales`.
 use crate::ir::{ArgType, Node, RawNode, RuntimeInputRef, TensorDataExt, TensorType};
 use crate::node::resize::{
     CoordinateTransformMode, NearestMode, ResizeConfig, ResizeMode, ResizeNode, ResizeScales,
@@ -101,7 +101,7 @@ fn extract_scales(
             .get("scales")
             .ok_or_else(|| ProcessError::MissingAttribute("scales".to_string()))?;
         return Ok(ResizeScales::Static(spatial_scales(
-            scales.clone().into_f32s(),
+            scales.clone().into_f32s()?,
             input_rank,
         )?));
     }
@@ -118,13 +118,13 @@ fn extract_scales(
         .get("height_scale")
         .ok_or_else(|| ProcessError::MissingAttribute("height_scale".to_string()))?
         .clone()
-        .into_f32();
+        .into_f32()?;
     let width_scale = node
         .attrs
         .get("width_scale")
         .ok_or_else(|| ProcessError::MissingAttribute("width_scale".to_string()))?
         .clone()
-        .into_f32();
+        .into_f32()?;
     Ok(ResizeScales::Static(vec![height_scale, width_scale]))
 }
 
@@ -284,7 +284,7 @@ impl NodeProcessor for UpsampleProcessor {
         let mode = match node.attrs.get("mode") {
             // Opset 1 spells linear interpolation "bilinear"; opset 7 renamed it "linear" while
             // sanctioning "bilinear"/"trilinear" as spellings of the same mode.
-            Some(mode) => match mode.clone().into_string().to_lowercase().as_str() {
+            Some(mode) => match mode.clone().into_string()?.to_lowercase().as_str() {
                 "bilinear" | "trilinear" => ResizeMode::Linear,
                 other => {
                     other
@@ -346,23 +346,21 @@ impl NodeProcessor for UpsampleProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
         // `lift_constants` runs a second time after identity elimination (post_processing.rs),
         // and type inference does not run again after it. So `Constant -> Identity -> Upsample`
         // arrives here with scales that were Runtime during `infer_types` and are Static now,
         // reaching the scale checks for the first time at a point that cannot return an error.
         // Rejecting late beats importing a model we would compute wrong, so this panics with the
         // reason rather than degrading to a warning.
-        let config = self
-            .extract_config(&builder, opset)
-            .unwrap_or_else(|e| panic!("Node '{}' (Upsample): {e}", builder.name));
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Upsample(ResizeNode {
+        Ok(Node::Upsample(ResizeNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -713,7 +711,7 @@ mod tests {
             .attr_floats("scales", vec![1.0, 1.0, 2.0, 2.0])
             .build();
 
-        let built = UpsampleProcessor.build_node(node, 7);
+        let built = UpsampleProcessor.build_node(node, 7).unwrap();
 
         assert_eq!(built.node_type(), NodeType::Upsample);
     }

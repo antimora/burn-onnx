@@ -125,9 +125,7 @@ impl NodeProcessor for ExpandProcessor {
         }
 
         // Get reference to config for type inference
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(node, opset)?;
 
         // Get input element type - Expand should preserve the input's element type
         let input_elem_type = match &node.inputs[0].ty {
@@ -256,17 +254,15 @@ impl NodeProcessor for ExpandProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Expand(ExpandNode {
+        Ok(Node::Expand(ExpandNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

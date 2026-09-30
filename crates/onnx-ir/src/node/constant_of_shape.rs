@@ -119,7 +119,7 @@ impl NodeProcessor for ConstantOfShapeProcessor {
 
         // Validate that the value attribute contains exactly one element (per ONNX spec)
         if let Some(value_attr) = node.attrs.get("value") {
-            let tensor = value_attr.clone().into_tensor();
+            let tensor = value_attr.clone().into_tensor()?;
             let num_elements: usize = tensor.shape().iter().product();
             if num_elements != 1 {
                 return Err(ProcessError::Custom(format!(
@@ -132,7 +132,8 @@ impl NodeProcessor for ConstantOfShapeProcessor {
         let value_type = node
             .attrs
             .get("value")
-            .map(|v| v.clone().into_tensor().elem_type())
+            .map(|v| v.clone().into_tensor().map(|x| x.elem_type()))
+            .transpose()?
             .unwrap_or(DType::F32); // If not given, defaults to 0 as float32
 
         let rank = match &node.inputs[0].ty {
@@ -255,23 +256,25 @@ impl NodeProcessor for ConstantOfShapeProcessor {
         };
 
         // Extract the value attribute if present
-        let value = node.attrs.get("value").map(|v| v.clone().into_tensor());
+        let value = node
+            .attrs
+            .get("value")
+            .map(|v| v.clone().into_tensor())
+            .transpose()?;
 
         let config = ConstantOfShapeConfig { shape, value };
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::ConstantOfShape(ConstantOfShapeNode {
+        Ok(Node::ConstantOfShape(ConstantOfShapeNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

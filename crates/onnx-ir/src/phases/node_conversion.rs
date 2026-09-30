@@ -11,7 +11,7 @@ use crate::{
     graph_state::GraphState,
     ir::{ArgType, AttributeValue, NodeType, RawNode, TensorData, TensorDataExt},
     pipeline::{DomainOpsets, Error, PipelineHooks},
-    processor::get_processor_registry,
+    processor::{ProcessError, get_processor_registry},
     proto_conversion::convert_node_proto,
     protos::{GraphProto, NodeProto},
 };
@@ -181,7 +181,7 @@ fn convert_nodes_impl(
         }
 
         // Remap node types based on patterns
-        remap_node_type(&mut node);
+        remap_node_type(&mut node)?;
 
         // Rename node with counter
         rename_node(&mut node, &mut node_name_counter, name_registry.as_ref());
@@ -209,14 +209,23 @@ fn convert_nodes_impl(
         let registry = get_processor_registry();
         let processor = registry.get(&node.node_type);
 
+        // lift_constants indexes inputs directly, so reject a wrong input count first
+        crate::processor::validate_input_spec(&node, opset_version, &processor.spec().inputs)
+            .map_err(|e| {
+                Error::Processing(ProcessError::Custom(format!(
+                    "Node '{}' ({}): {e}",
+                    node.name, node.node_type
+                )))
+            })?;
+
         processor
             .lift_constants(&mut node, opset_version)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Failed to lift constants for node {} (type: {:?}): {:?}",
-                    node.name, node.node_type, e
-                )
-            });
+            .map_err(|e| {
+                Error::Processing(ProcessError::Custom(format!(
+                    "Failed to lift constants for node {} (type: {:?}): {e}",
+                    node.name, node.node_type
+                )))
+            })?;
 
         // Config extraction is now done in infer_types instead of here
         // This allows processors to call extract_config during type inference
@@ -370,66 +379,75 @@ fn rename_node(
 }
 
 /// Remap node type using kernel shape
-fn remap_node_with_kernel_shape<F>(node: &mut RawNode, new_node_type: F)
+fn remap_node_with_kernel_shape<F>(node: &mut RawNode, new_node_type: F) -> Result<(), Error>
 where
-    F: FnOnce(usize) -> NodeType,
+    F: FnOnce(usize) -> Option<NodeType>,
 {
     let spatial_dims = match node.attrs.get("kernel_shape") {
-        Some(AttributeValue::Int64s(ints)) => ints.len(),
+        Some(AttributeValue::Int64s(ints)) => Some(ints.len()),
         None if [NodeType::Conv, NodeType::ConvTranspose].contains(&node.node_type) => {
             // "kernel_shape" attribute is optional and should be inferred from weights
             // https://onnx.ai/onnx/operators/onnx__Conv.html
-            if let ArgType::Tensor(weight) = &node.inputs[1].ty {
+            match node.inputs.get(1).map(|w| &w.ty) {
                 // Skip leading channels in/out
-                weight.rank - 2
-            } else {
-                panic!("Cannot infer kernel spatial dims");
+                Some(ArgType::Tensor(weight)) => weight.rank.checked_sub(2),
+                _ => None,
             }
         }
-        _ => panic!("Cannot infer kernel shape"),
+        _ => None,
     };
-    node.node_type = new_node_type(spatial_dims);
+    let unsupported = |reason: String| {
+        Error::Processing(ProcessError::Custom(format!(
+            "Node '{}' ({}): {reason}",
+            node.name, node.node_type
+        )))
+    };
+    let spatial_dims =
+        spatial_dims.ok_or_else(|| unsupported("cannot infer kernel spatial dims".to_string()))?;
+    node.node_type = new_node_type(spatial_dims)
+        .ok_or_else(|| unsupported(format!("{spatial_dims} spatial dims are not supported")))?;
+    Ok(())
 }
 
 /// Remap node type to a more specific one
-fn remap_node_type(node: &mut RawNode) {
+fn remap_node_type(node: &mut RawNode) -> Result<(), Error> {
     match node.node_type {
         NodeType::Conv => remap_node_with_kernel_shape(node, |spatial_dims| match spatial_dims {
-            1 => NodeType::Conv1d,
-            2 => NodeType::Conv2d,
-            3 => NodeType::Conv3d,
-            _ => panic!("Only conv 1d, 2d and 3d are supported"),
+            1 => Some(NodeType::Conv1d),
+            2 => Some(NodeType::Conv2d),
+            3 => Some(NodeType::Conv3d),
+            _ => None,
         }),
         NodeType::ConvTranspose => {
             remap_node_with_kernel_shape(node, |spatial_dims| match spatial_dims {
-                1 => NodeType::ConvTranspose1d,
-                2 => NodeType::ConvTranspose2d,
-                3 => NodeType::ConvTranspose3d,
-                _ => panic!("Only conv_transpose 1d, 2d and 3d are supported"),
+                1 => Some(NodeType::ConvTranspose1d),
+                2 => Some(NodeType::ConvTranspose2d),
+                3 => Some(NodeType::ConvTranspose3d),
+                _ => None,
             })
         }
         NodeType::MaxPool => {
             remap_node_with_kernel_shape(node, |spatial_dims| match spatial_dims {
-                1 => NodeType::MaxPool1d,
-                2 => NodeType::MaxPool2d,
-                3 => NodeType::MaxPool3d,
-                _ => panic!("Only max_pool 1d, 2d, and 3d are supported"),
+                1 => Some(NodeType::MaxPool1d),
+                2 => Some(NodeType::MaxPool2d),
+                3 => Some(NodeType::MaxPool3d),
+                _ => None,
             })
         }
         NodeType::AveragePool => {
             remap_node_with_kernel_shape(node, |spatial_dims| match spatial_dims {
-                1 => NodeType::AveragePool1d,
-                2 => NodeType::AveragePool2d,
-                3 => NodeType::AveragePool3d,
-                _ => panic!("Only avg_pool 1d, 2d, and 3d are supported"),
+                1 => Some(NodeType::AveragePool1d),
+                2 => Some(NodeType::AveragePool2d),
+                3 => Some(NodeType::AveragePool3d),
+                _ => None,
             })
         }
         NodeType::LpPool => remap_node_with_kernel_shape(node, |spatial_dims| match spatial_dims {
-            1 => NodeType::LpPool1d,
-            2 => NodeType::LpPool2d,
-            _ => panic!("Only lp_pool 1d and 2d are supported"),
+            1 => Some(NodeType::LpPool1d),
+            2 => Some(NodeType::LpPool2d),
+            _ => None,
         }),
-        _ => (),
+        _ => Ok(()),
     }
 }
 
@@ -456,8 +474,9 @@ fn coalesce(
 /// The burn-onnx layer is responsible for transposing the weights to Burn's expected
 /// layout [in_features, out_features] during code generation.
 fn convert_gemm_to_linear(node: &mut RawNode) {
+    // Leave a malformed Gemm alone; its processor reports the output count
     if node.outputs.len() != 1 {
-        panic!("Gemm node must have 1 output");
+        return;
     }
 
     // Check transA - must be 0 (no transpose) or absent (default is 0)
@@ -518,8 +537,9 @@ fn convert_matmul_to_linear(
     graph_data: &mut GraphState,
     domain_opsets: &DomainOpsets,
 ) {
+    // Leave a malformed MatMul alone; its processor reports the input count
     if node.inputs.len() != 2 {
-        panic!("MatMul node must have 2 inputs");
+        return;
     }
 
     // if the second input does not have a value, it is not a weight, then proceed to the next node
@@ -675,7 +695,7 @@ mod tests {
             .build();
 
         assert_eq!(node.node_type, NodeType::Conv);
-        remap_node_type(&mut node);
+        remap_node_type(&mut node).unwrap();
         assert_eq!(node.node_type, NodeType::Conv2d);
     }
 
@@ -693,7 +713,7 @@ mod tests {
             .build();
 
         assert_eq!(node.node_type, NodeType::ConvTranspose);
-        remap_node_type(&mut node);
+        remap_node_type(&mut node).unwrap();
         assert_eq!(node.node_type, NodeType::ConvTranspose1d);
     }
 
@@ -712,7 +732,7 @@ mod tests {
             .build();
 
         // Create GraphState and register the weight as a constant
-        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], &[], &[]);
+        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], Vec::new(), &[]);
         graph_state.register_test_constant(
             "weight".to_string(),
             TensorData::new(weight_data, weight_shape),
@@ -770,7 +790,7 @@ mod tests {
             static_shape: Some(bias_shape.iter().map(|&d| Some(d)).collect()),
         });
 
-        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], &[], &[]);
+        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], Vec::new(), &[]);
         graph_state.register_test_constant(
             "weight".to_string(),
             TensorData::new(weight_data, weight_shape),
@@ -835,7 +855,7 @@ mod tests {
             static_shape: Some(bias_shape.iter().map(|&d| Some(d)).collect()),
         });
 
-        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], &[], &[]);
+        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], Vec::new(), &[]);
         graph_state.register_test_constant(
             "weight".to_string(),
             TensorData::new(weight_data, weight_shape),
@@ -887,7 +907,7 @@ mod tests {
             static_shape: Some(bias_shape.iter().map(|&d| Some(d)).collect()),
         });
 
-        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], &[], &[]);
+        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], Vec::new(), &[]);
         graph_state.register_test_constant(
             "weight".to_string(),
             TensorData::new(weight_data, weight_shape),
@@ -916,7 +936,7 @@ mod tests {
             .output_tensor_f32("add_out", 2, None)
             .build();
 
-        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], &[], &[]);
+        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], Vec::new(), &[]);
         graph_state.register_test_constant(
             "weight".to_string(),
             TensorData::new(vec![0.0; 128], vec![4, 32]),

@@ -86,14 +86,9 @@ impl NodeProcessor for Conv2dProcessor {
             match key.as_str() {
                 "kernel_shape" | "strides" | "pads" | "dilations" | "group" => {}
                 "auto_pad" => {
-                    AutoPad::parse(&value.clone().into_string())?;
+                    AutoPad::parse(&value.clone().into_string()?)?;
                 }
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for Conv2d: {key}"),
-                    });
-                }
+                _ => {}
             }
         }
 
@@ -255,17 +250,23 @@ impl NodeProcessor for Conv2dProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "kernel_shape" => kernel_shape = value.clone().into_i64s(),
-                "strides" => strides = value.clone().into_i64s(),
-                "pads" => pads = value.clone().into_i64s(),
-                "dilations" => dilations = value.clone().into_i64s(),
-                "group" => group = value.clone().into_i64() as usize,
-                "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string())?,
+                "kernel_shape" => kernel_shape = value.clone().into_i64s()?,
+                "strides" => strides = value.clone().into_i64s()?,
+                "pads" => pads = value.clone().into_i64s()?,
+                "dilations" => dilations = value.clone().into_i64s()?,
+                "group" => group = value.clone().into_i64()? as usize,
+                "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string()?)?,
                 _ => {}
             }
         }
 
-        let padding = padding_config_2d(&pads);
+        if !kernel_shape.is_empty() {
+            crate::node::padding::check_attr_len("kernel_shape", &kernel_shape, 2)?;
+        }
+        crate::node::padding::check_attr_len("strides", &strides, 2)?;
+        crate::node::padding::check_attr_len("dilations", &dilations, 2)?;
+
+        let padding = padding_config_2d(&pads)?;
 
         let kernel_size = if kernel_shape.is_empty() {
             let weight_shape = crate::node::padding::known_weight_shape(&node.inputs[1])
@@ -298,17 +299,15 @@ impl NodeProcessor for Conv2dProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Conv2d(Conv2dNode {
+        Ok(Node::Conv2d(Conv2dNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

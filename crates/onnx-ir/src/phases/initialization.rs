@@ -13,16 +13,19 @@ use crate::{graph_state::GraphState, ir::NodeType, ir::OuterScopeTypes, protos::
 ///
 /// The `base_path` is the directory containing the ONNX file, used for resolving
 /// external tensor data paths (for models >2GB).
+///
+/// Fails when an initializer's data does not match its declared shape and dtype.
 pub(crate) fn initialize_from_graph_with_registry_and_outer_scope(
     graph: &GraphProto,
     name_registry: Option<crate::graph_state::NameRegistry>,
     outer_scope: OuterScopeTypes,
     base_path: Option<&Path>,
-) -> Rc<RefCell<GraphState>> {
+) -> Result<Rc<RefCell<GraphState>>, String> {
+    let initializers = crate::graph_state::convert_initializers(&graph.initializer, base_path)?;
     let state = GraphState::new_with_registry_and_outer_scope(
         &graph.input,
         &graph.output,
-        &graph.initializer,
+        initializers,
         &graph.value_info,
         name_registry,
         outer_scope,
@@ -47,5 +50,5 @@ pub(crate) fn initialize_from_graph_with_registry_and_outer_scope(
         }
     }
 
-    state_rc
+    Ok(state_rc)
 }

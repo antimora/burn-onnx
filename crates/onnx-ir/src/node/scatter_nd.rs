@@ -80,50 +80,38 @@ impl NodeProcessor for ScatterNDProcessor {
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
         let mut reduction = ScatterNDReduction::None;
 
-        for (key, value) in node.attrs.iter() {
-            match key.as_str() {
-                "reduction" => {
-                    let s = value.clone().into_string();
-                    reduction = match s.as_str() {
-                        "none" => ScatterNDReduction::None,
-                        "add" => ScatterNDReduction::Add,
-                        "mul" => ScatterNDReduction::Mul,
-                        "max" => ScatterNDReduction::Max,
-                        "min" => ScatterNDReduction::Min,
-                        _ => {
-                            return Err(ProcessError::InvalidAttribute {
-                                name: "reduction".to_string(),
-                                reason: format!(
-                                    "Invalid reduction mode '{}'. Must be one of: none, add, mul, max, min",
-                                    s
-                                ),
-                            });
-                        }
-                    };
-                }
+        if let Some(value) = node.attrs.get("reduction") {
+            let s = value.clone().into_string()?;
+            reduction = match s.as_str() {
+                "none" => ScatterNDReduction::None,
+                "add" => ScatterNDReduction::Add,
+                "mul" => ScatterNDReduction::Mul,
+                "max" => ScatterNDReduction::Max,
+                "min" => ScatterNDReduction::Min,
                 _ => {
                     return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for ScatterND: {}", key),
+                        name: "reduction".to_string(),
+                        reason: format!(
+                            "Invalid reduction mode '{}'. Must be one of: none, add, mul, max, min",
+                            s
+                        ),
                     });
                 }
-            }
+            };
         }
 
         Ok(ScatterNDConfig { reduction })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::ScatterND(ScatterNDNode {
+        Ok(Node::ScatterND(ScatterNDNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -187,14 +175,6 @@ mod tests {
         let node = create_test_node()
             .attr_string("reduction", "invalid")
             .build();
-        let processor = ScatterNDProcessor;
-        let result = processor.extract_config(&node, 16);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_unexpected_attribute() {
-        let node = create_test_node().attr_int("unknown_attr", 42).build();
         let processor = ScatterNDProcessor;
         let result = processor.extract_config(&node, 16);
         assert!(result.is_err());

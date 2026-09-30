@@ -54,11 +54,11 @@ impl NodeProcessor for TanhProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        Node::Tanh(TanhNode {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(Node::Tanh(TanhNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
-        })
+        }))
     }
 }

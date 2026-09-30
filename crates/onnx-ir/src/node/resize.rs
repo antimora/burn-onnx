@@ -191,89 +191,108 @@ pub struct ResizeNode {
 }
 
 /// Extract scales input as either static or runtime
-fn extract_scales_input(node: &RawNode, input_rank: usize, idx: usize) -> Option<ResizeScales> {
-    match node.inputs.get(idx) {
-        Some(input) => {
-            // Skip optional inputs (those that were never provided)
-            if input.is_optional() {
-                return None;
-            }
+fn extract_scales_input(
+    node: &RawNode,
+    input_rank: usize,
+    idx: usize,
+) -> Result<Option<ResizeScales>, ProcessError> {
+    let Some(input) = node.inputs.get(idx) else {
+        return Ok(None);
+    };
+    // Skip optional inputs (those that were never provided)
+    if input.is_optional() {
+        return Ok(None);
+    }
 
-            match &input.ty {
-                // A Shape input has a value too once simplification folds it to a constant,
-                // and constant lifting then clears its name, so it must not become Runtime.
-                ArgType::Tensor(_) | ArgType::Shape(_) => {
-                    // Check if it's a static value (lifted constant) or constant
-                    match input.value() {
-                        Some(tensor_data) => {
-                            // `to_f32_vec` also accepts the i64 data of a Shape input
-                            let mut scales: Vec<f32> = tensor_data.to_f32_vec().unwrap();
-                            if scales.is_empty() {
-                                return None;
-                            }
-                            assert!(scales.len() == input_rank);
-                            // ignore the first two items from scales
-                            // because they are the batch and channel dimensions
-                            scales = scales.iter().skip(2).cloned().collect();
-                            Some(ResizeScales::Static(scales))
-                        }
-                        None => {
-                            // Runtime input - store reference instead of cloning the argument
-                            Some(ResizeScales::Runtime(RuntimeInputRef::new(
-                                input.name.clone(),
-                                idx,
-                            )))
-                        }
+    match &input.ty {
+        // A Shape input has a value too once simplification folds it to a constant,
+        // and constant lifting then clears its name, so it must not become Runtime.
+        ArgType::Tensor(_) | ArgType::Shape(_) => {
+            // Check if it's a static value (lifted constant) or constant
+            match input.value() {
+                Some(tensor_data) => {
+                    // `to_f32_vec` also accepts the i64 data of a Shape input
+                    let scales: Vec<f32> = tensor_data.to_f32_vec().map_err(|e| {
+                        ProcessError::Custom(format!("Resize: cannot read scales: {e:?}"))
+                    })?;
+                    if scales.is_empty() {
+                        return Ok(None);
                     }
+                    if scales.len() != input_rank {
+                        return Err(ProcessError::Custom(format!(
+                            "Resize: scales has {} values, input has rank {input_rank}",
+                            scales.len()
+                        )));
+                    }
+                    // ignore the first two items from scales
+                    // because they are the batch and channel dimensions
+                    Ok(Some(ResizeScales::Static(scales[2..].to_vec())))
                 }
-                _ => None,
+                // Runtime input - store reference instead of cloning the argument
+                None => Ok(Some(ResizeScales::Runtime(RuntimeInputRef::new(
+                    input.name.clone(),
+                    idx,
+                )))),
             }
         }
-        None => None,
+        _ => Ok(None),
     }
 }
 
 /// Extract sizes input as either static or runtime
-fn extract_sizes_input(node: &RawNode, input_rank: usize, idx: usize) -> Option<ResizeSizes> {
-    match node.inputs.get(idx) {
-        Some(input) => {
-            // Skip optional inputs (those that were never provided)
-            if input.is_optional() {
-                return None;
-            }
+fn extract_sizes_input(
+    node: &RawNode,
+    input_rank: usize,
+    idx: usize,
+) -> Result<Option<ResizeSizes>, ProcessError> {
+    let Some(input) = node.inputs.get(idx) else {
+        return Ok(None);
+    };
+    // Skip optional inputs (those that were never provided)
+    if input.is_optional() {
+        return Ok(None);
+    }
 
-            match &input.ty {
-                // A Shape input has a value too once simplification folds it to a constant,
-                // and constant lifting then clears its name, so it must not become Runtime.
-                ArgType::Tensor(_) | ArgType::Shape(_) => {
-                    // Check if it's a static value (lifted constant) or constant
-                    match input.value() {
-                        Some(tensor_data) => {
-                            let i64_sizes: Vec<i64> = tensor_data.try_into_vec().unwrap();
-                            let mut sizes: Vec<usize> =
-                                i64_sizes.iter().map(|&x| x as usize).collect();
-                            if sizes.is_empty() {
-                                return None;
-                            }
-                            assert!(sizes.len() == input_rank);
-                            // ignore the first two items from sizes
-                            // because they are the batch and channel dimensions
-                            sizes = sizes.iter().skip(2).cloned().collect();
-                            Some(ResizeSizes::Static(sizes))
-                        }
-                        None => {
-                            // Runtime input - store reference instead of cloning the argument
-                            Some(ResizeSizes::Runtime(RuntimeInputRef::new(
-                                input.name.clone(),
-                                idx,
-                            )))
-                        }
+    match &input.ty {
+        // A Shape input has a value too once simplification folds it to a constant,
+        // and constant lifting then clears its name, so it must not become Runtime.
+        ArgType::Tensor(_) | ArgType::Shape(_) => {
+            // Check if it's a static value (lifted constant) or constant
+            match input.value() {
+                Some(tensor_data) => {
+                    let i64_sizes: Vec<i64> = tensor_data.try_into_vec().map_err(|e| {
+                        ProcessError::Custom(format!("Resize: cannot read sizes: {e:?}"))
+                    })?;
+                    if i64_sizes.is_empty() {
+                        return Ok(None);
                     }
+                    if i64_sizes.len() != input_rank {
+                        return Err(ProcessError::Custom(format!(
+                            "Resize: sizes has {} values, input has rank {input_rank}",
+                            i64_sizes.len()
+                        )));
+                    }
+                    // ignore the first two items from sizes
+                    // because they are the batch and channel dimensions
+                    let sizes = i64_sizes[2..]
+                        .iter()
+                        .map(|&x| usize::try_from(x))
+                        .collect::<Result<Vec<usize>, _>>()
+                        .map_err(|_| {
+                            ProcessError::Custom(format!(
+                                "Resize: sizes must be non-negative, got {i64_sizes:?}"
+                            ))
+                        })?;
+                    Ok(Some(ResizeSizes::Static(sizes)))
                 }
-                _ => None,
+                // Runtime input - store reference instead of cloning the argument
+                None => Ok(Some(ResizeSizes::Runtime(RuntimeInputRef::new(
+                    input.name.clone(),
+                    idx,
+                )))),
             }
         }
-        None => None,
+        _ => Ok(None),
     }
 }
 
@@ -318,7 +337,7 @@ impl NodeProcessor for ResizeProcessor {
     ) -> Result<(), ProcessError> {
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "antialias" if value.clone().into_i32() != 0 => {
+                "antialias" if value.clone().into_i32()? != 0 => {
                     return Err(ProcessError::InvalidAttribute {
                         name: "antialias".to_string(),
                         reason: "antialias other than 0 is not supported".to_string(),
@@ -333,20 +352,20 @@ impl NodeProcessor for ResizeProcessor {
                 "coordinate_transformation_mode" | "cubic_coeff_a" => {
                     // Parsed in extract_config
                 }
-                "exclude_outside" if value.clone().into_i32() != 0 => {
+                "exclude_outside" if value.clone().into_i32()? != 0 => {
                     return Err(ProcessError::InvalidAttribute {
                         name: "exclude_outside".to_string(),
                         reason: "exclude_outside other than 0 is not supported".to_string(),
                     });
                 }
-                "extrapolation_value" if value.clone().into_f32() != 0.0 => {
+                "extrapolation_value" if value.clone().into_f32()? != 0.0 => {
                     return Err(ProcessError::InvalidAttribute {
                         name: "extrapolation_value".to_string(),
                         reason: "extrapolation_value other than 0.0 is not supported".to_string(),
                     });
                 }
                 "keep_aspect_ratio_policy"
-                    if value.clone().into_string().to_lowercase() != "stretch" =>
+                    if value.clone().into_string()?.to_lowercase() != "stretch" =>
                 {
                     return Err(ProcessError::InvalidAttribute {
                         name: "keep_aspect_ratio_policy".to_string(),
@@ -364,19 +383,13 @@ impl NodeProcessor for ResizeProcessor {
         // Opset 10: inputs are [X, scales] (no roi input)
         // Opset 11+: inputs are [X, roi, scales, sizes]
         if opset >= 11 {
-            let roi: Vec<f32> = node
+            let has_roi = node
                 .inputs
                 .get(1)
-                .map(|input| {
-                    if let Some(tensor_data) = input.value() {
-                        tensor_data.try_into_vec().unwrap()
-                    } else {
-                        vec![]
-                    }
-                })
-                .unwrap_or_default();
+                .and_then(|input| input.value())
+                .is_some_and(|roi| roi.num_elements() > 0);
 
-            if !roi.is_empty() {
+            if has_roi {
                 return Err(ProcessError::Custom(
                     "Resize: roi input is not supported".to_string(),
                 ));
@@ -437,21 +450,17 @@ impl NodeProcessor for ResizeProcessor {
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
                 "mode" => {
-                    mode = Some(
-                        value
-                            .clone()
-                            .into_string()
-                            .parse::<ResizeMode>()
-                            .map_err(|e| ProcessError::InvalidAttribute {
-                                name: "mode".to_string(),
-                                reason: format!("Failed to parse resize mode: {}", e),
-                            })?,
-                    )
+                    mode = Some(value.clone().into_string()?.parse::<ResizeMode>().map_err(
+                        |e| ProcessError::InvalidAttribute {
+                            name: "mode".to_string(),
+                            reason: format!("Failed to parse resize mode: {}", e),
+                        },
+                    )?)
                 }
                 "coordinate_transformation_mode" => {
                     coordinate_transformation_mode = value
                         .clone()
-                        .into_string()
+                        .into_string()?
                         .parse::<CoordinateTransformMode>()
                         .map_err(|e| ProcessError::InvalidAttribute {
                             name: "coordinate_transformation_mode".to_string(),
@@ -459,27 +468,26 @@ impl NodeProcessor for ResizeProcessor {
                         })?;
                 }
                 "cubic_coeff_a" => {
-                    cubic_coeff_a = value.clone().into_f32();
+                    cubic_coeff_a = value.clone().into_f32()?;
                 }
                 "nearest_mode" => {
-                    nearest_mode =
-                        value
-                            .clone()
-                            .into_string()
-                            .parse::<NearestMode>()
-                            .map_err(|e| ProcessError::InvalidAttribute {
-                                name: "nearest_mode".to_string(),
-                                reason: e,
-                            })?;
+                    nearest_mode = value
+                        .clone()
+                        .into_string()?
+                        .parse::<NearestMode>()
+                        .map_err(|e| ProcessError::InvalidAttribute {
+                            name: "nearest_mode".to_string(),
+                            reason: e,
+                        })?;
                 }
                 "exclude_outside" => {
-                    exclude_outside = value.clone().into_i32();
+                    exclude_outside = value.clone().into_i32()?;
                 }
                 "extrapolation_value" => {
-                    extrapolation_value = value.clone().into_f32();
+                    extrapolation_value = value.clone().into_f32()?;
                 }
                 "antialias" => {
-                    antialias = value.clone().into_i32();
+                    antialias = value.clone().into_i32()?;
                 }
                 _ => {}
             }
@@ -489,8 +497,8 @@ impl NodeProcessor for ResizeProcessor {
         // Opset 11+: inputs are [X, roi, scales, sizes]
         let (scales_idx, sizes_idx) = if opset < 11 { (1, usize::MAX) } else { (2, 3) };
 
-        let scales = extract_scales_input(node, input.rank, scales_idx);
-        let sizes = extract_sizes_input(node, input.rank, sizes_idx);
+        let scales = extract_scales_input(node, input.rank, scales_idx)?;
+        let sizes = extract_sizes_input(node, input.rank, sizes_idx)?;
 
         let mode = mode.ok_or_else(|| ProcessError::MissingAttribute("mode".to_string()))?;
 
@@ -508,17 +516,15 @@ impl NodeProcessor for ResizeProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Resize(ResizeNode {
+        Ok(Node::Resize(ResizeNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

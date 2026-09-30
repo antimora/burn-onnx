@@ -102,17 +102,15 @@ impl NodeProcessor for GlobalLpPoolProcessor {
         Ok(GlobalLpPoolConfig::new(p))
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::GlobalLpPool(GlobalLpPoolNode {
+        Ok(Node::GlobalLpPool(GlobalLpPoolNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

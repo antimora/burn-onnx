@@ -126,8 +126,8 @@ impl NodeProcessor for DropoutProcessor {
         // TODO: Validate 'seed' attribute mentioned in spec (opset 12+) - currently not handled
         // TODO: Validate ratio value is in range [0.0, 1.0] per ONNX spec - Missing constraint validation - Should return error for invalid ratios
         // Opset 7 and older store probability as an attribute
-        if node.attrs.contains_key("ratio") {
-            let prob = node.attrs.get("ratio").unwrap().clone().into_f32();
+        if let Some(ratio) = node.attrs.get("ratio") {
+            let prob = ratio.clone().into_f32()?;
             let config = DropoutConfig {
                 prob: DropoutInput::Static(prob as f64),
             };
@@ -163,17 +163,15 @@ impl NodeProcessor for DropoutProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Dropout(DropoutNode {
+        Ok(Node::Dropout(DropoutNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

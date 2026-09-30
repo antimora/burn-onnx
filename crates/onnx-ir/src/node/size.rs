@@ -48,12 +48,12 @@ impl NodeProcessor for SizeProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        Node::Size(SizeNode {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(Node::Size(SizeNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
-        })
+        }))
     }
 }
 

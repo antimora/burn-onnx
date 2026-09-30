@@ -55,11 +55,11 @@ impl NodeProcessor for SqrtProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        Node::Sqrt(SqrtNode {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(Node::Sqrt(SqrtNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
-        })
+        }))
     }
 }

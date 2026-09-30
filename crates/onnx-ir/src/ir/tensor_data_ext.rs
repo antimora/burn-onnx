@@ -46,6 +46,13 @@ impl TensorDataExt for burn_tensor::TensorData {
     }
 
     fn scalar_f64(&self) -> Result<f64, burn_tensor::DataError> {
+        // A scalar read needs at least one element
+        if self.num_elements() == 0 {
+            return Err(burn_tensor::DataError::ElementCountMismatch {
+                expected: 1,
+                actual: 0,
+            });
+        }
         use burn_tensor::DType;
         match self.dtype() {
             DType::F16 => {
@@ -71,6 +78,13 @@ impl TensorDataExt for burn_tensor::TensorData {
     }
 
     fn scalar_i64(&self) -> Result<i64, burn_tensor::DataError> {
+        // A scalar read needs at least one element
+        if self.num_elements() == 0 {
+            return Err(burn_tensor::DataError::ElementCountMismatch {
+                expected: 1,
+                actual: 0,
+            });
+        }
         use burn_tensor::DType;
         match self.dtype() {
             DType::I64 => Ok(self.as_slice::<i64>()?[0]),

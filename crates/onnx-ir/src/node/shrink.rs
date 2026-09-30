@@ -62,10 +62,10 @@ impl NodeProcessor for ShrinkProcessor {
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
                 "bias" => {
-                    bias = value.clone().into_f32() as f64;
+                    bias = value.clone().into_f32()? as f64;
                 }
                 "lambd" => {
-                    lambda = value.clone().into_f32() as f64;
+                    lambda = value.clone().into_f32()? as f64;
                 }
                 _ => {}
             }
@@ -74,17 +74,15 @@ impl NodeProcessor for ShrinkProcessor {
         Ok(ShrinkConfig { lambda, bias })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Shrink(ShrinkNode {
+        Ok(Node::Shrink(ShrinkNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

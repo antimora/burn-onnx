@@ -446,7 +446,9 @@ fn build_graph_with_options(
     )?;
 
     log::debug!(" PHASE 6: Node Conversion (RawNode -> Node) ");
-    Ok(graph_builder.convert_to_graph(opset_version))
+    graph_builder
+        .convert_to_graph(opset_version)
+        .map_err(Error::Processing)
 }
 
 /// Build IR graph as OnnxGraphBuilder from ONNX GraphProto
@@ -507,7 +509,8 @@ pub(crate) fn build_graph_builder_from_proto_with_outer_scope(
         name_registry,
         outer_scope,
         base_path,
-    );
+    )
+    .map_err(|error| Error::InvalidFormat { path: None, error })?;
 
     log::debug!(" PHASE 2: Node Conversion (Proto -> RawNode) ");
     node_conversion::convert_nodes_from_graph(

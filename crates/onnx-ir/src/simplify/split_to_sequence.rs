@@ -280,7 +280,7 @@ mod tests {
 
         for (case, mut nodes, outputs) in cases {
             let outputs = outputs.iter().map(|s| s.to_string()).collect();
-            let mut state = GraphState::new(&[], &[], &[], &[]);
+            let mut state = GraphState::new(&[], &[], Vec::new(), &[]);
             let removed = rewrite(&mut nodes, &outputs, &mut state);
             assert!(removed.is_empty(), "{case}");
             assert_eq!(nodes[1].node_type, NodeType::SequenceAt, "{case}");

@@ -59,9 +59,7 @@ impl NodeProcessor for ScanProcessor {
         crate::processor::validate_opset(opset, 9)?;
 
         // Get config to determine number of state variables and scan inputs
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(node, opset)?;
         let num_scan_inputs = config.num_scan_inputs as usize;
 
         // Get the count of original ONNX inputs (excluding outer-scope refs we added)
@@ -197,31 +195,35 @@ impl NodeProcessor for ScanProcessor {
             .get("num_scan_inputs")
             .ok_or_else(|| ProcessError::MissingAttribute("num_scan_inputs".to_string()))?
             .clone()
-            .into_i64();
+            .into_i64()?;
 
         // Extract optional direction attributes
         let scan_input_directions = node
             .attrs
             .get("scan_input_directions")
             .map(|v| v.clone().into_i64s())
+            .transpose()?
             .unwrap_or_default();
 
         let scan_output_directions = node
             .attrs
             .get("scan_output_directions")
             .map(|v| v.clone().into_i64s())
+            .transpose()?
             .unwrap_or_default();
 
         let scan_input_axes = node
             .attrs
             .get("scan_input_axes")
             .map(|v| v.clone().into_i64s())
+            .transpose()?
             .unwrap_or_default();
 
         let scan_output_axes = node
             .attrs
             .get("scan_output_axes")
             .map(|v| v.clone().into_i64s())
+            .transpose()?
             .unwrap_or_default();
 
         // Get the scope ref names for use in code generation
@@ -245,17 +247,15 @@ impl NodeProcessor for ScanProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Scan(ScanNode {
+        Ok(Node::Scan(ScanNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

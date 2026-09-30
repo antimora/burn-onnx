@@ -120,9 +120,9 @@ impl NodeProcessor for ArgMaxProcessor {
         // Extract and validate attributes
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "axis" => axis = value.clone().into_i64(),
+                "axis" => axis = value.clone().into_i64()?,
                 "keepdims" => {
-                    let keepdims_val = value.clone().into_i64();
+                    let keepdims_val = value.clone().into_i64()?;
 
                     // Validate keepdims value
                     if keepdims_val != 0 && keepdims_val != 1 {
@@ -136,7 +136,7 @@ impl NodeProcessor for ArgMaxProcessor {
                     keepdims = keepdims_val != 0;
                 }
                 "select_last_index" => {
-                    let v = value.clone().into_i64();
+                    let v = value.clone().into_i64()?;
                     if v != 0 && v != 1 {
                         return Err(ProcessError::InvalidAttribute {
                             name: "select_last_index".to_string(),
@@ -159,7 +159,7 @@ impl NodeProcessor for ArgMaxProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
         // `build_node` runs after `infer_types`, which already calls
         // `extract_config` and propagates errors via `?`. Any config that
         // reaches here has therefore already been validated, so the
@@ -170,16 +170,14 @@ impl NodeProcessor for ArgMaxProcessor {
         // `Result`, so this is the least bad option; lifting the trait
         // to `Result<Node, ProcessError>` would require a codebase-wide
         // refactor across every processor.
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::ArgMax(ArgMaxNode {
+        Ok(Node::ArgMax(ArgMaxNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

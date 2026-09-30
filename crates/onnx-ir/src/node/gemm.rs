@@ -133,16 +133,11 @@ impl NodeProcessor for GemmProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "alpha" => alpha = value.clone().into_f32(),
-                "beta" => beta = value.clone().into_f32(),
-                "transA" => trans_a = value.clone().into_i64(),
-                "transB" => trans_b = value.clone().into_i64(),
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for Gemm: {}", key),
-                    });
-                }
+                "alpha" => alpha = value.clone().into_f32()?,
+                "beta" => beta = value.clone().into_f32()?,
+                "transA" => trans_a = value.clone().into_i64()?,
+                "transB" => trans_b = value.clone().into_i64()?,
+                _ => {}
             }
         }
 
@@ -150,17 +145,15 @@ impl NodeProcessor for GemmProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Gemm(GemmNode {
+        Ok(Node::Gemm(GemmNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

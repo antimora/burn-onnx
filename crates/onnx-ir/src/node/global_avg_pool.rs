@@ -68,12 +68,12 @@ impl NodeProcessor for GlobalAveragePoolProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        Node::GlobalAveragePool(GlobalAveragePoolNode {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(Node::GlobalAveragePool(GlobalAveragePoolNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
-        })
+        }))
     }
 }
 

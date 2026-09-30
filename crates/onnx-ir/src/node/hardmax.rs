@@ -77,7 +77,7 @@ impl NodeProcessor for HardmaxProcessor {
         let mut axis: i64 = if opset < 13 { 1 } else { -1 };
         for (key, value) in node.attrs.iter() {
             if key.as_str() == "axis" {
-                axis = value.clone().into_i64();
+                axis = value.clone().into_i64()?;
             }
         }
 
@@ -90,17 +90,15 @@ impl NodeProcessor for HardmaxProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Hardmax(HardmaxNode {
+        Ok(Node::Hardmax(HardmaxNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

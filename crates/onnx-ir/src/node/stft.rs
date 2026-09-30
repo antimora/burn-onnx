@@ -336,7 +336,8 @@ impl NodeProcessor for StftProcessor {
         let onesided = node
             .attrs
             .get("onesided")
-            .map(|v| v.clone().into_i64() != 0)
+            .map(|v| v.clone().into_i64().map(|x| x != 0))
+            .transpose()?
             .unwrap_or(true);
 
         let static_shape = signal_tensor
@@ -361,7 +362,8 @@ impl NodeProcessor for StftProcessor {
         let onesided = node
             .attrs
             .get("onesided")
-            .map(|v| v.clone().into_i64() != 0)
+            .map(|v| v.clone().into_i64().map(|x| x != 0))
+            .transpose()?
             .unwrap_or(true);
         let has_window = matches!(
             node.inputs.get(2),
@@ -376,22 +378,17 @@ impl NodeProcessor for StftProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self.extract_config(&builder, opset).unwrap_or_else(|e| {
-            panic!(
-                "{OP_NAME} ({}): config extraction failed: {e}",
-                builder.name
-            )
-        });
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
         // frame_step (input[1]) and frame_length (input[3]) were lifted to Static by
         // lift_constants, so they are dropped from the generated forward() signature.
-        Node::Stft(StftNode {
+        Ok(Node::Stft(StftNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

@@ -168,16 +168,14 @@ impl NodeProcessor for OneHotEncoderProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("OneHotEncoder config extraction must succeed after validation");
-        Node::OneHotEncoder(OneHotEncoderNode::new(
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
+        Ok(Node::OneHotEncoder(OneHotEncoderNode::new(
             builder.name,
             builder.inputs,
             builder.outputs,
             config,
-        ))
+        )))
     }
 }
 

@@ -61,9 +61,7 @@ impl NodeProcessor for TransposeProcessor {
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
         // Get reference to config for type inference
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(node, opset)?;
 
         // TODO: Missing validation that perm is a valid permutation.
         // Must verify: len(perm) == rank, all values in [0, rank-1], no duplicates.
@@ -89,6 +87,20 @@ impl NodeProcessor for TransposeProcessor {
                 config.perm.len(),
                 input_rank
             )));
+        }
+
+        // Every axis must appear exactly once
+        let mut seen = vec![false; input_rank];
+        for &axis in &config.perm {
+            match usize::try_from(axis).ok().and_then(|a| seen.get_mut(a)) {
+                Some(slot) if !*slot => *slot = true,
+                _ => {
+                    return Err(ProcessError::Custom(format!(
+                        "Transpose: perm {:?} is not a permutation of 0..{input_rank}",
+                        config.perm
+                    )));
+                }
+            }
         }
 
         let input_tensor = match &node.inputs[0].ty {
@@ -119,7 +131,10 @@ impl NodeProcessor for TransposeProcessor {
         };
 
         let perm: Vec<i64> = if let Some(axes) = node.attrs.get("perm") {
-            axes.clone().into_i64s()
+            match axes.clone().into_i64s() {
+                Ok(perm) => perm,
+                Err(_) => return false,
+            }
         } else {
             // Default perm reverses dimensions, which is only identity for rank 0 or 1
             return rank <= 1;
@@ -144,7 +159,7 @@ impl NodeProcessor for TransposeProcessor {
         let mut perm = (0..tensor.rank as i64).rev().collect::<Vec<i64>>();
 
         if let Some(axes) = node.attrs.get("perm") {
-            perm = axes.clone().into_i64s();
+            perm = axes.clone().into_i64s()?;
 
             // TODO: Validate perm values are in valid range [0, rank-1].
             // Out-of-bounds values in perm should be rejected early.
@@ -154,17 +169,15 @@ impl NodeProcessor for TransposeProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Transpose(TransposeNode {
+        Ok(Node::Transpose(TransposeNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

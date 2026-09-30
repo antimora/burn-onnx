@@ -180,8 +180,7 @@ impl NodeProcessor for PadProcessor {
             .get("pads")
             .or_else(|| node.attrs.get("paddings"));
         if let Some(pads_attr) = pads_attr {
-            let pads = pads_attr.clone().into_i64s();
-            return pads.iter().all(|&p| p == 0);
+            return matches!(pads_attr, AttributeValue::Int64s(pads) if pads.iter().all(|&p| p == 0));
         }
 
         // Check pads input (input[1]) if it has static data
@@ -265,7 +264,7 @@ impl NodeProcessor for PadProcessor {
             // Check for mode attribute (default is "constant")
             for (key, value) in node.attrs.iter() {
                 if key.as_str() == "mode" {
-                    let mode_str = value.clone().into_string();
+                    let mode_str = value.clone().into_string()?;
                     let mode = PadMode::from_str(&mode_str).map_err(|e| {
                         ProcessError::InvalidAttribute {
                             name: "mode".to_string(),
@@ -337,7 +336,7 @@ impl NodeProcessor for PadProcessor {
             // "paddings" in opset 1, "pads" in opset 2+
             for (key, value) in node.attrs.iter() {
                 if key.as_str() == "pads" || key.as_str() == "paddings" {
-                    let flat = parse_i64s_as_usize(&value.clone().into_i64s(), "pads")?;
+                    let flat = parse_i64s_as_usize(&value.clone().into_i64s()?, "pads")?;
                     let (expected, static_axes) = static_axes_view(&axes, input_dim, "attribute")?;
                     validate_pads_len_with_axes(&flat, expected, "pads")?;
                     let pairs = onnx_pads_to_pairs(&flat);
@@ -514,17 +513,15 @@ impl NodeProcessor for PadProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Pad(PadNode {
+        Ok(Node::Pad(PadNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

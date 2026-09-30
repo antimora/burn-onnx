@@ -60,12 +60,7 @@ impl NodeProcessor for IsInfProcessor {
         for key in node.attrs.keys() {
             match key.as_str() {
                 "detect_negative" | "detect_positive" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for IsInf: {}", key),
-                    });
-                }
+                _ => {}
             }
         }
 
@@ -82,8 +77,8 @@ impl NodeProcessor for IsInfProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "detect_negative" => detect_negative = value.clone().into_i64() != 0,
-                "detect_positive" => detect_positive = value.clone().into_i64() != 0,
+                "detect_negative" => detect_negative = value.clone().into_i64()? != 0,
+                "detect_positive" => detect_positive = value.clone().into_i64()? != 0,
                 _ => {}
             }
         }
@@ -92,17 +87,15 @@ impl NodeProcessor for IsInfProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::IsInf(IsInfNode {
+        Ok(Node::IsInf(IsInfNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

@@ -67,18 +67,6 @@ impl NodeProcessor for LogSoftmaxProcessor {
 
         // TODO: Validate unexpected attributes before config extraction
         // The spec only supports "axis" attribute
-        for key in node.attrs.keys() {
-            match key.as_str() {
-                "axis" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for LogSoftmax: {}", key),
-                    });
-                }
-            }
-        }
-
         // Infer output type
         crate::processor::same_as_input(node);
 
@@ -104,7 +92,7 @@ impl NodeProcessor for LogSoftmaxProcessor {
 
         for (key, value) in node.attrs.iter() {
             if key.as_str() == "axis" {
-                axis = value.clone().into_i64()
+                axis = value.clone().into_i64()?
             }
         }
 
@@ -121,17 +109,15 @@ impl NodeProcessor for LogSoftmaxProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::LogSoftmax(LogSoftmaxNode {
+        Ok(Node::LogSoftmax(LogSoftmaxNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

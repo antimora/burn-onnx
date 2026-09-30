@@ -139,21 +139,19 @@ impl NodeProcessor for CastLikeProcessor {
         Ok(CastLikeConfig::new(elem_type, saturate, round_mode))
     }
 
-    fn build_node(&self, mut builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, mut builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
         // Drop input[1] (target_type) - only the dtype is needed at type-inference time,
         // not the runtime value. The target dtype is stored in config.to.
         builder.inputs.truncate(1);
 
-        Node::CastLike(CastLikeNode {
+        Ok(Node::CastLike(CastLikeNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -271,7 +269,7 @@ mod tests {
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
-        let built = processor.build_node(node, 16);
+        let built = processor.build_node(node, 16).unwrap();
         // After build_node, input[1] should be dropped
         assert_eq!(built.inputs().len(), 1);
     }

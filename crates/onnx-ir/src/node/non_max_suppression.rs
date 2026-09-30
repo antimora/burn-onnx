@@ -123,17 +123,15 @@ impl NodeProcessor for NonMaxSuppressionProcessor {
         Ok(NonMaxSuppressionConfig { center_point_box })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::NonMaxSuppression(NonMaxSuppressionNode {
+        Ok(Node::NonMaxSuppression(NonMaxSuppressionNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

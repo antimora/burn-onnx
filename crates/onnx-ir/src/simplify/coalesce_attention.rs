@@ -395,7 +395,7 @@ fn build_attention_node(
 fn get_softmax_axis(softmax: &RawNode, rank: usize) -> Option<usize> {
     let mut axis: i64 = -1; // Default: last axis
     if let Some(attr) = softmax.attrs.get("axis") {
-        axis = attr.clone().into_i64();
+        axis = attr.clone().into_i64().ok()?;
     }
     if axis < 0 {
         axis += rank as i64;
@@ -414,7 +414,7 @@ fn is_last_two_dims_swap(transpose: &RawNode) -> Option<bool> {
     }
 
     let perm: Vec<i64> = if let Some(attr) = transpose.attrs.get("perm") {
-        attr.clone().into_i64s()
+        attr.clone().into_i64s().ok()?
     } else {
         // Default Transpose reverses all dims - only a swap if rank == 2
         (0..rank as i64).rev().collect()
@@ -673,6 +673,8 @@ fn get_transpose_perm(transpose: &RawNode) -> Option<Vec<i64>> {
         .attrs
         .get("perm")
         .map(|attr| attr.clone().into_i64s())
+        .transpose()
+        .ok()?
 }
 
 /// Check if `b` equals `a` with the last two elements swapped.
@@ -902,7 +904,13 @@ mod tests {
         assert_eq!(attention.outputs[0].name, "output");
 
         // Div by 8.0 -> scale = 1/8 = 0.125
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 0.125).abs() < 1e-6);
     }
 
@@ -920,7 +928,13 @@ mod tests {
         assert_eq!(attention.inputs[1].name, "k");
         assert_eq!(attention.inputs[2].name, "v");
 
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 0.125).abs() < 1e-6);
     }
 
@@ -951,7 +965,13 @@ mod tests {
         assert_eq!(attention.inputs[1].name, "k");
         assert_eq!(attention.inputs[2].name, "v");
 
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 0.25).abs() < 1e-6);
     }
 
@@ -973,7 +993,13 @@ mod tests {
         // Mask preserves its own type info (not cloned from Q)
         assert_eq!(attention.inputs[3].ty.rank(), 4);
 
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 0.125).abs() < 1e-6);
     }
 
@@ -993,7 +1019,13 @@ mod tests {
 
         // The graph applies no scaling, and an absent scale attribute would mean
         // 1/sqrt(head_dim), so unit scale must be recorded explicitly
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 1.0).abs() < 1e-6);
     }
 
@@ -1107,7 +1139,13 @@ mod tests {
 
         assert_eq!(attention.inputs.len(), 4);
         assert_eq!(attention.inputs[3].name, "mask");
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 1.0).abs() < 1e-6);
     }
 
@@ -1157,7 +1195,7 @@ mod tests {
 
         // Dynamic shared pre-scale, so the Attention default is what is intended and
         // an absent attribute is correct here
-        assert!(attention.attrs.get("scale").is_none());
+        assert!(!attention.attrs.contains_key("scale"));
 
         // Verify corrective Transpose was inserted
         let corrective = result
@@ -1166,7 +1204,13 @@ mod tests {
             .expect("should have corrective Transpose");
         assert_eq!(corrective.node_type, NodeType::Transpose);
         assert_eq!(corrective.inputs[0].name, "k_t");
-        let perm: Vec<i64> = corrective.attrs.get("perm").unwrap().clone().into_i64s();
+        let perm: Vec<i64> = corrective
+            .attrs
+            .get("perm")
+            .unwrap()
+            .clone()
+            .into_i64s()
+            .unwrap();
         assert_eq!(perm, vec![0, 1, 3, 2]);
     }
 
@@ -1202,7 +1246,13 @@ mod tests {
             .expect("should produce an Attention node");
 
         // scale = sqrt_scale^2 = 0.125
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 0.125).abs() < 1e-6);
     }
 
@@ -1250,7 +1300,7 @@ mod tests {
         assert_eq!(attention.inputs[2].name, "v");
         assert_eq!(attention.inputs[3].name, "mask");
         // Dynamic shared pre-scale, so the absent attribute is correct here
-        assert!(attention.attrs.get("scale").is_none());
+        assert!(!attention.attrs.contains_key("scale"));
     }
 
     #[test]
@@ -1294,7 +1344,13 @@ mod tests {
             .expect("should produce an Attention node");
 
         // sqrt_scale^2 * (1 / post_scale) = 0.125 * 0.25
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 0.03125).abs() < 1e-6, "got {scale}");
     }
 
@@ -1437,7 +1493,13 @@ mod tests {
         assert_eq!(attention.inputs[2].name, "v");
 
         // Scale should be extracted from the Mul on Q
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 0.125).abs() < 1e-6);
     }
 
@@ -1476,7 +1538,13 @@ mod tests {
         assert_eq!(attention.inputs[0].name, "q");
 
         // q_scale * (1 / post_scale) = 0.125 * 0.125
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 0.015625).abs() < 1e-6, "got {scale}");
     }
 
@@ -1516,7 +1584,13 @@ mod tests {
         assert_eq!(attention.inputs[1].name, "k");
 
         // k_scale * (1 / post_scale) = 0.5 * 0.5
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 0.25).abs() < 1e-6, "got {scale}");
     }
 
@@ -1545,7 +1619,13 @@ mod tests {
             .expect("should produce an Attention node");
 
         assert_eq!(attention.inputs[0].name, "q_scaled");
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 1.0).abs() < 1e-6, "got {scale}");
     }
 
@@ -1586,7 +1666,13 @@ mod tests {
         // retained and the pre-scale still applies
         assert_eq!(attention.inputs[0].name, "q_noop");
 
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!(
             (scale - 1.0).abs() < 1e-6,
             "expected unit scale, got {scale}"
@@ -1629,7 +1715,13 @@ mod tests {
         assert_eq!(attention.outputs[0].name, "output");
 
         // effective_scale = q_scale * k_scale = sqrt(0.125)^2 = 0.125
-        let scale = attention.attrs.get("scale").unwrap().clone().into_f32();
+        let scale = attention
+            .attrs
+            .get("scale")
+            .unwrap()
+            .clone()
+            .into_f32()
+            .unwrap();
         assert!((scale - 0.125).abs() < 1e-6);
     }
 

@@ -352,13 +352,14 @@ impl NodeProcessor for GruProcessor {
             .get("hidden_size")
             .ok_or_else(|| ProcessError::MissingAttribute("hidden_size".to_string()))?
             .clone()
-            .into_i64() as usize;
+            .into_i64()? as usize;
 
         // Extract direction (default: "forward")
         let direction = node
             .attrs
             .get("direction")
             .map(|v| v.clone().into_string())
+            .transpose()?
             .unwrap_or_else(|| "forward".to_string());
         let direction: GruDirection = direction.parse()?;
 
@@ -367,6 +368,7 @@ impl NodeProcessor for GruProcessor {
             .attrs
             .get("layout")
             .map(|v| v.clone().into_i64())
+            .transpose()?
             .unwrap_or(0);
         let batch_first = layout == 1;
 
@@ -375,16 +377,19 @@ impl NodeProcessor for GruProcessor {
         let has_initial_h = node.inputs.len() > 5 && !node.inputs[5].is_optional();
 
         // Extract clip threshold (default: None)
-        let clip = node.attrs.get("clip").and_then(|v| {
-            let val = v.clone().into_f32();
-            if val > 0.0 { Some(val) } else { None }
-        });
+        let clip = node
+            .attrs
+            .get("clip")
+            .map(|v| v.clone().into_f32())
+            .transpose()?
+            .filter(|&val| val > 0.0);
 
         // Extract linear_before_reset (default: false)
         let linear_before_reset = node
             .attrs
             .get("linear_before_reset")
-            .map(|v| v.clone().into_i64() != 0)
+            .map(|v| v.clone().into_i64().map(|x| x != 0))
+            .transpose()?
             .unwrap_or(false);
 
         // Extract activations (default: Sigmoid, Tanh for each direction)
@@ -393,7 +398,7 @@ impl NodeProcessor for GruProcessor {
         let (gate_activation, hidden_activation) = if let Some(activations) =
             node.attrs.get("activations")
         {
-            let acts = activations.clone().into_strings();
+            let acts = activations.clone().into_strings()?;
             if acts.is_empty() {
                 (GruActivationFunction::Sigmoid, GruActivationFunction::Tanh)
             } else if acts.len() >= 2 {
@@ -426,11 +431,13 @@ impl NodeProcessor for GruProcessor {
         let activation_alpha = node
             .attrs
             .get("activation_alpha")
-            .map(|v| v.clone().into_f32s());
+            .map(|v| v.clone().into_f32s())
+            .transpose()?;
         let activation_beta = node
             .attrs
             .get("activation_beta")
-            .map(|v| v.clone().into_f32s());
+            .map(|v| v.clone().into_f32s())
+            .transpose()?;
 
         Ok(GruConfig::new(
             input_size,
@@ -448,17 +455,15 @@ impl NodeProcessor for GruProcessor {
         ))
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Gru(GruNode {
+        Ok(Node::Gru(GruNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

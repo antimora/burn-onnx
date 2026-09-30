@@ -146,27 +146,24 @@ impl NodeProcessor for EinsumProcessor {
         Ok(EinsumConfig { equation })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Einsum(EinsumNode {
+        Ok(Node::Einsum(EinsumNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
 fn equation_attr(node: &RawNode) -> Result<String, ProcessError> {
-    Ok(node
-        .attrs
+    node.attrs
         .get("equation")
         .ok_or_else(|| ProcessError::MissingAttribute("equation".to_string()))?
         .clone()
-        .into_string())
+        .into_string()
 }
 
 /// One subscript term: its named labels, and where `...` sits among them if present.

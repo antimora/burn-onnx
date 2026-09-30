@@ -119,15 +119,6 @@ the decomposition alone (#464); the 19 left are the native op, still `skip-codeg
 
   Note `coordinate_transformation_mode` and `nearest_mode` are recorded but never read by codegen
   (only `align_corners` is derived), so pinning them documents intent without changing behavior.
-- **`build_node` cannot report an error, so late-lifted constants panic.** `lift_constants` runs
-  again after identity elimination (`post_processing.rs:265`) and type inference does not re-run
-  after it, so `Constant -> Identity -> Op` reaches `build_node` with a value that was Dynamic
-  during `infer_types`. Any validation that first becomes possible there can only panic:
-  `NodeProcessor::build_node` returns `Node`, not `Result<Node>`. Every processor in the crate has
-  this shape (`.expect("Config extraction failed")`); Upsample and Reduce are the first two with
-  checks that can realistically fire there - an out-of-range axis behind a
-  `Constant -> Identity -> Reduce` chain is the second case. Reproduced with a
-  `Constant -> Identity -> Upsample` graph carrying scales of 1.75.
 - **The static-vs-runtime weight decision is stated on both sides of the crate boundary (surfaced
   by the #466 review).** `lift_all_or_none`'s liftability test in onnx-ir and `weights_are_runtime`
   in burn-onnx encode the same invariant with two non-complementary predicates over a four-variant

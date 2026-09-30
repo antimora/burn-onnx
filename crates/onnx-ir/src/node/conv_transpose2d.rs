@@ -119,25 +119,32 @@ impl NodeProcessor for Convtranspose2dProcessor {
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
                 "kernel_shape" => {
-                    kernel_shape = ints("kernel_shape", &value.clone().into_i64s(), 1)?
+                    kernel_shape = ints("kernel_shape", &value.clone().into_i64s()?, 1)?
                 }
-                "strides" => stride = ints("strides", &value.clone().into_i64s(), 1)?,
-                "pads" => pads = value.clone().into_i64s(),
-                "dilations" => dilations = ints("dilations", &value.clone().into_i64s(), 1)?,
-                "group" => group = ints("group", &[value.clone().into_i64()], 1)?[0],
+                "strides" => stride = ints("strides", &value.clone().into_i64s()?, 1)?,
+                "pads" => pads = value.clone().into_i64s()?,
+                "dilations" => dilations = ints("dilations", &value.clone().into_i64s()?, 1)?,
+                "group" => group = ints("group", &[value.clone().into_i64()?], 1)?[0],
                 "output_padding" => {
-                    output_padding = ints("output_padding", &value.clone().into_i64s(), 0)?
+                    output_padding = ints("output_padding", &value.clone().into_i64s()?, 0)?
                 }
-                "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string())?,
+                "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string()?)?,
                 "output_shape" => {
                     output_shape = Some(crate::node::padding::conv_transpose_output_shape(
-                        &value.clone().into_i64s(),
+                        &value.clone().into_i64s()?,
                         2,
                     )?)
                 }
                 _ => {}
             }
         }
+
+        crate::node::padding::check_attr_len("pads", &pads, 4)?;
+        if !kernel_shape.is_empty() {
+            crate::node::padding::check_attr_len("kernel_shape", &kernel_shape, 2)?;
+        }
+        crate::node::padding::check_attr_len("dilations", &dilations, 2)?;
+        crate::node::padding::check_attr_len("output_padding", &output_padding, 2)?;
 
         // ONNX pads format: [H_begin, W_begin, H_end, W_end] = [top, left, bottom, right].
         // `auto_pad` and `output_shape` take the place of `pads`.
@@ -188,17 +195,15 @@ impl NodeProcessor for Convtranspose2dProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::ConvTranspose2d(ConvTranspose2dNode {
+        Ok(Node::ConvTranspose2d(ConvTranspose2dNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

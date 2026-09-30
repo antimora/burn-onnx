@@ -20,7 +20,9 @@
 use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{ArgType, Argument, DType, Node, RawNode, RuntimeInputRef, TensorType};
+use crate::ir::{
+    ArgType, Argument, DType, Node, RawNode, RuntimeInputRef, TensorDataExt, TensorType,
+};
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
 };
@@ -145,8 +147,17 @@ impl NodeProcessor for TopKProcessor {
                     TopKInput::Runtime(RuntimeInputRef::new(k_tensor.name.clone(), 1))
                 }
                 Some(tensor_data) => {
-                    let k_value = tensor_data.as_slice::<i64>().unwrap()[0];
-                    TopKInput::Static(k_value as usize)
+                    let k_value = tensor_data
+                        .to_i64_vec()
+                        .ok()
+                        .and_then(|values| values.first().copied())
+                        .and_then(|k| usize::try_from(k).ok())
+                        .ok_or_else(|| {
+                            ProcessError::Custom(format!(
+                                "TopK: K must be a non-negative integer, got {tensor_data:?}"
+                            ))
+                        })?;
+                    TopKInput::Static(k_value)
                 }
             },
             _ => {
@@ -156,13 +167,13 @@ impl NodeProcessor for TopKProcessor {
                     .get("k")
                     .ok_or_else(|| ProcessError::MissingAttribute("k".to_string()))?
                     .clone()
-                    .into_i64();
+                    .into_i64()?;
                 TopKInput::Static(k_value as usize)
             }
         };
 
         let mut axis = match node.attrs.get("axis") {
-            Some(axis) => axis.clone().into_i64(),
+            Some(axis) => axis.clone().into_i64()?,
             None => -1,
         };
 
@@ -174,32 +185,33 @@ impl NodeProcessor for TopKProcessor {
         // TODO: Missing validation that axis is in valid range after normalization.
         // After converting negative axis, should verify 0 <= axis < rank.
 
-        let flag = |name: &str| {
-            node.attrs
+        let flag = |name: &str| -> Result<bool, ProcessError> {
+            Ok(node
+                .attrs
                 .get(name)
-                .is_none_or(|value| value.clone().into_i64() != 0)
+                .map(|value| value.clone().into_i64())
+                .transpose()?
+                .is_none_or(|value| value != 0))
         };
 
         let config = TopKConfig {
             axis: axis as usize,
             k,
-            largest: flag("largest"),
-            sorted: flag("sorted"),
+            largest: flag("largest")?,
+            sorted: flag("sorted")?,
         };
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::TopK(TopKNode {
+        Ok(Node::TopK(TopKNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

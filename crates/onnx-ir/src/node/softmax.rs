@@ -106,7 +106,7 @@ impl NodeProcessor for SoftmaxProcessor {
 
         for (key, value) in node.attrs.iter() {
             if key.as_str() == "axis" {
-                axis = value.clone().into_i64()
+                axis = value.clone().into_i64()?
             }
         }
 
@@ -136,17 +136,15 @@ impl NodeProcessor for SoftmaxProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Softmax(SoftmaxNode {
+        Ok(Node::Softmax(SoftmaxNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

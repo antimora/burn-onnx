@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use super::argument::Argument;
 use super::node::{Node, RawNode};
 use crate::ir::ValueSource;
+use crate::processor::ProcessError;
 use crate::tensor_store::ValueStore;
 
 /// ONNX graph representation containing fully processed nodes
@@ -58,7 +59,7 @@ impl OnnxGraphBuilder {
     ///
     /// This recursively converts subgraphs for control flow nodes (If, Loop, Scan).
     /// All Arguments are converted from `ValueStoreRef::Building` to `ValueStoreRef::Final`.
-    pub fn convert_to_graph(mut self, opset: usize) -> OnnxGraph {
+    pub fn convert_to_graph(mut self, opset: usize) -> Result<OnnxGraph, ProcessError> {
         // Build immutable ValueStore from GraphState
         let value_store = self
             .graph_state
@@ -66,7 +67,7 @@ impl OnnxGraphBuilder {
             .map(|gs| gs.borrow().build_value_store());
 
         // Convert RawNodes to Nodes
-        let mut nodes = convert_builders_to_nodes(std::mem::take(&mut self.nodes), opset);
+        let mut nodes = convert_builders_to_nodes(std::mem::take(&mut self.nodes), opset)?;
 
         // Attach value_store to all Arguments
         if let Some(ref vs) = value_store {
@@ -90,7 +91,7 @@ impl OnnxGraphBuilder {
         // so we can see all constant references including those in subgraphs
         eliminate_dead_constants(&mut graph);
 
-        graph
+        Ok(graph)
     }
 }
 
@@ -185,7 +186,10 @@ fn finalize_subgraph(graph: &mut OnnxGraph) {
 }
 
 /// Convert a vector of RawNodes to Nodes
-fn convert_builders_to_nodes(builders: Vec<RawNode>, opset: usize) -> Vec<Node> {
+fn convert_builders_to_nodes(
+    builders: Vec<RawNode>,
+    opset: usize,
+) -> Result<Vec<Node>, ProcessError> {
     let registry = crate::processor::get_processor_registry();
 
     builders
@@ -199,7 +203,10 @@ fn convert_builders_to_nodes(builders: Vec<RawNode>, opset: usize) -> Vec<Node> 
                 builder.node_type
             );
 
-            processor.build_node(builder, opset)
+            let (name, node_type) = (builder.name.clone(), builder.node_type.clone());
+            processor
+                .build_node(builder, opset)
+                .map_err(|e| ProcessError::Custom(format!("Node '{name}' ({node_type}): {e}")))
         })
         .collect()
 }

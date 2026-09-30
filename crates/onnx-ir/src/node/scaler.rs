@@ -136,18 +136,16 @@ impl NodeProcessor for ScalerProcessor {
         Ok(ScalerConfig::new(scale, offset))
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
         // extract_config is infallible here: any invalid attribute would have
         // already caused extract_config to fail during the type-inference pass.
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("ScalerProcessor: config extraction failed");
-        Node::Scaler(ScalerNode::new(
+        let config = self.extract_config(&builder, opset)?;
+        Ok(Node::Scaler(ScalerNode::new(
             builder.name,
             builder.inputs,
             builder.outputs,
             config,
-        ))
+        )))
     }
 }
 

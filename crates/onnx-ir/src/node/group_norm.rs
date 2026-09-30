@@ -74,19 +74,12 @@ impl NodeProcessor for GroupNormProcessor {
         for key in node.attrs.keys() {
             match key.as_str() {
                 "epsilon" | "num_groups" | "stash_type" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for GroupNorm: {key}"),
-                    });
-                }
+                _ => {}
             }
         }
 
         // Validate num_groups divisibility
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(node, opset)?;
 
         let num_features = node.inputs[1].value().map(|v| v.shape()[0]).unwrap_or(0);
 
@@ -114,9 +107,9 @@ impl NodeProcessor for GroupNormProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "epsilon" => epsilon = value.clone().into_f32(),
-                "num_groups" => num_groups = Some(value.clone().into_i64() as usize),
-                "stash_type" => stash_type = value.clone().into_i64(),
+                "epsilon" => epsilon = value.clone().into_f32()?,
+                "num_groups" => num_groups = Some(value.clone().into_i64()? as usize),
+                "stash_type" => stash_type = value.clone().into_i64()?,
                 _ => {}
             }
         }
@@ -132,17 +125,15 @@ impl NodeProcessor for GroupNormProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::GroupNormalization(GroupNormalizationNode {
+        Ok(Node::GroupNormalization(GroupNormalizationNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

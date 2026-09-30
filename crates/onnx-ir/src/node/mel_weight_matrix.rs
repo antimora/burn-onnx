@@ -58,7 +58,7 @@ impl MelWeightMatrixProcessor {
     fn resolve_output_dtype(node: &RawNode) -> Result<DType, ProcessError> {
         let dtype = match node.attrs.get("output_datatype") {
             Some(val) => {
-                let dt_i32 = val.clone().into_i32();
+                let dt_i32 = val.clone().into_i32()?;
                 element_type_from_proto(dt_i32).map_err(|e| ProcessError::InvalidAttribute {
                     name: "output_datatype".to_string(),
                     reason: format!("{OP_NAME}: {e}"),
@@ -213,20 +213,15 @@ impl NodeProcessor for MelWeightMatrixProcessor {
         Ok(MelWeightMatrixConfig { output_dtype })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self.extract_config(&builder, opset).unwrap_or_else(|e| {
-            panic!(
-                "{OP_NAME} ({}): config extraction failed: {e}",
-                builder.name
-            )
-        });
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::MelWeightMatrix(MelWeightMatrixNode {
+        Ok(Node::MelWeightMatrix(MelWeightMatrixNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

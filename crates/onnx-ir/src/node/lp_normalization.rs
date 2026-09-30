@@ -114,17 +114,15 @@ impl NodeProcessor for LpNormalizationProcessor {
         Ok(LpNormalizationConfig::new(axis, p))
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::LpNormalization(LpNormalizationNode {
+        Ok(Node::LpNormalization(LpNormalizationNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -135,6 +133,7 @@ fn extract_axis(node: &RawNode, rank: usize) -> Result<usize, ProcessError> {
         .attrs
         .get("axis")
         .map(|v| v.clone().into_i64())
+        .transpose()?
         .unwrap_or(-1);
 
     let rank_i64 = rank as i64;
@@ -154,6 +153,7 @@ fn extract_p(node: &RawNode) -> Result<i64, ProcessError> {
         .attrs
         .get("p")
         .map(|v| v.clone().into_i64())
+        .transpose()?
         .unwrap_or(2);
 
     if p != 1 && p != 2 {

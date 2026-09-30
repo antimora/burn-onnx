@@ -146,7 +146,8 @@ impl NodeProcessor for BlackmanWindowProcessor {
         let periodic = node
             .attrs
             .get("periodic")
-            .map(|v| v.clone().into_i64() != 0)
+            .map(|v| v.clone().into_i64().map(|x| x != 0))
+            .transpose()?
             .unwrap_or(true);
 
         let output_dtype = resolve_output_dtype(node, OP_NAME)?;
@@ -174,25 +175,20 @@ impl NodeProcessor for BlackmanWindowProcessor {
         })
     }
 
-    fn build_node(&self, mut builder: RawNode, opset: usize) -> Node {
-        let config = self.extract_config(&builder, opset).unwrap_or_else(|e| {
-            panic!(
-                "{OP_NAME} ({}): config extraction failed: {e}",
-                builder.name
-            )
-        });
+    fn build_node(&self, mut builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
         // Drop the size input if static (baked into config).
         if matches!(config.size, WindowSize::Static(_)) {
             builder.inputs.clear();
         }
 
-        Node::BlackmanWindow(BlackmanWindowNode {
+        Ok(Node::BlackmanWindow(BlackmanWindowNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

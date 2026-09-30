@@ -72,9 +72,7 @@ impl NodeProcessor for EyeLikeProcessor {
         };
 
         // Get reference to config for type inference
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(node, opset)?;
 
         // Output type is either specified dtype or input type
         let output_type = config.dtype.unwrap_or(input_elem_type);
@@ -96,7 +94,7 @@ impl NodeProcessor for EyeLikeProcessor {
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
                 "dtype" => {
-                    let dtype_i32 = value.clone().into_i32();
+                    let dtype_i32 = value.clone().into_i32()?;
                     dtype = Some(element_type_from_proto(dtype_i32).map_err(|e| {
                         ProcessError::InvalidAttribute {
                             name: "dtype".to_string(),
@@ -105,15 +103,10 @@ impl NodeProcessor for EyeLikeProcessor {
                     })?);
                 }
                 "k" => {
-                    k = value.clone().into_i64();
+                    k = value.clone().into_i64()?;
                 }
                 // TODO: Add validation for unexpected attributes (currently silently ignored)
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for EyeLike: {}", key),
-                    });
-                }
+                _ => {}
             }
         }
 
@@ -121,17 +114,15 @@ impl NodeProcessor for EyeLikeProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::EyeLike(EyeLikeNode {
+        Ok(Node::EyeLike(EyeLikeNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

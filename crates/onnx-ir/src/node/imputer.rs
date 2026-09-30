@@ -88,10 +88,10 @@ impl NodeProcessor for ImputerProcessor {
                     }
                 }
                 "replaced_value_float" => {
-                    replaced_value_float = Some(value.clone().into_f32());
+                    replaced_value_float = Some(value.clone().into_f32()?);
                 }
                 "replaced_value_int64" => {
-                    replaced_value_int64 = Some(value.clone().into_i64());
+                    replaced_value_int64 = Some(value.clone().into_i64()?);
                 }
                 _ => {}
             }
@@ -105,16 +105,14 @@ impl NodeProcessor for ImputerProcessor {
         ))
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
-        Node::Imputer(ImputerNode::new(
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
+        Ok(Node::Imputer(ImputerNode::new(
             builder.name,
             builder.inputs,
             builder.outputs,
             config,
-        ))
+        )))
     }
 }
 

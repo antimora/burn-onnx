@@ -118,17 +118,18 @@ fn test_mixed_embedded_and_external_data() {
 /// Models with external data cannot be parsed from raw bytes because
 /// we need the file path to resolve external data file locations.
 #[test]
-#[should_panic(expected = "external data")]
-fn test_external_data_from_bytes_panics() {
+fn test_external_data_from_bytes_errors() {
     use std::fs;
 
     let model_path = get_model_path("external_data.onnx");
     let bytes = fs::read(&model_path).expect("Failed to read model file");
 
-    // This should panic because external data requires a file path context
-    let _ = onnx_ir::OnnxGraphBuilder::new()
+    // This fails because external data requires a file path context
+    let err = onnx_ir::OnnxGraphBuilder::new()
         .simplify(false)
-        .parse_bytes(&bytes);
+        .parse_bytes(&bytes)
+        .unwrap_err();
+    assert!(err.to_string().contains("external data"), "{err}");
 }
 
 /// Test loading a model with tensors stored in multiple external files
@@ -188,4 +189,35 @@ fn test_multiple_external_files() {
         found_weight || found_bias || !graph.nodes.is_empty(),
         "Should successfully parse model with multiple external files"
     );
+}
+
+/// An external range past the end of its data file is a parse error, found when the model is
+/// parsed rather than when the lazily loaded tensor is first read.
+#[test]
+fn test_external_data_range_beyond_file_errors() {
+    use onnx_ir::Message;
+
+    let dir = std::env::temp_dir().join(format!("onnx-ir-ext-range-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(
+        get_model_path("external_data.bin"),
+        dir.join("external_data.bin"),
+    )
+    .unwrap();
+
+    let bytes = std::fs::read(get_model_path("external_data.onnx")).unwrap();
+    let mut model = onnx_ir::ModelProto::parse_from_bytes(&bytes).unwrap();
+    let tensor = &mut model.graph.mut_or_insert_default().initializer[0];
+    for entry in tensor.external_data.iter_mut() {
+        if entry.key == "offset" {
+            entry.value = u64::MAX.to_string();
+        }
+    }
+    let model_path = dir.join("model.onnx");
+    std::fs::write(&model_path, model.write_to_bytes().unwrap()).unwrap();
+
+    let result = onnx_ir::OnnxGraphBuilder::new().parse_file(&model_path);
+    std::fs::remove_dir_all(&dir).unwrap();
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("exceeds"), "{err}");
 }

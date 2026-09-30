@@ -104,12 +104,7 @@ impl NodeProcessor for LayerNormProcessor {
         for key in node.attrs.keys() {
             match key.as_str() {
                 "axis" | "epsilon" | "stash_type" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for LayerNorm: {key}"),
-                    });
-                }
+                _ => {}
             }
         }
 
@@ -182,9 +177,9 @@ impl NodeProcessor for LayerNormProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "axis" => axis = value.clone().into_i64(),
-                "epsilon" => epsilon = value.clone().into_f32(),
-                "stash_type" => stash_type = value.clone().into_i64(),
+                "axis" => axis = value.clone().into_i64()?,
+                "epsilon" => epsilon = value.clone().into_f32()?,
+                "stash_type" => stash_type = value.clone().into_i64()?,
                 _ => {}
             }
         }
@@ -196,17 +191,15 @@ impl NodeProcessor for LayerNormProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::LayerNormalization(LayerNormalizationNode {
+        Ok(Node::LayerNormalization(LayerNormalizationNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

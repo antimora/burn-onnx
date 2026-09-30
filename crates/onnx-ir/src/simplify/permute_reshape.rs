@@ -99,6 +99,8 @@ fn extract_permute_pattern(
             .attrs
             .get("axis")
             .map(|v| v.clone().into_i64())
+            .transpose()
+            .ok()?
             .unwrap_or(0);
         if axis != 0 {
             return None;
@@ -300,7 +302,13 @@ mod tests {
         // Reshape should be replaced with Transpose
         let reshape_node = result.iter().find(|n| n.name == "reshape").unwrap();
         assert_eq!(reshape_node.node_type, NodeType::Transpose);
-        let perm = reshape_node.attrs.get("perm").unwrap().clone().into_i64s();
+        let perm = reshape_node
+            .attrs
+            .get("perm")
+            .unwrap()
+            .clone()
+            .into_i64s()
+            .unwrap();
         assert_eq!(perm, vec![0, 2, 1]);
         // Should have 1 input (the data tensor), not 2
         assert_eq!(reshape_node.inputs.len(), 1);
@@ -314,7 +322,7 @@ mod tests {
 
         let node = result.iter().find(|n| n.name == "reshape").unwrap();
         assert_eq!(node.node_type, NodeType::Transpose);
-        let perm = node.attrs.get("perm").unwrap().clone().into_i64s();
+        let perm = node.attrs.get("perm").unwrap().clone().into_i64s().unwrap();
         assert_eq!(perm, vec![0, 3, 1, 2]);
     }
 

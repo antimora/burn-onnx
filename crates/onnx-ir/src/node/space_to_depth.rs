@@ -60,22 +60,8 @@ impl NodeProcessor for SpaceToDepthProcessor {
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
         // Validate unexpected attributes before config extraction
-        for key in node.attrs.keys() {
-            match key.as_str() {
-                "blocksize" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for SpaceToDepth: {}", key),
-                    });
-                }
-            }
-        }
-
         // Get reference to config for type inference
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(node, opset)?;
         let block_size = config.block_size;
 
         // Validate block_size
@@ -111,16 +97,14 @@ impl NodeProcessor for SpaceToDepthProcessor {
         // Should check when static_shape is available to catch errors early.
 
         // Infer static shape based on rank and block size
-        let static_shape = tensor.static_shape.clone().map(|shape| {
-            let [b, c, h, w] = shape
-                .try_into()
-                .expect("SpaceToDepth: input tensor rank is not 4");
-            vec![
+        let static_shape = tensor.static_shape.clone().and_then(|shape| {
+            let [b, c, h, w]: [_; 4] = shape.try_into().ok()?;
+            Some(vec![
                 b,
                 c.map(|v| v * block_size * block_size),
                 h.map(|v| v / block_size),
                 w.map(|v| v / block_size),
-            ]
+            ])
         });
 
         node.outputs[0].ty = ArgType::Tensor(TensorType {
@@ -137,7 +121,7 @@ impl NodeProcessor for SpaceToDepthProcessor {
 
         for (key, value) in node.attrs.iter() {
             if key.as_str() == "blocksize" {
-                block_size = Some(value.clone().into_i64() as usize)
+                block_size = Some(value.clone().into_i64()? as usize)
             }
         }
 
@@ -148,17 +132,15 @@ impl NodeProcessor for SpaceToDepthProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::SpaceToDepth(SpaceToDepthNode {
+        Ok(Node::SpaceToDepth(SpaceToDepthNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

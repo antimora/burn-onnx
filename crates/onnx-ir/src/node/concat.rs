@@ -149,9 +149,7 @@ impl NodeProcessor for ConcatProcessor {
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
         // Get reference to config for type inference (not used, but extracted for consistency)
-        let _config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let _config = self.extract_config(node, opset)?;
 
         // For shapes, axis must be 0 (since they're 1D) - validation already done in extract_config
 
@@ -377,7 +375,7 @@ impl NodeProcessor for ConcatProcessor {
 
         for (key, value) in node.attrs.iter() {
             if key.as_str() == "axis" {
-                axis = Some(value.clone().into_i64());
+                axis = Some(value.clone().into_i64()?);
                 break;
             }
         }
@@ -408,17 +406,15 @@ impl NodeProcessor for ConcatProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Concat(ConcatNode {
+        Ok(Node::Concat(ConcatNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

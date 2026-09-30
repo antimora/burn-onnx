@@ -193,26 +193,25 @@ impl NodeProcessor for Conv3dProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "kernel_shape" => kernel_shape = value.clone().into_i64s(),
-                "strides" => strides = value.clone().into_i64s(),
-                "pads" => pads = value.clone().into_i64s(),
-                "dilations" => dilations = value.clone().into_i64s(),
-                "group" => group = value.clone().into_i64() as usize,
+                "kernel_shape" => kernel_shape = value.clone().into_i64s()?,
+                "strides" => strides = value.clone().into_i64s()?,
+                "pads" => pads = value.clone().into_i64s()?,
+                "dilations" => dilations = value.clone().into_i64s()?,
+                "group" => group = value.clone().into_i64()? as usize,
                 "auto_pad" => {
-                    auto_pad = AutoPad::parse(&value.clone().into_string())?;
+                    auto_pad = AutoPad::parse(&value.clone().into_string()?)?;
                 }
-                _ => {
-                    // TODO: According to spec, there may be other valid attributes that are not handled
-                    // Consider logging/warning instead of rejecting unknown attributes
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for Conv3d: {key}"),
-                    });
-                }
+                _ => {}
             }
         }
 
-        let padding = padding_config_3d(&pads);
+        if !kernel_shape.is_empty() {
+            crate::node::padding::check_attr_len("kernel_shape", &kernel_shape, 3)?;
+        }
+        crate::node::padding::check_attr_len("strides", &strides, 3)?;
+        crate::node::padding::check_attr_len("dilations", &dilations, 3)?;
+
+        let padding = padding_config_3d(&pads)?;
 
         let kernel_size = if kernel_shape.is_empty() {
             // Spec says if kernel shape not present in attributes it should be inferred from the weight tensor
@@ -258,17 +257,15 @@ impl NodeProcessor for Conv3dProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Conv3d(Conv3dNode {
+        Ok(Node::Conv3d(Conv3dNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

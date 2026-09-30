@@ -64,9 +64,7 @@ impl NodeProcessor for ShapeProcessor {
         let dim = match &node.inputs[0].ty {
             ArgType::Tensor(_) => {
                 // Shape of a Tensor: output has (end - start) elements
-                let config = self
-                    .extract_config(node, opset)
-                    .expect("Config extraction failed");
+                let config = self.extract_config(node, opset)?;
                 config.end - config.start
             }
             ArgType::Shape(_) => {
@@ -75,9 +73,7 @@ impl NodeProcessor for ShapeProcessor {
             }
             ArgType::ScalarTensor(_) => {
                 // ScalarTensor is rank 1; apply start/end like a rank-1 Tensor
-                let config = self
-                    .extract_config(node, opset)
-                    .expect("Config extraction failed");
+                let config = self.extract_config(node, opset)?;
                 config.end - config.start
             }
             _ => {
@@ -115,8 +111,8 @@ impl NodeProcessor for ShapeProcessor {
         if opset >= 15 {
             for (key, value) in node.attrs.iter() {
                 match key.as_str() {
-                    "start" => start_dim = value.clone().into_i64(),
-                    "end" => end_dim = value.clone().into_i64(),
+                    "start" => start_dim = value.clone().into_i64()?,
+                    "end" => end_dim = value.clone().into_i64()?,
                     _ => {}
                 }
             }
@@ -143,17 +139,15 @@ impl NodeProcessor for ShapeProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Shape(ShapeNode {
+        Ok(Node::Shape(ShapeNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

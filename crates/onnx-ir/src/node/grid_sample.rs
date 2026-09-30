@@ -190,7 +190,7 @@ impl NodeProcessor for GridSampleProcessor {
                 "mode" => {
                     mode = value
                         .clone()
-                        .into_string()
+                        .into_string()?
                         .parse::<GridSampleMode>()
                         .map_err(|e| ProcessError::InvalidAttribute {
                             name: "mode".to_string(),
@@ -200,7 +200,7 @@ impl NodeProcessor for GridSampleProcessor {
                 "padding_mode" => {
                     padding_mode = value
                         .clone()
-                        .into_string()
+                        .into_string()?
                         .parse::<GridSamplePaddingMode>()
                         .map_err(|e| ProcessError::InvalidAttribute {
                             name: "padding_mode".to_string(),
@@ -208,7 +208,7 @@ impl NodeProcessor for GridSampleProcessor {
                         })?;
                 }
                 "align_corners" => {
-                    align_corners = value.clone().into_i32() != 0;
+                    align_corners = value.clone().into_i32()? != 0;
                 }
                 _ => {}
             }
@@ -221,17 +221,15 @@ impl NodeProcessor for GridSampleProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::GridSample(GridSampleNode {
+        Ok(Node::GridSample(GridSampleNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

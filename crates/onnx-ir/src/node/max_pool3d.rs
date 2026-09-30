@@ -72,7 +72,7 @@ impl NodeProcessor for MaxPool3dProcessor {
                 "kernel_shape" | "strides" | "pads" => {}
                 "storage_order" => {}
                 "dilations" => {
-                    let dilations = value.clone().into_i64s();
+                    let dilations = value.clone().into_i64s()?;
                     if dilations.iter().any(|&d| d != 1) && opset < 11 {
                         return Err(ProcessError::Custom(format!(
                             "MaxPool: dilation requires opset 11+, got opset {}",
@@ -81,10 +81,10 @@ impl NodeProcessor for MaxPool3dProcessor {
                     }
                 }
                 "auto_pad" => {
-                    AutoPad::parse(&value.clone().into_string())?;
+                    AutoPad::parse(&value.clone().into_string()?)?;
                 }
                 "ceil_mode" => {
-                    let ceil_mode = value.clone().into_i64();
+                    let ceil_mode = value.clone().into_i64()?;
                     if ceil_mode != 0 && opset < 10 {
                         return Err(ProcessError::Custom(format!(
                             "MaxPool: ceil_mode requires opset 10+, got opset {}",
@@ -92,12 +92,7 @@ impl NodeProcessor for MaxPool3dProcessor {
                         )));
                     }
                 }
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for MaxPool3d: {key}"),
-                    });
-                }
+                _ => {}
             }
         }
 
@@ -133,18 +128,22 @@ impl NodeProcessor for MaxPool3dProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "kernel_shape" => kernel_shape = value.clone().into_i64s(),
-                "strides" => strides = value.clone().into_i64s(),
-                "pads" => pads = value.clone().into_i64s(),
-                "dilations" => dilations = value.clone().into_i64s(),
-                "ceil_mode" => ceil_mode = value.clone().into_i64(),
-                "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string())?,
+                "kernel_shape" => kernel_shape = value.clone().into_i64s()?,
+                "strides" => strides = value.clone().into_i64s()?,
+                "pads" => pads = value.clone().into_i64s()?,
+                "dilations" => dilations = value.clone().into_i64s()?,
+                "ceil_mode" => ceil_mode = value.clone().into_i64()?,
+                "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string()?)?,
                 "storage_order" => {}
                 _ => {}
             }
         }
 
-        let padding = padding_config_3d(&pads);
+        crate::node::padding::check_attr_len("kernel_shape", &kernel_shape, 3)?;
+        crate::node::padding::check_attr_len("strides", &strides, 3)?;
+        crate::node::padding::check_attr_len("dilations", &dilations, 3)?;
+
+        let padding = padding_config_3d(&pads)?;
 
         let config = MaxPool3dConfig::new(
             [
@@ -170,17 +169,15 @@ impl NodeProcessor for MaxPool3dProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::MaxPool3d(MaxPool3dNode {
+        Ok(Node::MaxPool3d(MaxPool3dNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

@@ -15,9 +15,7 @@ use std::{
 };
 
 use crate::ir::{ArgType, Argument, DataId, NodeType, RawNode, TensorData};
-use crate::proto_conversion::{
-    argument_from_initializer, argument_from_initializer_lazy_with_context,
-};
+use crate::proto_conversion::argument_from_initializer_lazy_with_context;
 use crate::protos::{TensorProto, ValueInfoProto};
 use crate::tensor_store::TensorDataRef;
 
@@ -115,7 +113,7 @@ impl GraphState {
     pub fn new(
         inputs: &[ValueInfoProto],
         outputs: &[ValueInfoProto],
-        initializers: &[TensorProto],
+        initializers: Vec<(Argument, TensorDataRef)>,
         value_infos: &[ValueInfoProto],
     ) -> Self {
         Self::new_with_registry(inputs, outputs, initializers, value_infos, None, None)
@@ -125,7 +123,7 @@ impl GraphState {
     pub(crate) fn new_with_registry(
         inputs: &[ValueInfoProto],
         outputs: &[ValueInfoProto],
-        initializers: &[TensorProto],
+        initializers: Vec<(Argument, TensorDataRef)>,
         value_infos: &[ValueInfoProto],
         name_registry: Option<NameRegistry>,
         base_path: Option<&Path>,
@@ -152,7 +150,7 @@ impl GraphState {
     pub(crate) fn new_with_registry_and_outer_scope(
         inputs: &[ValueInfoProto],
         outputs: &[ValueInfoProto],
-        initializers: &[TensorProto],
+        initializers: Vec<(Argument, TensorDataRef)>,
         value_infos: &[ValueInfoProto],
         name_registry: Option<NameRegistry>,
         outer_scope_types: HashMap<String, Argument>,
@@ -164,25 +162,24 @@ impl GraphState {
         let mut node_output_map = HashMap::new();
         let mut value_info_map = HashMap::new();
 
+        // Map initializer names to their constant node outputs
+        // Insert both original ONNX names and sanitized names for lookup flexibility
+        for (i, (arg, _)) in initializers.iter().enumerate() {
+            node_output_map.insert(arg.name.clone(), (i, 0));
+            // Also insert sanitized name for lookups using sanitized outer-scope references
+            let sanitized = crate::proto_conversion::sanitize_name(&arg.name);
+            if sanitized != arg.name {
+                node_output_map.insert(sanitized, (i, 0));
+            }
+        }
+
         // Convert all initializers to Constant nodes
         let processed_nodes = process_initializers(
             initializers,
             &mut tensor_store,
             &mut constant_map,
             name_registry.as_ref(),
-            base_path,
         );
-
-        // Map initializer names to their constant node outputs
-        // Insert both original ONNX names and sanitized names for lookup flexibility
-        for (i, initializer) in initializers.iter().enumerate() {
-            node_output_map.insert(initializer.name.clone(), (i, 0));
-            // Also insert sanitized name for lookups using sanitized outer-scope references
-            let sanitized = crate::proto_conversion::sanitize_name(&initializer.name);
-            if sanitized != initializer.name {
-                node_output_map.insert(sanitized, (i, 0));
-            }
-        }
 
         // Store value_info for intermediate values
         for value_info in value_infos {
@@ -582,34 +579,38 @@ fn create_constant_node(
     }
 }
 
-/// Convert ONNX initializers to Constant nodes, store in tensor store
+/// Convert ONNX initializers to constant arguments and their (lazily loaded) data
 ///
-/// Uses the zero-copy lazy path when possible (raw_data available),
-/// falling back to the standard path for edge cases (scalars, empty tensors).
-///
-/// For external data support, `base_path` should be the directory containing the ONNX file.
-fn process_initializers(
+/// Fails on a tensor whose payload does not match its shape and dtype, or whose external data
+/// cannot be resolved. For external data support, `base_path` should be the directory
+/// containing the ONNX file.
+pub(crate) fn convert_initializers(
     initializers: &[TensorProto],
+    base_path: Option<&Path>,
+) -> Result<Vec<(Argument, TensorDataRef)>, String> {
+    initializers
+        .iter()
+        .map(|initializer| {
+            argument_from_initializer_lazy_with_context(initializer.clone(), base_path).map_err(
+                |crate::proto_conversion::ParseError::VariantNotFound(reason)| {
+                    format!("initializer '{}': {reason}", initializer.name)
+                },
+            )
+        })
+        .collect()
+}
+
+/// Turn converted initializers into Constant nodes, storing their data in the tensor store
+fn process_initializers(
+    initializers: Vec<(Argument, TensorDataRef)>,
     tensor_store: &mut TensorStore,
     constant_map: &mut HashMap<String, DataId>,
     name_registry: Option<&NameRegistry>,
-    base_path: Option<&Path>,
 ) -> Vec<RawNode> {
     initializers
-        .iter()
+        .into_iter()
         .enumerate()
-        .map(|(idx, initializer)| {
-            // Try the zero-copy lazy path first (preserves mmap references, supports external data)
-            let (arg, lazy_data) =
-                match argument_from_initializer_lazy_with_context(initializer.clone(), base_path) {
-                    Ok((arg, lazy_data)) => (arg, lazy_data),
-                    Err(_) => {
-                        // Fallback to standard path for edge cases (scalars, empty tensors)
-                        let (arg, data) = argument_from_initializer(initializer);
-                        (arg, TensorDataRef::from(data))
-                    }
-                };
-
+        .map(|(idx, (arg, lazy_data))| {
             let data_id = tensor_store.store(lazy_data);
 
             // Generate unique name using registry if available
@@ -687,27 +688,33 @@ mod tests {
     /// Create a ValueInfoProto with a tensor type
     fn make_tensor_value_info(name: &str, rank: usize) -> ValueInfoProto {
         let dims: Vec<Dimension> = (0..rank)
-            .map(|_| {
-                let mut dim = Dimension::default();
-                dim.value = Some(tensor_shape_proto::dimension::Value::DimParam("N".into()));
-                dim
+            .map(|_| Dimension {
+                value: Some(tensor_shape_proto::dimension::Value::DimParam("N".into())),
+                ..Default::default()
             })
             .collect();
 
-        let mut shape = crate::protos::TensorShapeProto::default();
-        shape.dim = dims;
+        let shape = crate::protos::TensorShapeProto {
+            dim: dims,
+            ..Default::default()
+        };
 
-        let mut tensor = Tensor::default();
-        tensor.elem_type = DataType::FLOAT.value();
-        tensor.shape = protobuf::MessageField::some(shape);
+        let tensor = Tensor {
+            elem_type: DataType::FLOAT.value(),
+            shape: protobuf::MessageField::some(shape),
+            ..Default::default()
+        };
 
-        let mut type_proto = TypeProto::default();
-        type_proto.value = Some(Value::TensorType(tensor));
+        let type_proto = TypeProto {
+            value: Some(Value::TensorType(tensor)),
+            ..Default::default()
+        };
 
-        let mut vi = ValueInfoProto::default();
-        vi.name = name.to_string();
-        vi.type_ = protobuf::MessageField::some(type_proto);
-        vi
+        ValueInfoProto {
+            name: name.to_string(),
+            type_: protobuf::MessageField::some(type_proto),
+            ..Default::default()
+        }
     }
 
     use crate::protos::tensor_shape_proto;
@@ -724,7 +731,7 @@ mod tests {
         let input = make_tensor_value_info("samples:0", 2);
         let output = make_tensor_value_info("output:0", 2);
 
-        let state = GraphState::new(&[input], &[output], &[], &[]);
+        let state = GraphState::new(&[input], &[output], Vec::new(), &[]);
 
         // Lookup by original ONNX name
         let arg = state.init_in("samples:0");
@@ -745,7 +752,7 @@ mod tests {
         let input_a = make_tensor_value_info("a:0", 2);
         let input_b = make_tensor_value_info("b:0", 3);
 
-        let state = GraphState::new(&[input_a, input_b], &[], &[], &[]);
+        let state = GraphState::new(&[input_a, input_b], &[], Vec::new(), &[]);
 
         let arg_a = state.init_in("a_0");
         assert!(matches!(arg_a.ty, ArgType::Tensor(ref t) if t.rank == 2));
@@ -764,7 +771,7 @@ mod tests {
     fn get_output_type_finds_output_by_original_name() {
         let output = make_tensor_value_info("Mean", 4);
 
-        let state = GraphState::new(&[], &[output], &[], &[]);
+        let state = GraphState::new(&[], &[output], Vec::new(), &[]);
 
         let ty = state.get_output_type("Mean");
         assert!(matches!(ty, Some(ArgType::Tensor(t)) if t.rank == 4));

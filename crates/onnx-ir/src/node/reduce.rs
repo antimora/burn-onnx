@@ -380,9 +380,9 @@ impl NodeProcessor for ReduceProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "axes" => axes_attr = Some(value.clone().into_i64s()),
-                "keepdims" => keepdims = value.clone().into_i64(),
-                "noop_with_empty_axes" => noop_with_empty_axes = value.clone().into_i64(),
+                "axes" => axes_attr = Some(value.clone().into_i64s()?),
+                "keepdims" => keepdims = value.clone().into_i64()?,
+                "noop_with_empty_axes" => noop_with_empty_axes = value.clone().into_i64()?,
                 _ => {}
             }
         }
@@ -433,18 +433,12 @@ impl NodeProcessor for ReduceProcessor {
         ))
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        // `build_node` cannot return an error, and `lift_constants` runs again after
-        // identity elimination without re-running type inference, so a check that only
-        // becomes possible here can only panic. Name the node so the report is usable.
-        let config = self.extract_config(&builder, opset).unwrap_or_else(|e| {
-            panic!(
-                "Failed to build '{}' ({}): {e}",
-                builder.name, builder.node_type
-            )
-        });
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        // `lift_constants` runs again after identity elimination without re-running type
+        // inference, so a config check can first become possible here.
+        let config = self.extract_config(&builder, opset)?;
 
-        match builder.node_type {
+        Ok(match builder.node_type {
             NodeType::ReduceMax => Node::ReduceMax(ReduceMaxNode {
                 name: builder.name,
                 inputs: builder.inputs,
@@ -505,8 +499,12 @@ impl NodeProcessor for ReduceProcessor {
                 outputs: builder.outputs,
                 config,
             }),
-            _ => panic!("ReduceProcessor called with unsupported node type"),
-        }
+            other => {
+                return Err(ProcessError::Custom(format!(
+                    "ReduceProcessor called with unsupported node type {other:?}"
+                )));
+            }
+        })
     }
 }
 

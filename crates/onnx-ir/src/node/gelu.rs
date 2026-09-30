@@ -78,7 +78,7 @@ impl NodeProcessor for GeluProcessor {
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
         let approximate = match node.attrs.get("approximate") {
             None => GeluApproximate::Exact,
-            Some(value) => match value.clone().into_string().as_str() {
+            Some(value) => match value.clone().into_string()?.as_str() {
                 "none" => GeluApproximate::Exact,
                 "tanh" => GeluApproximate::Tanh,
                 other => {
@@ -92,17 +92,15 @@ impl NodeProcessor for GeluProcessor {
         Ok(GeluConfig { approximate })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Gelu(GeluNode {
+        Ok(Node::Gelu(GeluNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

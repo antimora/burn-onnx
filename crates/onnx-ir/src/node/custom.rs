@@ -233,8 +233,8 @@ impl NodeProcessor for CustomProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        Node::Custom(custom_node_view(&builder))
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(Node::Custom(custom_node_view(&builder)))
     }
 }
 
@@ -320,7 +320,7 @@ impl NodeProcessor for HookedCustomProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
         CustomProcessor.build_node(builder, opset)
     }
 }
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn build_node_preserves_identity_and_attrs() {
         let node = make_custom_node();
-        let built = CustomProcessor.build_node(node, 16);
+        let built = CustomProcessor.build_node(node, 16).unwrap();
         let Node::Custom(custom) = built else {
             panic!("expected Node::Custom");
         };
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn node_type_accessor_and_display() {
-        let built = CustomProcessor.build_node(make_custom_node(), 16);
+        let built = CustomProcessor.build_node(make_custom_node(), 16).unwrap();
         assert_eq!(built.node_type(), NodeType::Custom);
         assert_eq!(built.to_string(), "Custom(custom_domain::FftReal)");
     }

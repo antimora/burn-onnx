@@ -79,16 +79,8 @@ impl NodeProcessor for GatherNDProcessor {
 
         // Extract batch_dims attribute (default: 0)
         let mut batch_dims: i64 = 0;
-        for (key, value) in node.attrs.iter() {
-            match key.as_str() {
-                "batch_dims" => batch_dims = value.clone().into_i64(),
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for GatherND: {}", key),
-                    });
-                }
-            }
+        if let Some(value) = node.attrs.get("batch_dims") {
+            batch_dims = value.clone().into_i64()?;
         }
 
         let b = batch_dims as usize;
@@ -151,16 +143,8 @@ impl NodeProcessor for GatherNDProcessor {
 
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
         let mut batch_dims: i64 = 0;
-        for (key, value) in node.attrs.iter() {
-            match key.as_str() {
-                "batch_dims" => batch_dims = value.clone().into_i64(),
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for GatherND: {}", key),
-                    });
-                }
-            }
+        if let Some(value) = node.attrs.get("batch_dims") {
+            batch_dims = value.clone().into_i64()?;
         }
 
         Ok(GatherNDConfig {
@@ -168,17 +152,15 @@ impl NodeProcessor for GatherNDProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::GatherND(GatherNDNode {
+        Ok(Node::GatherND(GatherNDNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -326,18 +308,6 @@ mod tests {
         let mut node = create_test_node(2, 2, 3, 0).build();
         let processor = GatherNDProcessor;
         let prefs = OutputPreferences::new();
-        let result = processor.infer_types(&mut node, 12, &prefs);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_unexpected_attribute() {
-        let node = create_test_node(2, 2, 2, 0)
-            .attr_int("unknown_attr", 42)
-            .build();
-        let processor = GatherNDProcessor;
-        let prefs = OutputPreferences::new();
-        let mut node = node;
         let result = processor.infer_types(&mut node, 12, &prefs);
         assert!(result.is_err());
     }

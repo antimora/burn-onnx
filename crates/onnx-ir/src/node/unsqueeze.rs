@@ -85,9 +85,7 @@ impl NodeProcessor for UnsqueezeProcessor {
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
         // Get reference to config for type inference
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(node, opset)?;
 
         // Extract axes for type inference
         let axes = match config {
@@ -108,7 +106,7 @@ impl NodeProcessor for UnsqueezeProcessor {
                             .to_string(),
                     ));
                 }
-                let config = UnsqueezeConfig::Static(value.clone().into_i64s());
+                let config = UnsqueezeConfig::Static(value.clone().into_i64s()?);
                 return Ok(config);
             }
         }
@@ -205,17 +203,15 @@ impl NodeProcessor for UnsqueezeProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Unsqueeze(UnsqueezeNode {
+        Ok(Node::Unsqueeze(UnsqueezeNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -305,17 +301,24 @@ impl UnsqueezeProcessor {
                     output_dims.resize(output_rank, None);
 
                     // Normalize axes to positive indices in the output
-                    let mut normalized: Vec<usize> = axes
+                    let mut normalized = axes
                         .iter()
                         .map(|&a| {
-                            if a < 0 {
-                                (a + output_rank as i64) as usize
-                            } else {
-                                a as usize
-                            }
+                            let axis = if a < 0 { a + output_rank as i64 } else { a };
+                            usize::try_from(axis).ok().filter(|&axis| axis < output_rank)
                         })
-                        .collect();
+                        .collect::<Option<Vec<usize>>>()
+                        .ok_or_else(|| {
+                            ProcessError::Custom(format!(
+                                "Unsqueeze: axes {axes:?} out of range for output rank {output_rank}"
+                            ))
+                        })?;
                     normalized.sort();
+                    if normalized.windows(2).any(|w| w[0] == w[1]) {
+                        return Err(ProcessError::Custom(format!(
+                            "Unsqueeze: axes {axes:?} contain a duplicate"
+                        )));
+                    }
 
                     // Place Some(1) at unsqueezed positions, input dims elsewhere
                     let mut input_idx = 0;

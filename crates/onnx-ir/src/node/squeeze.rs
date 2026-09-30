@@ -85,9 +85,7 @@ impl NodeProcessor for SqueezeProcessor {
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
         // Get reference to config for type inference
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(node, opset)?;
         let axes = config.axes.clone();
 
         // Extract axes for type inference
@@ -267,7 +265,7 @@ impl NodeProcessor for SqueezeProcessor {
                             .to_string(),
                     ));
                 }
-                let axes = value.clone().into_i64s();
+                let axes = value.clone().into_i64s()?;
                 if axes.is_empty() {
                     return Ok(SqueezeConfig { axes: None });
                 }
@@ -304,17 +302,15 @@ impl NodeProcessor for SqueezeProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Squeeze(SqueezeNode {
+        Ok(Node::Squeeze(SqueezeNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

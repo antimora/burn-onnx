@@ -137,14 +137,16 @@ impl NodeProcessor for CumSumProcessor {
         let exclusive = node
             .attrs
             .get("exclusive")
-            .map(|v| v.clone().into_i64() != 0)
+            .map(|v| v.clone().into_i64().map(|x| x != 0))
+            .transpose()?
             .unwrap_or(false);
 
         // Extract reverse attribute (default: 0)
         let reverse = node
             .attrs
             .get("reverse")
-            .map(|v| v.clone().into_i64() != 0)
+            .map(|v| v.clone().into_i64().map(|x| x != 0))
+            .transpose()?
             .unwrap_or(false);
 
         Ok(CumSumConfig {
@@ -154,17 +156,15 @@ impl NodeProcessor for CumSumProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::CumSum(CumSumNode {
+        Ok(Node::CumSum(CumSumNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

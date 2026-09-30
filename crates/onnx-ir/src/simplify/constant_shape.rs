@@ -199,6 +199,8 @@ fn extract_constant_shape_dim(
         .attrs
         .get("axis")
         .map(|v| v.clone().into_i64())
+        .transpose()
+        .ok()?
         .unwrap_or(0);
     if axis != 0 {
         return None;
@@ -220,6 +222,8 @@ fn extract_constant_shape_dim(
         .attrs
         .get("start")
         .map(|v| v.clone().into_i64())
+        .transpose()
+        .ok()?
         .unwrap_or(0);
     if start < 0 {
         start += rank as i64;
@@ -251,6 +255,8 @@ fn extract_full_static_shape(shape_node: &RawNode) -> Option<Vec<i64>> {
         .attrs
         .get("start")
         .map(|v| v.clone().into_i64())
+        .transpose()
+        .ok()?
         .unwrap_or(0);
     if start < 0 {
         start += rank as i64;
@@ -261,6 +267,8 @@ fn extract_full_static_shape(shape_node: &RawNode) -> Option<Vec<i64>> {
         .attrs
         .get("end")
         .map(|v| v.clone().into_i64())
+        .transpose()
+        .ok()?
         .unwrap_or(rank as i64);
     if end < 0 {
         end += rank as i64;
@@ -450,7 +458,7 @@ mod tests {
     }
 
     fn test_state() -> Rc<RefCell<GraphState>> {
-        Rc::new(RefCell::new(GraphState::new(&[], &[], &[], &[])))
+        Rc::new(RefCell::new(GraphState::new(&[], &[], Vec::new(), &[])))
     }
 
     // --- Shape->Gather tests ---

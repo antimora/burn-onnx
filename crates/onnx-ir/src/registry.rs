@@ -25,7 +25,7 @@ pub trait ProcessorMethods: Send + Sync {
         output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError>;
     fn is_noop(&self, node: &RawNode) -> bool;
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node;
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError>;
 }
 
 /// Blanket implementation: all NodeProcessor types implement ProcessorMethods
@@ -59,7 +59,7 @@ impl<T: crate::processor::NodeProcessor> ProcessorMethods for T {
         crate::processor::NodeProcessor::is_noop(self, node)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
         crate::processor::NodeProcessor::build_node(self, builder, opset)
     }
 }

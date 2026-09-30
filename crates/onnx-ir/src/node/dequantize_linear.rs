@@ -136,10 +136,10 @@ impl NodeProcessor for DequantizeLinearProcessor {
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
                 "axis" => {
-                    config.axis = Some(value.clone().into_i64());
+                    config.axis = Some(value.clone().into_i64()?);
                 }
                 "block_size" => {
-                    config.block_size = Some(value.clone().into_i64());
+                    config.block_size = Some(value.clone().into_i64()?);
                 }
                 "output_dtype" => {
                     let dtype = match value {
@@ -164,17 +164,15 @@ impl NodeProcessor for DequantizeLinearProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::DequantizeLinear(DequantizeLinearNode {
+        Ok(Node::DequantizeLinear(DequantizeLinearNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

@@ -361,17 +361,20 @@ impl NodeProcessor for SliceProcessor {
             let starts = node
                 .attrs
                 .get("starts")
-                .map(|v| SliceInput::Static(v.clone().into_i64s()))
+                .map(|v| v.clone().into_i64s().map(SliceInput::Static))
+                .transpose()?
                 .ok_or_else(|| ProcessError::MissingAttribute("starts".to_string()))?;
             let ends = node
                 .attrs
                 .get("ends")
-                .map(|v| SliceInput::Static(v.clone().into_i64s()))
+                .map(|v| v.clone().into_i64s().map(SliceInput::Static))
+                .transpose()?
                 .ok_or_else(|| ProcessError::MissingAttribute("ends".to_string()))?;
             let mut axes = node
                 .attrs
                 .get("axes")
-                .map(|v| SliceInput::Static(v.clone().into_i64s()));
+                .map(|v| v.clone().into_i64s().map(SliceInput::Static))
+                .transpose()?;
 
             // Apply default axes if not provided
             if axes.is_none()
@@ -533,17 +536,15 @@ impl NodeProcessor for SliceProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Slice(SliceNode {
+        Ok(Node::Slice(SliceNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

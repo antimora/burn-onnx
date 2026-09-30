@@ -123,16 +123,20 @@ impl NodeProcessor for UnsupportedProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
         use crate::ir::NodeType;
 
-        match builder.node_type {
+        Ok(match builder.node_type {
             NodeType::Unique => Node::Unique(UniqueNode {
                 name: builder.name,
                 inputs: builder.inputs,
                 outputs: builder.outputs,
             }),
-            _ => panic!("Unsupported node type: {:?}", builder.node_type),
-        }
+            other => {
+                return Err(ProcessError::Custom(format!(
+                    "Unsupported node type: {other:?}"
+                )));
+            }
+        })
     }
 }

@@ -87,14 +87,9 @@ impl NodeProcessor for Conv1dProcessor {
                 "kernel_shape" | "strides" | "pads" | "dilations" | "group" => {}
                 "auto_pad" => {
                     // Validate the value is a known auto_pad string
-                    AutoPad::parse(&value.clone().into_string())?;
+                    AutoPad::parse(&value.clone().into_string()?)?;
                 }
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for Conv1d: {key}"),
-                    });
-                }
+                _ => {}
             }
         }
 
@@ -232,17 +227,23 @@ impl NodeProcessor for Conv1dProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "kernel_shape" => kernel_shape = value.clone().into_i64s(),
-                "strides" => strides = value.clone().into_i64s(),
-                "pads" => pads = value.clone().into_i64s(),
-                "dilations" => dilations = value.clone().into_i64s(),
-                "group" => group = value.clone().into_i64() as usize,
-                "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string())?,
+                "kernel_shape" => kernel_shape = value.clone().into_i64s()?,
+                "strides" => strides = value.clone().into_i64s()?,
+                "pads" => pads = value.clone().into_i64s()?,
+                "dilations" => dilations = value.clone().into_i64s()?,
+                "group" => group = value.clone().into_i64()? as usize,
+                "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string()?)?,
                 _ => {}
             }
         }
 
-        let padding = padding_config_1d(&pads);
+        if !kernel_shape.is_empty() {
+            crate::node::padding::check_attr_len("kernel_shape", &kernel_shape, 1)?;
+        }
+        crate::node::padding::check_attr_len("strides", &strides, 1)?;
+        crate::node::padding::check_attr_len("dilations", &dilations, 1)?;
+
+        let padding = padding_config_1d(&pads)?;
 
         let kernel_size = if kernel_shape.is_empty() {
             let weight_shape = crate::node::padding::known_weight_shape(&node.inputs[1])
@@ -275,17 +276,15 @@ impl NodeProcessor for Conv1dProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Conv1d(Conv1dNode {
+        Ok(Node::Conv1d(Conv1dNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -422,12 +421,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Negative pad values are not supported")]
     fn test_conv1d_config_negative_padding() {
         let node = create_test_node(vec![4], vec![1], vec![-1, -1], vec![1], 1, false, None)
             .build_with_graph_data(16);
         let processor = Conv1dProcessor;
-        let _ = processor.extract_config(&node, 16);
+        let err = processor.extract_config(&node, 16).unwrap_err();
+        assert!(err.to_string().contains("negative pad values"), "{err}");
     }
 
     #[test]

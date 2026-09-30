@@ -120,12 +120,12 @@ impl NodeProcessor for ConstantProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        Node::Constant(ConstantNode {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(Node::Constant(ConstantNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
-        })
+        }))
     }
 }
 
@@ -143,7 +143,7 @@ mod tests {
         let shape = tensor_data.shape().to_vec();
 
         // Create GraphState and register the constant
-        let mut graph_state = GraphState::new(&[], &[], &[], &[]);
+        let mut graph_state = GraphState::new(&[], &[], Vec::new(), &[]);
         graph_state.register_test_constant("test_value".to_string(), tensor_data);
 
         // Get the data_id from the registered constant

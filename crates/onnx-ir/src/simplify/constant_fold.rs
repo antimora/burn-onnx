@@ -410,12 +410,14 @@ fn eval_slice(node: &RawNode) -> Option<(TensorData, ArgType)> {
     // Extract slice parameters from either attributes (opset < 10) or inputs (opset >= 10)
     let (starts, ends, axes) = if node.attrs.contains_key("starts") {
         // Opset < 10: parameters are attributes
-        let starts = node.attrs.get("starts")?.clone().into_i64s();
-        let ends = node.attrs.get("ends")?.clone().into_i64s();
+        let starts = node.attrs.get("starts")?.clone().into_i64s().ok()?;
+        let ends = node.attrs.get("ends")?.clone().into_i64s().ok()?;
         let axes = node
             .attrs
             .get("axes")
             .map(|v| v.clone().into_i64s())
+            .transpose()
+            .ok()?
             .unwrap_or_else(|| (0..starts.len() as i64).collect());
         (starts, ends, axes)
     } else if node.inputs.len() >= 3 {
@@ -445,7 +447,7 @@ fn eval_slice(node: &RawNode) -> Option<(TensorData, ArgType)> {
 
     // Check steps (must be 1 or absent)
     if node.attrs.contains_key("steps") {
-        let steps = node.attrs.get("steps")?.clone().into_i64s();
+        let steps = node.attrs.get("steps")?.clone().into_i64s().ok()?;
         if steps.iter().any(|&s| s != 1) {
             return None;
         }
@@ -504,6 +506,8 @@ fn eval_concat(node: &RawNode) -> Option<(TensorData, ArgType)> {
         .attrs
         .get("axis")
         .map(|v| v.clone().into_i64())
+        .transpose()
+        .ok()?
         .unwrap_or(0);
     if axis != 0 {
         return None;
@@ -613,7 +617,7 @@ fn compute_reshape_target(node: &RawNode, data: &TensorData) -> Option<Vec<usize
         NodeType::Unsqueeze => {
             // Get axes from attributes (opset < 13) or from input (opset >= 13)
             let axes = if let Some(attr) = node.attrs.get("axes") {
-                attr.clone().into_i64s()
+                attr.clone().into_i64s().ok()?
             } else {
                 node.inputs.get(1)?.value()?.to_i64_vec().ok()?
             };
@@ -644,7 +648,7 @@ fn compute_reshape_target(node: &RawNode, data: &TensorData) -> Option<Vec<usize
         NodeType::Squeeze => {
             // Get axes from attributes (opset < 13) or from input (opset >= 13)
             let axes = if let Some(attr) = node.attrs.get("axes") {
-                attr.clone().into_i64s()
+                attr.clone().into_i64s().ok()?
             } else if let Some(axes_input) = node.inputs.get(1) {
                 axes_input.value()?.to_i64_vec().ok()?
             } else {
@@ -727,7 +731,7 @@ mod tests {
     use crate::tensor_store::{TensorDataRef, TensorStore, ValueStore};
 
     fn test_state() -> Rc<RefCell<GraphState>> {
-        Rc::new(RefCell::new(GraphState::new(&[], &[], &[], &[])))
+        Rc::new(RefCell::new(GraphState::new(&[], &[], Vec::new(), &[])))
     }
 
     fn const_i64_scalar(name: &str, value: i64) -> Argument {

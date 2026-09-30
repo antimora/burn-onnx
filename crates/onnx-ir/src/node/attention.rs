@@ -64,7 +64,7 @@ fn extract_tensor<'a>(
 
 /// Read a head-count attribute, which must be positive.
 fn head_count(name: &str, value: &crate::ir::AttributeValue) -> Result<usize, ProcessError> {
-    let count = value.clone().into_i64();
+    let count = value.clone().into_i64()?;
     if count <= 0 {
         return Err(ProcessError::InvalidAttribute {
             name: name.to_string(),
@@ -237,11 +237,11 @@ impl NodeProcessor for AttentionProcessor {
         // Extract and validate attributes
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "is_causal" => is_causal = value.clone().into_i64() != 0,
+                "is_causal" => is_causal = value.clone().into_i64()? != 0,
                 "kv_num_heads" => kv_num_heads = Some(head_count(key, value)?),
                 "q_num_heads" => q_num_heads = Some(head_count(key, value)?),
                 "qk_matmul_output_mode" => {
-                    let mode_value = value.clone().into_i64();
+                    let mode_value = value.clone().into_i64()?;
                     // Validate qk_matmul_output_mode range
                     if !(0..=3).contains(&mode_value) {
                         return Err(ProcessError::InvalidAttribute {
@@ -261,16 +261,10 @@ impl NodeProcessor for AttentionProcessor {
                         _ => unreachable!(), // Already validated above
                     }
                 }
-                "scale" => scale = Some(value.clone().into_f32() as f64),
-                "softcap" => softcap = value.clone().into_f32() as f64,
-                "softmax_precision" => softmax_precision = Some(value.clone().into_i64() as usize),
-                _ => {
-                    // Validate that no unknown attributes are present
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for Attention: {key}"),
-                    });
-                }
+                "scale" => scale = Some(value.clone().into_f32()? as f64),
+                "softcap" => softcap = value.clone().into_f32()? as f64,
+                "softmax_precision" => softmax_precision = Some(value.clone().into_i64()? as usize),
+                _ => {}
             }
         }
 
@@ -286,17 +280,15 @@ impl NodeProcessor for AttentionProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Attention(AttentionNode {
+        Ok(Node::Attention(AttentionNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

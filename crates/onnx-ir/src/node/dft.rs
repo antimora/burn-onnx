@@ -170,13 +170,15 @@ impl NodeProcessor for DftProcessor {
         let inverse = node
             .attrs
             .get("inverse")
-            .map(|v| v.clone().into_i64() != 0)
+            .map(|v| v.clone().into_i64().map(|x| x != 0))
+            .transpose()?
             .unwrap_or(false);
 
         let onesided = node
             .attrs
             .get("onesided")
-            .map(|v| v.clone().into_i64() != 0)
+            .map(|v| v.clone().into_i64().map(|x| x != 0))
+            .transpose()?
             .unwrap_or(false);
 
         // ONNX forbids onesided output for complex input; onesided with inverse=1 is
@@ -206,7 +208,9 @@ impl NodeProcessor for DftProcessor {
         let out_static_shape = if let Some(shape) = &input_tensor.static_shape {
             let mut out_shape = shape.clone();
             // Last dim is always 2 (complex output)
-            *out_shape.last_mut().unwrap() = Some(2);
+            if let Some(last) = out_shape.last_mut() {
+                *last = Some(2);
+            }
 
             // Effective DFT length: dft_length if provided, otherwise the input dim
             let effective_n = static_dft_length.or_else(|| out_shape.get(axis).copied().flatten());
@@ -243,13 +247,15 @@ impl NodeProcessor for DftProcessor {
         let inverse = node
             .attrs
             .get("inverse")
-            .map(|v| v.clone().into_i64() != 0)
+            .map(|v| v.clone().into_i64().map(|x| x != 0))
+            .transpose()?
             .unwrap_or(false);
 
         let onesided = node
             .attrs
             .get("onesided")
-            .map(|v| v.clone().into_i64() != 0)
+            .map(|v| v.clone().into_i64().map(|x| x != 0))
+            .transpose()?
             .unwrap_or(false);
 
         let axis = self.resolve_axis(node, &input_tensor, opset)?;
@@ -290,17 +296,15 @@ impl NodeProcessor for DftProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Dft(DftNode {
+        Ok(Node::Dft(DftNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -321,6 +325,7 @@ impl DftProcessor {
             node.attrs
                 .get("axis")
                 .map(|v| v.clone().into_i64())
+                .transpose()?
                 .unwrap_or(-2)
         } else {
             // Opset 20+: axis is an optional input

@@ -242,7 +242,7 @@ fn get_static_shape(node: &RawNode) -> Option<Vec<i64>> {
 
     // Check shape attribute (opset 1-4)
     if let Some(attr) = node.attrs.get("shape") {
-        return Some(attr.clone().into_i64s());
+        return attr.clone().into_i64s().ok();
     }
 
     None
@@ -393,7 +393,7 @@ impl NodeProcessor for ReshapeProcessor {
             let mut allowzero = 0i64;
             for (key, value) in node.attrs.iter() {
                 if key.as_str() == "allowzero" {
-                    allowzero = value.clone().into_i64();
+                    allowzero = value.clone().into_i64()?;
                     break;
                 }
             }
@@ -421,6 +421,7 @@ impl NodeProcessor for ReshapeProcessor {
             .attrs
             .get("allowzero")
             .map(|v| v.clone().into_i64())
+            .transpose()?
             .unwrap_or(0);
 
         // Compute static_shape from shape input values
@@ -499,7 +500,7 @@ impl NodeProcessor for ReshapeProcessor {
         // Check for shape attribute (opset 1-4)
         if node.inputs.len() < 2 {
             if let Some(attr) = node.attrs.get("shape") {
-                let shape = attr.clone().into_i64s();
+                let shape = attr.clone().into_i64s()?;
                 return Ok(ReshapeConfig {
                     shape: ReshapeInput::Static(shape),
                 });
@@ -564,17 +565,15 @@ impl NodeProcessor for ReshapeProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Reshape(ReshapeNode {
+        Ok(Node::Reshape(ReshapeNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

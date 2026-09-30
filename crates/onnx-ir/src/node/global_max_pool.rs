@@ -53,12 +53,12 @@ impl NodeProcessor for GlobalMaxPoolProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        Node::GlobalMaxPool(GlobalMaxPoolNode {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(Node::GlobalMaxPool(GlobalMaxPoolNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
-        })
+        }))
     }
 }
 

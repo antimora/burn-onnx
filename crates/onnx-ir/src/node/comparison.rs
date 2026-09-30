@@ -178,8 +178,8 @@ impl NodeProcessor for ComparisonProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        match builder.node_type {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(match builder.node_type {
             crate::ir::NodeType::Equal => Node::Equal(EqualNode {
                 name: builder.name,
                 inputs: builder.inputs,
@@ -205,8 +205,12 @@ impl NodeProcessor for ComparisonProcessor {
                 inputs: builder.inputs,
                 outputs: builder.outputs,
             }),
-            _ => panic!("ComparisonProcessor called with unsupported node type"),
-        }
+            other => {
+                return Err(ProcessError::Custom(format!(
+                    "ComparisonProcessor called with unsupported node type {other:?}"
+                )));
+            }
+        })
     }
 }
 

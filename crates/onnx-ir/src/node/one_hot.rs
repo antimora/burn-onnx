@@ -154,8 +154,17 @@ impl NodeProcessor for OneHotProcessor {
                 OneHotDepthInput::Runtime(RuntimeInputRef::new(node.inputs[1].name.clone(), 1))
             }
             Some(tensor_data) => {
-                let depth_value = tensor_data.as_slice::<i64>().unwrap()[0];
-                OneHotDepthInput::Static(depth_value as usize)
+                let depth_value = tensor_data
+                    .to_i64_vec()
+                    .ok()
+                    .and_then(|values| values.first().copied())
+                    .and_then(|depth| usize::try_from(depth).ok())
+                    .ok_or_else(|| {
+                        ProcessError::Custom(format!(
+                            "OneHot: depth must be a non-negative integer, got {tensor_data:?}"
+                        ))
+                    })?;
+                OneHotDepthInput::Static(depth_value)
             }
         };
 
@@ -185,6 +194,7 @@ impl NodeProcessor for OneHotProcessor {
             .attrs
             .get("axis")
             .map(|val| val.clone().into_i64())
+            .transpose()?
             .unwrap_or(-1);
 
         let config = OneHotConfig {
@@ -195,17 +205,15 @@ impl NodeProcessor for OneHotProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::OneHot(OneHotNode {
+        Ok(Node::OneHot(OneHotNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

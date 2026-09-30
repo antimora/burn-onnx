@@ -14,7 +14,7 @@
 use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{ArgType, Argument, Node, RawNode, RuntimeInputRef, TensorType};
+use crate::ir::{ArgType, Argument, Node, RawNode, RuntimeInputRef, TensorDataExt, TensorType};
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
 };
@@ -109,13 +109,11 @@ impl NodeProcessor for SplitProcessor {
                 .map(|sizes| sizes.into_iter().map(|s| s as usize).collect())
         } else {
             // For opset < 13, split sizes are an attribute
-            node.attrs.get("split").map(|v| {
-                v.clone()
-                    .into_i64s()
-                    .into_iter()
-                    .map(|s| s as usize)
-                    .collect()
-            })
+            node.attrs
+                .get("split")
+                .map(|v| v.clone().into_i64s())
+                .transpose()?
+                .map(|sizes| sizes.into_iter().map(|s| s as usize).collect())
         };
 
         // Infer output types - all outputs have the same rank and element type as input
@@ -127,8 +125,9 @@ impl NodeProcessor for SplitProcessor {
                     let axis = node
                         .attrs
                         .get("axis")
-                        .map(|v| {
-                            let a = v.clone().into_i64();
+                        .map(|v| v.clone().into_i64())
+                        .transpose()?
+                        .map(|a| {
                             if a < 0 {
                                 (a + rank as i64) as usize
                             } else {
@@ -200,8 +199,8 @@ impl NodeProcessor for SplitProcessor {
         // Iterate through node attributes to extract relevant values
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "axis" => axis = value.clone().into_i64(),
-                "num_outputs" => num_outputs = Some(value.clone().into_i64() as usize),
+                "axis" => axis = value.clone().into_i64()?,
+                "num_outputs" => num_outputs = Some(value.clone().into_i64()? as usize),
                 _ => {}
             }
         }
@@ -306,7 +305,9 @@ impl NodeProcessor for SplitProcessor {
                     )))
                 }
                 Some(tensor_data) => {
-                    let sizes: Vec<i64> = tensor_data.try_into_vec().unwrap();
+                    let sizes: Vec<i64> = tensor_data.to_i64_vec().map_err(|e| {
+                        ProcessError::Custom(format!("Split: cannot read split sizes: {e:?}"))
+                    })?;
 
                     // Validate that all split sizes are non-negative
                     for (i, &size) in sizes.iter().enumerate() {
@@ -351,7 +352,7 @@ impl NodeProcessor for SplitProcessor {
             };
         } else if let Some(split_attr) = node.attrs.get("split") {
             // For opset < 13, split sizes are an attribute
-            let sizes = split_attr.clone().into_i64s();
+            let sizes = split_attr.clone().into_i64s()?;
             if !sizes.is_empty() {
                 if sizes.iter().any(|&s| s < 0) {
                     return Err(ProcessError::Custom(
@@ -424,17 +425,15 @@ impl NodeProcessor for SplitProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Split(SplitNode {
+        Ok(Node::Split(SplitNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -477,8 +476,8 @@ mod tests {
         if let Some(attributes) = attrs {
             for (key, value) in attributes {
                 builder = match key.as_str() {
-                    "axis" => builder.attr_int("axis", value.into_i64()),
-                    "num_outputs" => builder.attr_int("num_outputs", value.into_i64()),
+                    "axis" => builder.attr_int("axis", value.into_i64().unwrap()),
+                    "num_outputs" => builder.attr_int("num_outputs", value.into_i64().unwrap()),
                     _ => builder,
                 };
             }

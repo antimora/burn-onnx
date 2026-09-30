@@ -82,19 +82,12 @@ impl NodeProcessor for DepthToSpaceProcessor {
         for key in node.attrs.keys() {
             match key.as_str() {
                 "blocksize" | "mode" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for DepthToSpace: {}", key),
-                    });
-                }
+                _ => {}
             }
         }
 
         // Get reference to config for type inference
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(node, opset)?;
 
         // Validate that if mode is CRD, we need opset 11+
         if config.mode == DepthToSpaceMode::Crd && opset < 11 {
@@ -132,16 +125,14 @@ impl NodeProcessor for DepthToSpaceProcessor {
         }
 
         // Infer static shape based on rank and block size
-        let static_shape = tensor.static_shape.clone().map(|shape| {
-            let [b, c, h, w] = shape
-                .try_into()
-                .expect("DepthToSpace: input tensor rank is not 4");
-            vec![
+        let static_shape = tensor.static_shape.clone().and_then(|shape| {
+            let [b, c, h, w]: [_; 4] = shape.try_into().ok()?;
+            Some(vec![
                 b,
                 c.map(|v| v / (block_size * block_size)),
                 h.map(|v| v * block_size),
                 w.map(|v| v * block_size),
-            ]
+            ])
         });
 
         node.outputs[0].ty = ArgType::Tensor(TensorType {
@@ -159,10 +150,10 @@ impl NodeProcessor for DepthToSpaceProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "blocksize" => block_size = Some(value.clone().into_i64() as usize),
+                "blocksize" => block_size = Some(value.clone().into_i64()? as usize),
                 "mode" => {
                     mode =
-                        DepthToSpaceMode::from_str(&value.clone().into_string()).map_err(|e| {
+                        DepthToSpaceMode::from_str(&value.clone().into_string()?).map_err(|e| {
                             ProcessError::InvalidAttribute {
                                 name: "mode".to_string(),
                                 reason: e,
@@ -180,17 +171,15 @@ impl NodeProcessor for DepthToSpaceProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::DepthToSpace(DepthToSpaceNode {
+        Ok(Node::DepthToSpace(DepthToSpaceNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

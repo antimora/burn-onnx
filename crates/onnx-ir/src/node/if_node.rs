@@ -97,9 +97,7 @@ impl NodeProcessor for IfProcessor {
         }
 
         // Get branches from config (clone to avoid borrow checker issues)
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(node, opset)?;
         let then_outputs = config.then_branch.outputs.clone();
         let else_outputs = config.else_branch.outputs.clone();
 
@@ -222,17 +220,15 @@ impl NodeProcessor for IfProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::If(IfNode {
+        Ok(Node::If(IfNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

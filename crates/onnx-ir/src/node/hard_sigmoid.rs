@@ -65,12 +65,7 @@ impl NodeProcessor for HardSigmoidProcessor {
         for key in node.attrs.keys() {
             match key.as_str() {
                 "alpha" | "beta" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for HardSigmoid: {}", key),
-                    });
-                }
+                _ => {}
             }
         }
 
@@ -87,8 +82,8 @@ impl NodeProcessor for HardSigmoidProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "alpha" => alpha = value.clone().into_f32() as f64,
-                "beta" => beta = value.clone().into_f32() as f64,
+                "alpha" => alpha = value.clone().into_f32()? as f64,
+                "beta" => beta = value.clone().into_f32()? as f64,
                 _ => {}
             }
         }
@@ -97,17 +92,15 @@ impl NodeProcessor for HardSigmoidProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::HardSigmoid(HardSigmoidNode {
+        Ok(Node::HardSigmoid(HardSigmoidNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

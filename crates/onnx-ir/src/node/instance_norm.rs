@@ -79,18 +79,6 @@ impl NodeProcessor for InstanceNormProcessor {
         // TODO: Validate that input tensor is at least 3D (N x C x D1 ...) - Spec requires minimum rank of 3 - burn/crates/onnx-ir/src/node/instance_norm.rs:88
 
         // Validate attributes before extracting config
-        for key in node.attrs.keys() {
-            match key.as_str() {
-                "epsilon" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for InstanceNorm: {key}"),
-                    });
-                }
-            }
-        }
-
         // Output type is same as input
         crate::processor::same_as_input(node);
 
@@ -103,7 +91,7 @@ impl NodeProcessor for InstanceNormProcessor {
         for (key, value) in node.attrs.iter() {
             if key.as_str() == "epsilon" {
                 // TODO: Validate epsilon > 0 for numerical stability
-                epsilon = value.clone().into_f32()
+                epsilon = value.clone().into_f32()?
             }
         }
 
@@ -111,17 +99,15 @@ impl NodeProcessor for InstanceNormProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::InstanceNormalization(InstanceNormalizationNode {
+        Ok(Node::InstanceNormalization(InstanceNormalizationNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

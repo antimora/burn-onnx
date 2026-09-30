@@ -104,7 +104,7 @@ impl NodeProcessor for TriluProcessor {
         let mut diagonal = TriluDiagonal::Static(0);
         for (key, value) in node.attrs.iter() {
             if key.as_str() == "upper" {
-                upper = value.clone().into_i64() != 0
+                upper = value.clone().into_i64()? != 0
             }
         }
         if let Some(diagonal_arg) = node.get_input(1) {
@@ -134,17 +134,15 @@ impl NodeProcessor for TriluProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Trilu(TriluNode {
+        Ok(Node::Trilu(TriluNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

@@ -297,10 +297,12 @@ impl NodeProcessor for RnnProcessor {
         };
 
         // Extract clip threshold (default: None)
-        let clip = node.attrs.get("clip").and_then(|v| {
-            let val = v.clone().into_f32();
-            if val > 0.0 { Some(val) } else { None }
-        });
+        let clip = node
+            .attrs
+            .get("clip")
+            .map(|v| v.clone().into_f32())
+            .transpose()?
+            .filter(|&val| val > 0.0);
 
         // Fallback: try to get input_size from weight constant data
         let input_size = input_size.or_else(|| {
@@ -348,13 +350,14 @@ impl NodeProcessor for RnnProcessor {
             .get("hidden_size")
             .ok_or_else(|| ProcessError::MissingAttribute("hidden_size".to_string()))?
             .clone()
-            .into_i64() as usize;
+            .into_i64()? as usize;
 
         // Extract direction (default: "forward")
         let direction = node
             .attrs
             .get("direction")
             .map(|v| v.clone().into_string())
+            .transpose()?
             .unwrap_or_else(|| "forward".to_string());
         let direction: RnnDirection = direction.parse()?;
 
@@ -364,6 +367,7 @@ impl NodeProcessor for RnnProcessor {
             .attrs
             .get("layout")
             .map(|v| v.clone().into_i64())
+            .transpose()?
             .unwrap_or(0);
         let batch_first = layout == 1;
 
@@ -374,7 +378,7 @@ impl NodeProcessor for RnnProcessor {
         // Extract activations (default: Tanh for each direction)
         // f = hidden activation
         let hidden_activation = if let Some(activations) = node.attrs.get("activations") {
-            let acts = activations.clone().into_strings();
+            let acts = activations.clone().into_strings()?;
             if acts.is_empty() {
                 // Empty means use defaults
                 RnnActivationFunction::Tanh
@@ -412,17 +416,15 @@ impl NodeProcessor for RnnProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Rnn(RnnNode {
+        Ok(Node::Rnn(RnnNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

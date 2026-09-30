@@ -10,6 +10,7 @@ use std::sync::Arc;
 use burn_tensor::TensorData;
 
 use crate::ir::{OnnxGraph, OnnxGraphBuilder};
+use crate::processor::ProcessError;
 use crate::protos::GraphProto;
 
 /// Deferred subgraph that is built lazily during type inference.
@@ -107,7 +108,9 @@ impl DeferredGraph {
         outer_scope: OuterScopeTypes,
     ) -> Result<OnnxGraph, crate::pipeline::Error> {
         let builder = self.build_with_outer_scope(outer_scope)?;
-        Ok(builder.convert_to_graph(self.opset_version))
+        builder
+            .convert_to_graph(self.opset_version)
+            .map_err(crate::pipeline::Error::Processing)
     }
 
     /// Build the subgraph from the deferred GraphProto without outer scope types.
@@ -122,7 +125,9 @@ impl DeferredGraph {
     #[allow(dead_code)]
     pub fn build_graph(&self) -> Result<OnnxGraph, crate::pipeline::Error> {
         let builder = self.build()?;
-        Ok(builder.convert_to_graph(self.opset_version))
+        builder
+            .convert_to_graph(self.opset_version)
+            .map_err(crate::pipeline::Error::Processing)
     }
 }
 
@@ -342,96 +347,116 @@ impl PublicAttributesOwned {
 }
 
 impl AttributeValue {
-    pub fn into_f32(self) -> f32 {
+    pub fn into_f32(self) -> Result<f32, ProcessError> {
         if let AttributeValue::Float32(elem) = self {
-            elem
+            Ok(elem)
         } else {
-            panic!("Expected Float32, got {self:?}");
+            Err(self.type_mismatch("Float32"))
         }
     }
 
-    pub fn into_i32(self) -> i32 {
+    pub fn into_i32(self) -> Result<i32, ProcessError> {
         if let AttributeValue::Int64(elem) = self {
-            elem as i32
+            Ok(elem as i32)
         } else {
-            panic!("Expected Int32, got {self:?}");
+            Err(self.type_mismatch("Int64"))
         }
     }
 
-    pub fn into_i64(self) -> i64 {
+    pub fn into_i64(self) -> Result<i64, ProcessError> {
         if let AttributeValue::Int64(elem) = self {
-            elem
+            Ok(elem)
         } else {
-            panic!("Expected Int64, got {self:?}");
+            Err(self.type_mismatch("Int64"))
         }
     }
 
-    pub fn into_string(self) -> String {
+    pub fn into_string(self) -> Result<String, ProcessError> {
         if let AttributeValue::String(elem) = self {
-            elem
+            Ok(elem)
         } else {
-            panic!("Expected String, got {self:?}");
+            Err(self.type_mismatch("String"))
         }
     }
 
-    pub fn into_tensor(self) -> TensorData {
+    pub fn into_tensor(self) -> Result<TensorData, ProcessError> {
         if let AttributeValue::Tensor(elem) = self {
-            elem
+            Ok(elem)
         } else {
-            panic!("Expected Tensor, got {self:?}");
+            Err(self.type_mismatch("Tensor"))
         }
     }
 
-    pub fn into_f32s(self) -> Vec<f32> {
+    pub fn into_f32s(self) -> Result<Vec<f32>, ProcessError> {
         if let AttributeValue::Float32s(elem) = self {
-            elem
+            Ok(elem)
         } else {
-            panic!("Expected Float32s, got {self:?}");
+            Err(self.type_mismatch("Float32s"))
         }
     }
 
-    pub fn into_i64s(self) -> Vec<i64> {
+    pub fn into_i64s(self) -> Result<Vec<i64>, ProcessError> {
         if let AttributeValue::Int64s(elem) = self {
-            elem
+            Ok(elem)
         } else {
-            panic!("Expected Int64s, got {self:?}");
+            Err(self.type_mismatch("Int64s"))
         }
     }
 
     #[allow(dead_code)]
-    pub fn into_strings(self) -> Vec<String> {
+    pub fn into_strings(self) -> Result<Vec<String>, ProcessError> {
         if let AttributeValue::Strings(elem) = self {
-            elem
+            Ok(elem)
         } else {
-            panic!("Expected Strings, got {self:?}");
+            Err(self.type_mismatch("Strings"))
         }
     }
 
     #[allow(dead_code)]
-    pub fn into_tensors(self) -> Vec<TensorData> {
+    pub fn into_tensors(self) -> Result<Vec<TensorData>, ProcessError> {
         if let AttributeValue::Tensors(elem) = self {
-            elem
+            Ok(elem)
         } else {
-            panic!("Expected Tensors, got {self:?}");
+            Err(self.type_mismatch("Tensors"))
         }
     }
 
     #[allow(dead_code)]
-    pub fn into_graph(self) -> OnnxGraph {
+    pub fn into_graph(self) -> Result<OnnxGraph, ProcessError> {
         if let AttributeValue::Graph(elem) = self {
-            elem
+            Ok(elem)
         } else {
-            panic!("Expected Graph, got {self:?}");
+            Err(self.type_mismatch("Graph"))
         }
     }
 
     #[allow(dead_code)]
-    pub fn into_graphs(self) -> Vec<OnnxGraph> {
+    pub fn into_graphs(self) -> Result<Vec<OnnxGraph>, ProcessError> {
         if let AttributeValue::Graphs(elem) = self {
-            elem
+            Ok(elem)
         } else {
-            panic!("Expected Graphs, got {self:?}");
+            Err(self.type_mismatch("Graphs"))
         }
+    }
+
+    /// The error for an attribute whose ONNX type is not the one the operator expects. Names only
+    /// the variant, since the payload can be a large tensor or graph.
+    fn type_mismatch(&self, expected: &str) -> ProcessError {
+        let actual = match self {
+            AttributeValue::Float32(_) => "Float32",
+            AttributeValue::Int64(_) => "Int64",
+            AttributeValue::String(_) => "String",
+            AttributeValue::Tensor(_) => "Tensor",
+            AttributeValue::Float32s(_) => "Float32s",
+            AttributeValue::Int64s(_) => "Int64s",
+            AttributeValue::Strings(_) => "Strings",
+            AttributeValue::Tensors(_) => "Tensors",
+            AttributeValue::Graph(_) => "Graph",
+            AttributeValue::Graphs(_) => "Graphs",
+            AttributeValue::DeferredGraph(_) => "Graph",
+            AttributeValue::DeferredGraphs(_) => "Graphs",
+        };
+        ProcessError::Custom(format!("expected a {expected} attribute, got {actual}"))
     }
 }
 

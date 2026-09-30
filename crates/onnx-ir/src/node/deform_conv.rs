@@ -277,17 +277,23 @@ impl NodeProcessor for DeformConvProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "kernel_shape" => kernel_shape = value.clone().into_i64s(),
-                "strides" => strides = value.clone().into_i64s(),
-                "pads" => pads = value.clone().into_i64s(),
-                "dilations" => dilations = value.clone().into_i64s(),
-                "group" => group = value.clone().into_i64() as usize,
-                "offset_group" => offset_group = value.clone().into_i64() as usize,
+                "kernel_shape" => kernel_shape = value.clone().into_i64s()?,
+                "strides" => strides = value.clone().into_i64s()?,
+                "pads" => pads = value.clone().into_i64s()?,
+                "dilations" => dilations = value.clone().into_i64s()?,
+                "group" => group = value.clone().into_i64()? as usize,
+                "offset_group" => offset_group = value.clone().into_i64()? as usize,
                 _ => {}
             }
         }
 
-        let padding = padding_config_2d(&pads);
+        if !kernel_shape.is_empty() {
+            crate::node::padding::check_attr_len("kernel_shape", &kernel_shape, 2)?;
+        }
+        crate::node::padding::check_attr_len("strides", &strides, 2)?;
+        crate::node::padding::check_attr_len("dilations", &dilations, 2)?;
+
+        let padding = padding_config_2d(&pads)?;
 
         // Only require weight shape when kernel_shape attribute is absent
         let kernel_size = if kernel_shape.is_empty() {
@@ -327,20 +333,15 @@ impl NodeProcessor for DeformConvProcessor {
         ))
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self.extract_config(&builder, opset).unwrap_or_else(|e| {
-            panic!(
-                "DeformConv '{}' config extraction failed: {e}",
-                builder.name
-            )
-        });
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::DeformConv(DeformConvNode {
+        Ok(Node::DeformConv(DeformConvNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -350,6 +351,7 @@ mod tests {
     use crate::ir::NodeType;
     use crate::node::test_utils::TestNodeBuilder;
 
+    #[allow(clippy::too_many_arguments)]
     fn create_test_node(
         kernel_shape: Vec<i64>,
         strides: Vec<i64>,

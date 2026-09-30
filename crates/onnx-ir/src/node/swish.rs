@@ -53,18 +53,6 @@ impl NodeProcessor for SwishProcessor {
         _opset: usize,
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
-        for key in node.attrs.keys() {
-            match key.as_str() {
-                "alpha" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for Swish: {}", key),
-                    });
-                }
-            }
-        }
-
         crate::processor::same_as_input(node);
         Ok(())
     }
@@ -73,24 +61,22 @@ impl NodeProcessor for SwishProcessor {
         let mut alpha = 1.0;
         for (key, value) in node.attrs.iter() {
             if key.as_str() == "alpha" {
-                alpha = value.clone().into_f32() as f64;
+                alpha = value.clone().into_f32()? as f64;
             }
         }
 
         Ok(SwishConfig { alpha })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Swish(SwishNode {
+        Ok(Node::Swish(SwishNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -133,16 +119,5 @@ mod tests {
         processor.infer_types(&mut node, 24, &prefs).unwrap();
         // Output should match input type
         assert_eq!(node.inputs[0].ty, node.outputs[0].ty);
-    }
-
-    #[test]
-    fn test_swish_invalid_attribute() {
-        let mut node = create_test_node(1.0);
-        node.attrs
-            .insert("bad_attr".to_string(), crate::ir::AttributeValue::Int64(1));
-        let processor = SwishProcessor;
-        let prefs = OutputPreferences::new();
-        let result = processor.infer_types(&mut node, 24, &prefs);
-        assert!(result.is_err());
     }
 }

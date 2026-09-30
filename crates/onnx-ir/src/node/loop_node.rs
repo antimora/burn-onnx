@@ -159,9 +159,7 @@ impl NodeProcessor for LoopProcessor {
         }
 
         // Get body graph from config
-        let config = self
-            .extract_config(node, opset)
-            .expect("Config extraction failed");
+        let config = self.extract_config(node, opset)?;
         let body_inputs = config.body.inputs.clone();
         let body_outputs = config.body.outputs.clone();
 
@@ -341,17 +339,15 @@ impl NodeProcessor for LoopProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Loop(LoopNode {
+        Ok(Node::Loop(LoopNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

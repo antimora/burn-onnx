@@ -115,16 +115,19 @@ impl NodeProcessor for LrnProcessor {
             .attrs
             .get("alpha")
             .map(|val| val.clone().into_f32())
+            .transpose()?
             .unwrap_or(ALPHA_DEFAULT);
         let beta = node
             .attrs
             .get("beta")
             .map(|val| val.clone().into_f32())
+            .transpose()?
             .unwrap_or(BETA_DEFAULT);
         let bias = node
             .attrs
             .get("bias")
             .map(|val| val.clone().into_f32())
+            .transpose()?
             .unwrap_or(BIAS_DEFAULT);
 
         // Validate that `size` exists, and is of type `int`
@@ -132,6 +135,7 @@ impl NodeProcessor for LrnProcessor {
             .attrs
             .get("size")
             .map(|val| val.clone().into_i64())
+            .transpose()?
             .ok_or_else(|| ProcessError::MissingAttribute("size".to_string()))?;
         if size <= 0 {
             return Err(ProcessError::InvalidAttribute {
@@ -148,17 +152,15 @@ impl NodeProcessor for LrnProcessor {
         })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Lrn(LrnNode {
+        Ok(Node::Lrn(LrnNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

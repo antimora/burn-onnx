@@ -91,7 +91,13 @@ impl NodeProcessor for RandomLikeProcessor {
         let dtype = node
             .attrs
             .get("dtype")
-            .map(|val| DataType::from_i32(val.clone().into_i32()).unwrap())
+            .map(|val| {
+                let code = val.clone().into_i32()?;
+                DataType::from_i32(code).ok_or_else(|| {
+                    ProcessError::Custom(format!("unknown dtype attribute value {code}"))
+                })
+            })
+            .transpose()?
             .unwrap_or(DataType::FLOAT);
 
         let elem_type = match dtype {
@@ -128,12 +134,14 @@ impl NodeProcessor for RandomLikeProcessor {
                 let mean = node
                     .attrs
                     .get("mean")
-                    .map(|v| v.clone().into_f32() as f64)
+                    .map(|v| v.clone().into_f32().map(|x| x as f64))
+                    .transpose()?
                     .unwrap_or(0.0);
                 let scale = node
                     .attrs
                     .get("scale")
-                    .map(|v| v.clone().into_f32() as f64)
+                    .map(|v| v.clone().into_f32().map(|x| x as f64))
+                    .transpose()?
                     .unwrap_or(1.0);
                 RandomLikeConfig::Normal(RandomNormalLikeConfig { mean, scale })
             }
@@ -141,12 +149,14 @@ impl NodeProcessor for RandomLikeProcessor {
                 let low = node
                     .attrs
                     .get("low")
-                    .map(|v| v.clone().into_f32() as f64)
+                    .map(|v| v.clone().into_f32().map(|x| x as f64))
+                    .transpose()?
                     .unwrap_or(0.0);
                 let high = node
                     .attrs
                     .get("high")
-                    .map(|v| v.clone().into_f32() as f64)
+                    .map(|v| v.clone().into_f32().map(|x| x as f64))
+                    .transpose()?
                     .unwrap_or(1.0);
                 RandomLikeConfig::Uniform(RandomUniformLikeConfig { low, high })
             }
@@ -161,12 +171,10 @@ impl NodeProcessor for RandomLikeProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        match config {
+        Ok(match config {
             RandomLikeConfig::Normal(normal_like_config) => {
                 Node::RandomNormalLike(RandomNormalLikeNode {
                     name: builder.name,
@@ -183,7 +191,7 @@ impl NodeProcessor for RandomLikeProcessor {
                     config: uniform_like_config,
                 })
             }
-        }
+        })
     }
 }
 

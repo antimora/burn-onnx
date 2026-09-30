@@ -326,19 +326,21 @@ over all attributes to reject unknown ones, as ONNX may add new attributes in fu
 Example `build_node()` implementation:
 
 ```rust
-fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-    let config = self.extract_config(&builder, opset).expect("Config extraction failed");
-    Node::Squeeze(SqueezeNode {
+fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+    let config = self.extract_config(&builder, opset)?;
+    Ok(Node::Squeeze(SqueezeNode {
         name: builder.name,
         inputs: builder.inputs,
         outputs: builder.outputs,
         config,
-    })
+    }))
 }
 ```
 
 Note: `RawNode` is the intermediate node representation used during processing. The `build_node()`
-method converts it into the final typed `Node` enum variant.
+method converts it into the final typed `Node` enum variant. It returns a `Result` because
+`lift_constants` runs again after identity elimination, so a config check can first become
+possible here; propagate the error rather than panicking.
 
 For complete examples, see existing processors:
 

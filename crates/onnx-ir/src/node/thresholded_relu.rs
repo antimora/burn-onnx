@@ -56,18 +56,6 @@ impl NodeProcessor for ThresholdedReluProcessor {
         _opset: usize,
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
-        for key in node.attrs.keys() {
-            match key.as_str() {
-                "alpha" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for ThresholdedRelu: {}", key),
-                    });
-                }
-            }
-        }
-
         crate::processor::same_as_input(node);
         Ok(())
     }
@@ -76,24 +64,22 @@ impl NodeProcessor for ThresholdedReluProcessor {
         let mut alpha = 1.0;
         for (key, value) in node.attrs.iter() {
             if key.as_str() == "alpha" {
-                alpha = value.clone().into_f32() as f64;
+                alpha = value.clone().into_f32()? as f64;
             }
         }
 
         Ok(ThresholdedReluConfig { alpha })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::ThresholdedRelu(ThresholdedReluNode {
+        Ok(Node::ThresholdedRelu(ThresholdedReluNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

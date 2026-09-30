@@ -111,17 +111,17 @@ impl NodeProcessor for MeanVarianceNormalizationProcessor {
         Ok(MeanVarianceNormalizationConfig::new(axes))
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::MeanVarianceNormalization(MeanVarianceNormalizationNode {
-            name: builder.name,
-            inputs: builder.inputs,
-            outputs: builder.outputs,
-            config,
-        })
+        Ok(Node::MeanVarianceNormalization(
+            MeanVarianceNormalizationNode {
+                name: builder.name,
+                inputs: builder.inputs,
+                outputs: builder.outputs,
+                config,
+            },
+        ))
     }
 }
 
@@ -129,7 +129,7 @@ impl NodeProcessor for MeanVarianceNormalizationProcessor {
 /// deduplicate. Falls back to `[0, 2, 3]` per the ONNX default.
 fn extract_axes(node: &RawNode, rank: usize) -> Result<Vec<usize>, ProcessError> {
     let (raw_axes, from_default): (Vec<i64>, bool) = match node.attrs.get("axes") {
-        Some(value) => (value.clone().into_i64s(), false),
+        Some(value) => (value.clone().into_i64s()?, false),
         None => (vec![0, 2, 3], true),
     };
 

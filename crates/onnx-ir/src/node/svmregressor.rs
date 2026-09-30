@@ -418,16 +418,14 @@ impl NodeProcessor for SVMRegressorProcessor {
         ))
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
-        Node::SVMRegressor(SVMRegressorNode::new(
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
+        Ok(Node::SVMRegressor(SVMRegressorNode::new(
             builder.name,
             builder.inputs,
             builder.outputs,
             config,
-        ))
+        )))
     }
 }
 

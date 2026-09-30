@@ -108,16 +108,8 @@ impl NodeProcessor for GatherElementsProcessor {
 
         // Extract the axis attribute (default: 0 per ONNX spec)
         let mut axis: i64 = 0;
-        for (key, value) in node.attrs.iter() {
-            match key.as_str() {
-                "axis" => axis = value.clone().into_i64(),
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for GatherElements: {}", key),
-                    });
-                }
-            }
+        if let Some(value) = node.attrs.get("axis") {
+            axis = value.clone().into_i64()?;
         }
 
         // Normalize negative axis
@@ -158,17 +150,15 @@ impl NodeProcessor for GatherElementsProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::GatherElements(GatherElementsNode {
+        Ok(Node::GatherElements(GatherElementsNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

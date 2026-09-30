@@ -94,6 +94,7 @@ impl NodeProcessor for BitShiftProcessor {
             .attrs
             .get("direction")
             .map(|val| val.clone().into_string())
+            .transpose()?
             .ok_or_else(|| ProcessError::MissingAttribute("direction".to_string()))?;
 
         let direction =
@@ -106,17 +107,15 @@ impl NodeProcessor for BitShiftProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::BitShift(BitShiftNode {
+        Ok(Node::BitShift(BitShiftNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

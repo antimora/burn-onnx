@@ -67,7 +67,13 @@ impl NodeProcessor for BernoulliProcessor {
         let dtype = node
             .attrs
             .get("dtype")
-            .map(|val| DataType::from_i32(val.clone().into_i32()).unwrap());
+            .map(|val| {
+                let code = val.clone().into_i32()?;
+                DataType::from_i32(code).ok_or_else(|| {
+                    ProcessError::Custom(format!("unknown dtype attribute value {code}"))
+                })
+            })
+            .transpose()?;
 
         let elem_type = dtype.map_or(tensor.dtype, |dtype| match dtype {
             DataType::FLOAT => DType::F32,
@@ -87,12 +93,12 @@ impl NodeProcessor for BernoulliProcessor {
         Ok(())
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        Node::Bernoulli(BernoulliNode {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(Node::Bernoulli(BernoulliNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
-        })
+        }))
     }
 }
 

@@ -582,7 +582,7 @@ impl TestNodeBuilder {
     /// and attached to the node's arguments.
     pub(crate) fn build_with_graph_data(self, _opset: usize) -> RawNode {
         // Create a new GraphState for this test
-        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], &[], &[]);
+        let mut graph_state = crate::graph_state::GraphState::new(&[], &[], Vec::new(), &[]);
 
         // Register constants in GraphState before building the node
         for (input_name, tensor_data) in &self.constant_data {

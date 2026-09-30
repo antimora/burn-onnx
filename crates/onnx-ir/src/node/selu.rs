@@ -67,12 +67,7 @@ impl NodeProcessor for SeluProcessor {
         for key in node.attrs.keys() {
             match key.as_str() {
                 "alpha" | "gamma" => {}
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for Selu: {}", key),
-                    });
-                }
+                _ => {}
             }
         }
 
@@ -86,8 +81,8 @@ impl NodeProcessor for SeluProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "alpha" => alpha = value.clone().into_f32() as f64,
-                "gamma" => gamma = value.clone().into_f32() as f64,
+                "alpha" => alpha = value.clone().into_f32()? as f64,
+                "gamma" => gamma = value.clone().into_f32()? as f64,
                 _ => {}
             }
         }
@@ -95,17 +90,15 @@ impl NodeProcessor for SeluProcessor {
         Ok(SeluConfig { alpha, gamma })
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Selu(SeluNode {
+        Ok(Node::Selu(SeluNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -127,8 +120,8 @@ mod tests {
         let node = create_test_node();
         let processor = SeluProcessor;
         let config = processor.extract_config(&node, 16).unwrap();
-        assert!((config.alpha - 1.67326319217681884765625).abs() < 1e-6);
-        assert!((config.gamma - 1.05070102214813232421875).abs() < 1e-6);
+        assert!((config.alpha - 1.673_263_192_176_818_8).abs() < 1e-6);
+        assert!((config.gamma - 1.050_701_022_148_132_3).abs() < 1e-6);
     }
 
     #[test]

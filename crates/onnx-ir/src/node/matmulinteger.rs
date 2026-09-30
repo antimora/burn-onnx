@@ -86,12 +86,12 @@ impl NodeProcessor for MatMulIntegerProcessor {
         }
     }
 
-    fn build_node(&self, builder: RawNode, _opset: usize) -> Node {
-        Node::MatMulInteger(MatMulIntegerNode {
+    fn build_node(&self, builder: RawNode, _opset: usize) -> Result<Node, ProcessError> {
+        Ok(Node::MatMulInteger(MatMulIntegerNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
-        })
+        }))
     }
 }
 

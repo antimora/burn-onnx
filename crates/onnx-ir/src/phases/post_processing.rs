@@ -214,7 +214,8 @@ pub(crate) fn post_process(
         let constant_map_rc = state.constant_map_rc();
         let node_output_map = state.node_output_map().clone();
 
-        let result = std::mem::replace(&mut *state, GraphState::new(&[], &[], &[], &[])).consume();
+        let result =
+            std::mem::replace(&mut *state, GraphState::new(&[], &[], Vec::new(), &[])).consume();
 
         // Restore the Rc references to the new empty GraphState (no data copying)
         state.restore_stores(tensor_store_rc, constant_map_rc);

@@ -128,7 +128,13 @@ impl NodeProcessor for RandomProcessor {
         let dtype = node
             .attrs
             .get("dtype")
-            .map(|val| DataType::from_i32(val.clone().into_i32()).unwrap())
+            .map(|val| {
+                let code = val.clone().into_i32()?;
+                DataType::from_i32(code).ok_or_else(|| {
+                    ProcessError::Custom(format!("unknown dtype attribute value {code}"))
+                })
+            })
+            .transpose()?
             .unwrap_or(DataType::FLOAT);
 
         let shape = node
@@ -136,7 +142,7 @@ impl NodeProcessor for RandomProcessor {
             .get("shape")
             .ok_or_else(|| ProcessError::Custom("required shape attribute missing".to_string()))?
             .clone()
-            .into_i64s();
+            .into_i64s()?;
 
         let elem_type = match dtype {
             DataType::FLOAT => DType::F32,
@@ -166,7 +172,7 @@ impl NodeProcessor for RandomProcessor {
             .get("shape")
             .ok_or_else(|| ProcessError::Custom("required shape attribute missing".to_string()))?
             .clone()
-            .into_i64s();
+            .into_i64s()?;
         let shape: Vec<usize> = shape.into_iter().map(|i| i as usize).collect();
 
         let config = match node.node_type {
@@ -174,12 +180,14 @@ impl NodeProcessor for RandomProcessor {
                 let mean = node
                     .attrs
                     .get("mean")
-                    .map(|v| v.clone().into_f32() as f64)
+                    .map(|v| v.clone().into_f32().map(|x| x as f64))
+                    .transpose()?
                     .unwrap_or(0.0);
                 let scale = node
                     .attrs
                     .get("scale")
-                    .map(|v| v.clone().into_f32() as f64)
+                    .map(|v| v.clone().into_f32().map(|x| x as f64))
+                    .transpose()?
                     .unwrap_or(1.0);
                 RandomConfig::Normal(RandomNormalConfig { mean, scale, shape })
             }
@@ -187,12 +195,14 @@ impl NodeProcessor for RandomProcessor {
                 let low = node
                     .attrs
                     .get("low")
-                    .map(|v| v.clone().into_f32() as f64)
+                    .map(|v| v.clone().into_f32().map(|x| x as f64))
+                    .transpose()?
                     .unwrap_or(0.0);
                 let high = node
                     .attrs
                     .get("high")
-                    .map(|v| v.clone().into_f32() as f64)
+                    .map(|v| v.clone().into_f32().map(|x| x as f64))
+                    .transpose()?
                     .unwrap_or(1.0);
                 RandomConfig::Uniform(RandomUniformConfig { low, high, shape })
             }
@@ -207,12 +217,10 @@ impl NodeProcessor for RandomProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        match config {
+        Ok(match config {
             RandomConfig::Normal(normal_config) => Node::RandomNormal(RandomNormalNode {
                 name: builder.name,
                 inputs: builder.inputs,
@@ -225,7 +233,7 @@ impl NodeProcessor for RandomProcessor {
                 outputs: builder.outputs,
                 config: uniform_config,
             }),
-        }
+        })
     }
 }
 

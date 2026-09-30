@@ -225,17 +225,15 @@ impl NodeProcessor for Col2ImProcessor {
         ))
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Col2Im(Col2ImNode {
+        Ok(Node::Col2Im(Col2ImNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 
@@ -250,7 +248,7 @@ fn int_list_attr(
     let Some(value) = node.attrs.get(name) else {
         return Ok(vec![least as usize; len]);
     };
-    let values = value.clone().into_i64s();
+    let values = value.clone().into_i64s()?;
     if values.len() != len {
         return Err(ProcessError::InvalidAttribute {
             name: name.to_string(),

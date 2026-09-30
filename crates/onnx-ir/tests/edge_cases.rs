@@ -947,3 +947,143 @@ fn test_non_topological_order_handling() {
     // This line should never be reached - the panic should occur during parsing
     unreachable!("Parser should have rejected non-topological graph");
 }
+
+// ============================================================================
+// Malformed Input
+// ============================================================================
+
+/// Parse the fixture `model_name` after `mutate` has edited its proto.
+fn parse_mutated(
+    model_name: &str,
+    mutate: impl FnOnce(&mut onnx_ir::ModelProto),
+) -> Result<onnx_ir::ir::OnnxGraph, onnx_ir::Error> {
+    use onnx_ir::Message;
+    let bytes = std::fs::read(get_model_path(model_name)).unwrap();
+    let mut model = onnx_ir::ModelProto::parse_from_bytes(&bytes).unwrap();
+    mutate(&mut model);
+    onnx_ir::OnnxGraphBuilder::new().parse_bytes(&model.write_to_bytes().unwrap())
+}
+
+#[test]
+fn test_initializer_payload_must_match_shape() {
+    // Each case previously panicked inside the parser instead of returning an error.
+    type Mutation = fn(&mut onnx_ir::TensorProto);
+    let cases: [(&str, Mutation, &str); 3] = [
+        (
+            "truncated raw_data",
+            |t| t.raw_data = t.raw_data.slice(..t.raw_data.len() / 2),
+            "needs 36 bytes, payload has 18",
+        ),
+        ("negative dim", |t| t.dims[0] = -3, "negative dimension"),
+        (
+            "overflowing dims",
+            |t| t.dims = vec![i64::MAX / 2, 4],
+            "overflows",
+        ),
+    ];
+    for (label, mutation, expected) in cases {
+        let err = parse_mutated("constant_lifting.onnx", |m| {
+            let graph = m.graph.mut_or_insert_default();
+            mutation(
+                graph
+                    .initializer
+                    .iter_mut()
+                    .find(|t| t.name == "weight")
+                    .unwrap(),
+            );
+        })
+        .expect_err(label)
+        .to_string();
+        assert!(err.contains(expected), "{label}: {err}");
+    }
+}
+
+#[test]
+fn test_unrepresentable_attribute_is_dropped() {
+    // An attribute of a type onnx-ir does not model (here SPARSE_TENSOR) is skipped like an
+    // unknown attribute rather than failing the import.
+    let graph = parse_mutated("constant_lifting.onnx", |m| {
+        let mut attr = onnx_ir::AttributeProto::new();
+        attr.name = "sparse".to_string();
+        attr.type_ = onnx_ir::AttributeType::SPARSE_TENSOR.into();
+        let graph = m.graph.mut_or_insert_default();
+        let node = graph.node.iter_mut().find(|n| n.op_type == "Mul").unwrap();
+        node.attribute.push(attr);
+    });
+    assert!(graph.is_ok(), "{}", graph.unwrap_err());
+}
+
+#[test]
+fn test_unknown_attribute_is_ignored() {
+    // A newer opset or another runtime may add attributes; the importer uses the ones it knows.
+    // alpha != 1 keeps the Gemm from being fused into Linear, so the Gemm processor sees it.
+    let graph = parse_mutated("gemm_linear.onnx", |m| {
+        let graph = m.graph.mut_or_insert_default();
+        let gemm = graph.node.iter_mut().find(|n| n.op_type == "Gemm").unwrap();
+        for attr in gemm.attribute.iter_mut().filter(|a| a.name == "alpha") {
+            attr.f = 0.5;
+        }
+        let mut attr = onnx_ir::AttributeProto::new();
+        attr.name = "future_attr".to_string();
+        attr.type_ = onnx_ir::AttributeType::INT.into();
+        attr.i = 1;
+        gemm.attribute.push(attr);
+    });
+    assert!(graph.is_ok(), "{}", graph.unwrap_err());
+}
+
+#[test]
+fn test_malformed_node_is_an_error() {
+    // Each case previously panicked inside a node processor instead of returning an error.
+    type Mutation = fn(&mut onnx_ir::NodeProto);
+    let cases: [(&str, &str, Mutation, &str); 2] = [
+        (
+            "gemm_linear.onnx",
+            "Gemm",
+            |gemm| {
+                for attr in gemm.attribute.iter_mut().filter(|a| a.name == "alpha") {
+                    attr.type_ = onnx_ir::AttributeType::INT.into();
+                    attr.i = 2;
+                }
+            },
+            "expected a Float32 attribute, got Int64",
+        ),
+        (
+            "value_info.onnx",
+            "Transpose",
+            |transpose| {
+                for attr in transpose.attribute.iter_mut().filter(|a| a.name == "perm") {
+                    let last = attr.ints.len() - 1;
+                    attr.ints[last] = 7;
+                }
+            },
+            "is not a permutation",
+        ),
+    ];
+    for (model, op_type, mutation, expected) in cases {
+        let err = parse_mutated(model, |m| {
+            let graph = m.graph.mut_or_insert_default();
+            mutation(
+                graph
+                    .node
+                    .iter_mut()
+                    .find(|n| n.op_type == op_type)
+                    .unwrap(),
+            );
+        })
+        .expect_err(op_type)
+        .to_string();
+        assert!(err.contains(expected), "{op_type}: {err}");
+    }
+}
+
+#[test]
+fn test_late_lifted_constant_error_is_returned() {
+    // The Upsample scales only become a constant after identity elimination, so the node first
+    // rejects them while it is built. That step used to have no error channel and panicked.
+    let err = onnx_ir::OnnxGraphBuilder::new()
+        .parse_file(get_model_path("late_lifted_constant.onnx"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Upsample"), "{err}");
+}

@@ -80,6 +80,7 @@ impl NodeProcessor for FlattenProcessor {
             .attrs
             .get("axis")
             .map(|v| v.clone().into_i64())
+            .transpose()?
             .unwrap_or(1);
         if raw_axis < 0 && opset < 11 {
             return Err(ProcessError::Custom(format!(
@@ -132,11 +133,13 @@ impl NodeProcessor for FlattenProcessor {
             if in_t.rank != 2 {
                 return false;
             }
-            let axis = node
+            let Ok(axis) = node
                 .attrs
                 .get("axis")
-                .map(|v| v.clone().into_i64())
-                .unwrap_or(1);
+                .map_or(Ok(1), |v| v.clone().into_i64())
+            else {
+                return false;
+            };
             return axis == 1 || axis == -(in_t.rank as i64 - 1);
         }
         false
@@ -157,16 +160,8 @@ impl NodeProcessor for FlattenProcessor {
         // Extract the axis attribute (default: 1 per ONNX spec)
         let mut axis: i64 = 1;
 
-        for (key, value) in node.attrs.iter() {
-            match key.as_str() {
-                "axis" => axis = value.clone().into_i64(),
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for Flatten: {}", key),
-                    });
-                }
-            }
+        if let Some(value) = node.attrs.get("axis") {
+            axis = value.clone().into_i64()?;
         }
 
         // if axis is negative, it is counted from the end
@@ -180,17 +175,15 @@ impl NodeProcessor for FlattenProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Flatten(FlattenNode {
+        Ok(Node::Flatten(FlattenNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

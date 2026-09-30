@@ -133,11 +133,11 @@ impl NodeProcessor for ClipProcessor {
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
                 "min" => {
-                    let min = value.clone().into_f32() as f64;
+                    let min = value.clone().into_f32()? as f64;
                     min_result = Some(ClipInput::Static(min));
                 }
                 "max" => {
-                    let max = value.clone().into_f32() as f64;
+                    let max = value.clone().into_f32()? as f64;
                     max_result = Some(ClipInput::Static(max));
                 }
                 _ => {}
@@ -165,17 +165,15 @@ impl NodeProcessor for ClipProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::Clip(ClipNode {
+        Ok(Node::Clip(ClipNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

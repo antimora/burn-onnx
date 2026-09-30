@@ -121,7 +121,7 @@ impl fmt::Display for SameBlocker {
 /// onnx-ir turns a blocker into a `ProcessError`; burn-onnx codegen asserts there is none before
 /// emitting `Same`. Both consult this function so the rule is stated once, but each gathers its
 /// arguments separately, so every op reaching a `resolve_auto_pad_*` must also call
-/// [`validate_auto_pad`] for the two to agree.
+/// `validate_auto_pad` for the two to agree.
 pub fn forward_time_same_blocker(
     auto_pad: &AutoPad,
     dilated: bool,
@@ -447,6 +447,21 @@ impl PaddingConfig1d {
         }
     }
 }
+/// Check that a per-spatial-dimension attribute has at least `expected` entries, the most the
+/// config reads, so a short array from a malformed model is an error rather than a panic.
+pub(crate) fn check_attr_len<T>(
+    name: &str,
+    values: &[T],
+    expected: usize,
+) -> Result<(), ProcessError> {
+    if values.len() < expected {
+        return Err(ProcessError::InvalidAttribute {
+            name: name.to_string(),
+            reason: format!("expected {expected} values, got {}", values.len()),
+        });
+    }
+    Ok(())
+}
 
 /// Calculate the padding configuration for a 1D operations such as Convolution and Pooling.
 ///
@@ -466,15 +481,19 @@ impl PaddingConfig1d {
 ///
 /// This function is used when the padding is specified as a list of integers,
 /// and not used when the padding is specified as a string, e.g. "SAME_UPPER".
-pub(crate) fn padding_config_1d(pads: &[i64]) -> PaddingConfig1d {
+pub(crate) fn padding_config_1d(pads: &[i64]) -> Result<PaddingConfig1d, ProcessError> {
+    check_attr_len("pads", pads, 2)?;
     let [left, right] = [pads[0], pads[1]];
 
     if left < 0 || right < 0 {
-        panic!("Negative pad values are not supported");
+        Err(ProcessError::InvalidAttribute {
+            name: "pads".to_string(),
+            reason: format!("negative pad values are not supported: {pads:?}"),
+        })
     } else if left == 0 && right == 0 {
-        PaddingConfig1d::Valid
+        Ok(PaddingConfig1d::Valid)
     } else {
-        PaddingConfig1d::Explicit(left as usize, right as usize)
+        Ok(PaddingConfig1d::Explicit(left as usize, right as usize))
     }
 }
 
@@ -537,15 +556,24 @@ impl PaddingConfig2d {
 ///
 /// This function is used when the padding is specified as a list of integers,
 /// and not used when the padding is specified as a string, e.g. "SAME_UPPER".
-pub(crate) fn padding_config_2d(pads: &[i64]) -> PaddingConfig2d {
+pub(crate) fn padding_config_2d(pads: &[i64]) -> Result<PaddingConfig2d, ProcessError> {
+    check_attr_len("pads", pads, 4)?;
     let [top, left, bottom, right] = [pads[0], pads[1], pads[2], pads[3]];
 
     if left < 0 || right < 0 || top < 0 || bottom < 0 {
-        panic!("Negative pad values are not supported");
+        Err(ProcessError::InvalidAttribute {
+            name: "pads".to_string(),
+            reason: format!("negative pad values are not supported: {pads:?}"),
+        })
     } else if left == 0 && right == 0 && top == 0 && bottom == 0 {
-        PaddingConfig2d::Valid
+        Ok(PaddingConfig2d::Valid)
     } else {
-        PaddingConfig2d::Explicit(top as usize, left as usize, bottom as usize, right as usize)
+        Ok(PaddingConfig2d::Explicit(
+            top as usize,
+            left as usize,
+            bottom as usize,
+            right as usize,
+        ))
     }
 }
 
@@ -615,23 +643,27 @@ impl PaddingConfig3d {
 ///
 /// This function is used when the padding is specified as a list of integers,
 /// and not used when the padding is specified as a string, e.g. "SAME_UPPER".
-pub(crate) fn padding_config_3d(pads: &[i64]) -> PaddingConfig3d {
+pub(crate) fn padding_config_3d(pads: &[i64]) -> Result<PaddingConfig3d, ProcessError> {
+    check_attr_len("pads", pads, 6)?;
     let [front, top, left, back, bottom, right] =
         [pads[0], pads[1], pads[2], pads[3], pads[4], pads[5]];
 
     if left < 0 || right < 0 || top < 0 || bottom < 0 || front < 0 || back < 0 {
-        panic!("Negative pad values are not supported");
+        Err(ProcessError::InvalidAttribute {
+            name: "pads".to_string(),
+            reason: format!("negative pad values are not supported: {pads:?}"),
+        })
     } else if left == 0 && right == 0 && top == 0 && bottom == 0 && front == 0 && back == 0 {
-        PaddingConfig3d::Valid
+        Ok(PaddingConfig3d::Valid)
     } else {
-        PaddingConfig3d::Explicit(
+        Ok(PaddingConfig3d::Explicit(
             front as usize,
             top as usize,
             left as usize,
             back as usize,
             bottom as usize,
             right as usize,
-        )
+        ))
     }
 }
 
@@ -791,14 +823,14 @@ mod tests {
     #[test]
     fn test_padding_config_1d_valid() {
         let pads = vec![0, 0];
-        let config = padding_config_1d(&pads);
+        let config = padding_config_1d(&pads).unwrap();
         assert!(matches!(config, PaddingConfig1d::Valid));
     }
 
     #[test]
     fn test_padding_config_1d_explicit_symmetric() {
         let pads = vec![2, 2];
-        let config = padding_config_1d(&pads);
+        let config = padding_config_1d(&pads).unwrap();
         assert!(matches!(config, PaddingConfig1d::Explicit(2, 2)));
         assert!(!config.is_asymmetric());
         assert_eq!(config.as_tuple(), (2, 2));
@@ -807,24 +839,24 @@ mod tests {
     #[test]
     fn test_padding_config_1d_explicit_asymmetric() {
         let pads = vec![1, 2];
-        let config = padding_config_1d(&pads);
+        let config = padding_config_1d(&pads).unwrap();
         assert!(matches!(config, PaddingConfig1d::Explicit(1, 2)));
         assert!(config.is_asymmetric());
         assert_eq!(config.as_tuple(), (1, 2));
     }
 
     #[test]
-    #[should_panic(expected = "Negative pad values are not supported")]
     fn test_padding_config_1d_negative() {
         let pads = vec![-1, -1];
-        let _ = padding_config_1d(&pads);
+        let err = padding_config_1d(&pads).unwrap_err();
+        assert!(err.to_string().contains("negative pad values"), "{err}");
     }
 
     // 2D padding tests
     #[test]
     fn test_padding_config_2d_valid() {
         let pads = vec![0, 0, 0, 0];
-        let config = padding_config_2d(&pads);
+        let config = padding_config_2d(&pads).unwrap();
         assert!(matches!(config, PaddingConfig2d::Valid));
         assert!(!config.is_asymmetric());
     }
@@ -832,7 +864,7 @@ mod tests {
     #[test]
     fn test_padding_config_2d_explicit_symmetric() {
         let pads = vec![2, 2, 2, 2];
-        let config = padding_config_2d(&pads);
+        let config = padding_config_2d(&pads).unwrap();
         assert!(matches!(config, PaddingConfig2d::Explicit(2, 2, 2, 2)));
         assert!(!config.is_asymmetric());
         assert_eq!(config.as_tuple(), (2, 2, 2, 2));
@@ -842,7 +874,7 @@ mod tests {
     fn test_padding_config_2d_explicit_asymmetric() {
         // pads = [top, left, bottom, right]
         let pads = vec![1, 2, 3, 4];
-        let config = padding_config_2d(&pads);
+        let config = padding_config_2d(&pads).unwrap();
         assert!(matches!(config, PaddingConfig2d::Explicit(1, 2, 3, 4)));
         assert!(config.is_asymmetric());
         assert_eq!(config.as_tuple(), (1, 2, 3, 4));
@@ -852,7 +884,7 @@ mod tests {
     fn test_padding_config_2d_explicit_asymmetric_top_bottom() {
         // top != bottom but left == right
         let pads = vec![1, 2, 3, 2];
-        let config = padding_config_2d(&pads);
+        let config = padding_config_2d(&pads).unwrap();
         assert!(matches!(config, PaddingConfig2d::Explicit(1, 2, 3, 2)));
         assert!(config.is_asymmetric());
     }
@@ -861,23 +893,23 @@ mod tests {
     fn test_padding_config_2d_explicit_asymmetric_left_right() {
         // left != right but top == bottom
         let pads = vec![2, 1, 2, 3];
-        let config = padding_config_2d(&pads);
+        let config = padding_config_2d(&pads).unwrap();
         assert!(matches!(config, PaddingConfig2d::Explicit(2, 1, 2, 3)));
         assert!(config.is_asymmetric());
     }
 
     #[test]
-    #[should_panic(expected = "Negative pad values are not supported")]
     fn test_padding_config_2d_negative() {
         let pads = vec![-1, -1, -1, -1];
-        let _ = padding_config_2d(&pads);
+        let err = padding_config_2d(&pads).unwrap_err();
+        assert!(err.to_string().contains("negative pad values"), "{err}");
     }
 
     // 3D padding tests
     #[test]
     fn test_padding_config_3d_valid() {
         let pads = vec![0, 0, 0, 0, 0, 0];
-        let config = padding_config_3d(&pads);
+        let config = padding_config_3d(&pads).unwrap();
         assert!(matches!(config, PaddingConfig3d::Valid));
         assert!(!config.is_asymmetric());
     }
@@ -885,7 +917,7 @@ mod tests {
     #[test]
     fn test_padding_config_3d_explicit_symmetric() {
         let pads = vec![2, 3, 1, 2, 3, 1];
-        let config = padding_config_3d(&pads);
+        let config = padding_config_3d(&pads).unwrap();
         assert!(matches!(
             config,
             PaddingConfig3d::Explicit(2, 3, 1, 2, 3, 1)
@@ -898,7 +930,7 @@ mod tests {
     fn test_padding_config_3d_explicit_asymmetric() {
         // pads = [front, top, left, back, bottom, right]
         let pads = vec![1, 2, 3, 4, 5, 6];
-        let config = padding_config_3d(&pads);
+        let config = padding_config_3d(&pads).unwrap();
         assert!(matches!(
             config,
             PaddingConfig3d::Explicit(1, 2, 3, 4, 5, 6)
@@ -911,7 +943,7 @@ mod tests {
     fn test_padding_config_3d_explicit_asymmetric_partial() {
         // Only front != back
         let pads = vec![1, 3, 1, 2, 3, 1];
-        let config = padding_config_3d(&pads);
+        let config = padding_config_3d(&pads).unwrap();
         assert!(matches!(
             config,
             PaddingConfig3d::Explicit(1, 3, 1, 2, 3, 1)
@@ -920,10 +952,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Negative pad values are not supported")]
     fn test_padding_config_3d_negative() {
         let pads = vec![-1, -1, -1, -1, -1, -1];
-        let _ = padding_config_3d(&pads);
+        let err = padding_config_3d(&pads).unwrap_err();
+        assert!(err.to_string().contains("negative pad values"), "{err}");
     }
 
     /// Output static shape of a MaxPool with input `[None, 3, spatial...]` and the attributes

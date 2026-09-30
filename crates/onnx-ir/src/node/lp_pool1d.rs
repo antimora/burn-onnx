@@ -74,13 +74,14 @@ impl NodeProcessor for LpPool1dProcessor {
             match key.as_str() {
                 "kernel_shape" => {
                     has_kernel_shape = true;
-                    let kernel_shape = value.clone().into_i64s();
+                    let kernel_shape = value.clone().into_i64s()?;
                     if kernel_shape.len() != 1 {
                         return Err(ProcessError::Custom(format!(
                             "LpPool1d: kernel_shape must have length 1, got {:?}",
                             kernel_shape
                         )));
                     }
+
                     if kernel_shape[0] <= 0 {
                         return Err(ProcessError::Custom(format!(
                             "LpPool1d: kernel_shape values must be > 0, got {:?}",
@@ -89,7 +90,7 @@ impl NodeProcessor for LpPool1dProcessor {
                     }
                 }
                 "strides" => {
-                    let strides = value.clone().into_i64s();
+                    let strides = value.clone().into_i64s()?;
                     if strides.len() != 1 {
                         return Err(ProcessError::Custom(format!(
                             "LpPool1d: strides must have length 1, got {:?}",
@@ -104,7 +105,7 @@ impl NodeProcessor for LpPool1dProcessor {
                     }
                 }
                 "pads" => {
-                    let pads = value.clone().into_i64s();
+                    let pads = value.clone().into_i64s()?;
                     if pads.len() != 2 {
                         return Err(ProcessError::Custom(format!(
                             "LpPool1d: pads must have length 2, got {:?}",
@@ -116,7 +117,7 @@ impl NodeProcessor for LpPool1dProcessor {
                     extract_p(node)?;
                 }
                 "ceil_mode" => {
-                    let ceil_mode = value.clone().into_i64();
+                    let ceil_mode = value.clone().into_i64()?;
                     if ceil_mode != 0 && opset < 18 {
                         return Err(ProcessError::Custom(format!(
                             "LpPool: ceil_mode requires opset 18+, got opset {}",
@@ -125,7 +126,7 @@ impl NodeProcessor for LpPool1dProcessor {
                     }
                 }
                 "dilations" => {
-                    let dilations = value.clone().into_i64s();
+                    let dilations = value.clone().into_i64s()?;
                     if dilations.len() != 1 {
                         return Err(ProcessError::Custom(format!(
                             "LpPool1d: dilations must have length 1, got {:?}",
@@ -152,14 +153,9 @@ impl NodeProcessor for LpPool1dProcessor {
                     }
                 }
                 "auto_pad" => {
-                    AutoPad::parse(&value.clone().into_string())?;
+                    AutoPad::parse(&value.clone().into_string()?)?;
                 }
-                _ => {
-                    return Err(ProcessError::InvalidAttribute {
-                        name: key.clone(),
-                        reason: format!("Unexpected attribute for LpPool1d: {key}"),
-                    });
-                }
+                _ => {}
             }
         }
 
@@ -186,18 +182,18 @@ impl NodeProcessor for LpPool1dProcessor {
 
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
-                "kernel_shape" => kernel_shape = value.clone().into_i64s(),
-                "strides" => stride = value.clone().into_i64s(),
-                "pads" => pads = value.clone().into_i64s(),
-                "dilations" => dilations = value.clone().into_i64s(),
-                "ceil_mode" => ceil_mode = value.clone().into_i64(),
-                "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string())?,
+                "kernel_shape" => kernel_shape = value.clone().into_i64s()?,
+                "strides" => stride = value.clone().into_i64s()?,
+                "pads" => pads = value.clone().into_i64s()?,
+                "dilations" => dilations = value.clone().into_i64s()?,
+                "ceil_mode" => ceil_mode = value.clone().into_i64()?,
+                "auto_pad" => auto_pad = AutoPad::parse(&value.clone().into_string()?)?,
                 _ => {}
             }
         }
 
         let p = extract_p(node)?;
-        let padding = padding_config_1d(&pads);
+        let padding = padding_config_1d(&pads)?;
 
         let config = LpPool1dConfig::new(
             kernel_shape[0] as usize,
@@ -212,17 +208,15 @@ impl NodeProcessor for LpPool1dProcessor {
         Ok(config)
     }
 
-    fn build_node(&self, builder: RawNode, opset: usize) -> Node {
-        let config = self
-            .extract_config(&builder, opset)
-            .expect("Config extraction failed");
+    fn build_node(&self, builder: RawNode, opset: usize) -> Result<Node, ProcessError> {
+        let config = self.extract_config(&builder, opset)?;
 
-        Node::LpPool1d(LpPool1dNode {
+        Ok(Node::LpPool1d(LpPool1dNode {
             name: builder.name,
             inputs: builder.inputs,
             outputs: builder.outputs,
             config,
-        })
+        }))
     }
 }
 

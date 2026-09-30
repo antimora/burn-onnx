@@ -277,16 +277,16 @@ pub trait NodeProcessor: Send + Sync {
     ///
     /// # Default Implementation
     ///
-    /// The default implementation panics with the processor type name.
+    /// The default implementation returns an error naming the node type.
     /// Each processor should implement this method to build its specific Node variant.
-    fn build_node(&self, node: RawNode, _opset: usize) -> Node
+    fn build_node(&self, node: RawNode, _opset: usize) -> Result<Node, ProcessError>
     where
         Self: Sized,
     {
-        panic!(
+        Err(ProcessError::Custom(format!(
             "build_node not implemented for {:?} - each processor must implement this method",
             node.node_type
-        )
+        )))
     }
 }
 
@@ -515,7 +515,11 @@ pub fn validate_node_spec(
 }
 
 /// Validate input count against specification
-fn validate_input_spec(node: &RawNode, opset: usize, spec: &InputSpec) -> Result<(), ProcessError> {
+pub(crate) fn validate_input_spec(
+    node: &RawNode,
+    opset: usize,
+    spec: &InputSpec,
+) -> Result<(), ProcessError> {
     // Use __onnx_input_count if available (for control flow nodes with outer-scope refs)
     // This ensures we only validate the original ONNX inputs, not extra scope refs
     let actual = get_onnx_input_count(node);
