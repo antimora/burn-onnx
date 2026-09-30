@@ -41,6 +41,26 @@ fn expect_hook<T>(result: Result<T, onnx_ir::ProcessError>, what: &str, node_nam
     result.unwrap_or_else(|e| panic!("Codegen hook failed in {what} for node '{node_name}': {e}"))
 }
 
+/// Run a built-in codegen step, naming the node if it panics.
+///
+/// Built-in `NodeCodegen` methods have no error channel and panic on a node they cannot
+/// translate. The panic message alone does not say which node of a large graph it was, so it is
+/// re-raised here with the node's name and type, as `expect_hook` does for hooks.
+fn with_node_context<T>(node: &Node, step: impl FnOnce() -> T) -> T {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(step)).unwrap_or_else(|payload| {
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("non-string panic payload");
+        panic!(
+            "Code generation failed for node '{}' ({:?}): {message}",
+            node.name(),
+            node.node_type()
+        )
+    })
+}
+
 pub(crate) fn node_forward(
     node: &Node,
     scope: &mut ScopeAtPosition<'_>,
@@ -59,7 +79,7 @@ pub(crate) fn node_forward(
         let hook = require_custom_hook(hooks, c);
         return expect_hook(hook.forward(c, &mut ctx), "CustomOp::forward", &c.name);
     }
-    NodeCodegen::forward(node, scope)
+    with_node_context(node, || NodeCodegen::forward(node, scope))
 }
 
 pub(crate) fn node_field(node: &Node, hooks: &HookRegistry) -> Option<Field> {
@@ -73,7 +93,7 @@ pub(crate) fn node_field(node: &Node, hooks: &HookRegistry) -> Option<Field> {
         let hook = require_custom_hook(hooks, c);
         return expect_hook(hook.field(c), "CustomOp::field", &c.name);
     }
-    NodeCodegen::field(node)
+    with_node_context(node, || NodeCodegen::field(node))
 }
 
 pub(crate) fn node_register_imports(node: &Node, imports: &mut BurnImports, hooks: &HookRegistry) {
@@ -85,7 +105,7 @@ pub(crate) fn node_register_imports(node: &Node, imports: &mut BurnImports, hook
         require_custom_hook(hooks, c).register_imports(&mut Imports::wrap(imports));
         return;
     }
-    NodeCodegen::register_imports(node, imports)
+    with_node_context(node, || NodeCodegen::register_imports(node, imports))
 }
 
 pub(crate) fn node_collect_tensors(
@@ -108,7 +128,7 @@ pub(crate) fn node_collect_tensors(
             &c.name,
         );
     }
-    NodeCodegen::collect_tensors(node, field_name)
+    with_node_context(node, || NodeCodegen::collect_tensors(node, field_name))
 }
 
 /// Macro to implement NodeCodegen on onnx_ir::Node by dispatching to individual node impls

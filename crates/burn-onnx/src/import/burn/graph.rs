@@ -1348,6 +1348,26 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Code generation failed for node 'eye1' (EyeLike)")]
+    fn builtin_codegen_panic_names_the_node() {
+        // EyeLike cannot produce a scalar; the panic must say which node it was.
+        let node = onnx_ir::node::eye_like::EyeLikeNodeBuilder::new("eye1")
+            .input_tensor("input", 2, DType::F32)
+            .output_scalar("output", DType::F32)
+            .config(onnx_ir::node::eye_like::EyeLikeConfig::new(None, 0))
+            .build();
+        let mut graph = BurnGraph::default();
+        graph.register(Node::EyeLike(node));
+        graph.register_input_output(
+            vec!["input".to_string()],
+            vec!["output".to_string()],
+            &[],
+            &[],
+        );
+        graph.codegen();
+    }
+
+    #[test]
     #[should_panic(expected = "has no registered hook")]
     fn custom_op_without_hook_panics_with_clear_message() {
         let graph = build_custom_op_graph();
