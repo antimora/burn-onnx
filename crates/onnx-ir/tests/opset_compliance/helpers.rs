@@ -10,12 +10,12 @@ pub fn fixture_path(name: &str) -> PathBuf {
 
 pub fn load_model(name: &str) -> OnnxGraph {
     onnx_ir::OnnxGraphBuilder::new()
-        .parse_file(&fixture_path(name))
+        .parse_file(fixture_path(name))
         .unwrap_or_else(|e| panic!("Failed to parse '{name}': {e}"))
 }
 
 pub fn load_model_result(name: &str) -> Result<OnnxGraph, onnx_ir::Error> {
-    onnx_ir::OnnxGraphBuilder::new().parse_file(&fixture_path(name))
+    onnx_ir::OnnxGraphBuilder::new().parse_file(fixture_path(name))
 }
 
 /// Find a node whose name matches "prefix" followed by a digit.

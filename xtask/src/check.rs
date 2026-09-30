@@ -2,8 +2,8 @@
 
 use tracel_xtask::prelude::*;
 
-/// Run the standard checks, then lint burn-onnx tests (with default and export-only features)
-/// when applicable.
+/// Run the standard checks, then lint burn-onnx and onnx-ir tests (burn-onnx also with the
+/// export-only features) when applicable.
 pub fn handle_command(
     args: CheckCmdArgs,
     environment: Environment,
@@ -16,7 +16,7 @@ pub fn handle_command(
     base_commands::check::handle_command(args, environment, context)?;
 
     if lint_export {
-        group!("Lint burn-onnx tests");
+        group!("Lint burn-onnx and onnx-ir tests");
         run_process(
             "cargo",
             &[
@@ -25,6 +25,8 @@ pub fn handle_command(
                 "--color=always",
                 "-p",
                 "burn-onnx",
+                "-p",
+                "onnx-ir",
                 "--tests",
                 "--",
                 "--deny",
@@ -32,7 +34,7 @@ pub fn handle_command(
             ],
             None,
             None,
-            "burn-onnx test lint failed",
+            "burn-onnx/onnx-ir test lint failed",
         )?;
         endgroup!();
 
