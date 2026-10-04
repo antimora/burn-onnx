@@ -1,21 +1,18 @@
 # ONNX Inference
 
-This crate provides a simple example for importing MNIST ONNX model to Burn. The ONNX file is
-converted into a Rust source file using `burn-onnx` and the weights are stored in `.burnpack`
-format and loaded at runtime.
+The smallest complete ONNX import: a PyTorch-trained MNIST classifier converted to Burn at build
+time and run on a test image. `build.rs` turns `src/model/mnist.onnx` into Rust source plus a `.bpk`
+weights file, and the binary loads both and classifies a digit.
 
 ## Usage
 
-```bash
+```sh
 cargo run -- 15
 ```
 
-Output:
+The argument is an index into the MNIST test set (0 to 9999; defaults to 42):
 
-```bash
-Finished dev [unoptimized + debuginfo] target(s) in 0.13s
-    Running `burn/target/debug/onnx-inference 15`
-
+```text
 Image index: 15
 Success!
 Predicted: 5
@@ -24,27 +21,50 @@ See the image online, click the link below:
 https://huggingface.co/datasets/ylecun/mnist/viewer/mnist/test?row=15
 ```
 
-## How to import
+The MNIST test set is downloaded on first run.
 
-1. Add `burn-store` to your `Cargo.toml` dependencies:
+## How to import a model
+
+These are the steps this crate follows, and the same ones apply to your own model.
+
+1. Add the dependencies to `Cargo.toml`. The generated code loads weights through `burn-store`, so
+   it is a regular dependency next to `burn`:
+
    ```toml
    [dependencies]
-   burn = { version = "0.21", features = ["flex"] }
-   burn-store = { version = "0.21" }
+   burn = { version = "0.22", features = ["flex"] }
+   burn-store = "0.22"
 
    [build-dependencies]
-   burn-onnx = { version = "0.21" }
+   burn-onnx = "0.22"
    ```
 
-2. Create `model` directory under `src`
-3. Copy the ONNX model to `src/model/mnist.onnx`
-4. Add the following to `mod.rs`:
+   This example also enables `burn`'s `dataset` and `vision` features to load MNIST.
+
+2. Put the ONNX file in `src/model/mnist.onnx`.
+
+3. Generate the code from `build.rs`:
+
+   ```rust
+   use burn_onnx::ModelGen;
+
+   fn main() {
+       ModelGen::new()
+           .input("src/model/mnist.onnx")
+           .out_dir("model/")
+           .run_from_script();
+   }
+   ```
+
+4. Include the generated file from `src/model/mod.rs`:
+
    ```rust
    pub mod mnist {
        include!(concat!(env!("OUT_DIR"), "/model/mnist.rs"));
    }
    ```
-5. Add the module to `lib.rs`:
+
+5. Expose the module from `src/lib.rs`:
 
    ```rust
    pub mod model;
@@ -52,64 +72,40 @@ https://huggingface.co/datasets/ylecun/mnist/viewer/mnist/test?row=15
    pub use model::mnist::*;
    ```
 
-6. Add the following to `build.rs`:
+6. Use the model, as in [`src/bin/mnist_inference.rs`](src/bin/mnist_inference.rs):
 
    ```rust
-   use burn_onnx::ModelGen;
-
-   fn main() {
-       // Generate the model code from the ONNX file.
-       ModelGen::new()
-           .input("src/model/mnist.onnx")
-           .out_dir("model/")
-           .run_from_script();
-   }
-
-   ```
-
-7. Add your model to `src/bin` as a new file, in this specific case we have called it `mnist.rs`:
-
-   ```rust
-   use burn::tensor;
-
+   use burn::tensor::{Device, Tensor};
    use onnx_inference::mnist::Model;
 
    fn main() {
-       // Default device for the active backend (chosen via Cargo features).
-       let device = Default::default();
+       let device: Device = Default::default();
 
-       // Create a new model and load weights from the target dir default location.
+       // Load the weights that build.rs wrote next to the generated code.
        let model: Model = Model::default();
 
-       // Create a new input tensor (all zeros for demonstration purposes)
-       let input = tensor::Tensor::<4>::zeros([1, 1, 28, 28], &device);
-
-       // Run the model
+       let input = Tensor::<4>::zeros([1, 1, 28, 28], &device);
        let output = model.forward(input);
-
-       // Print the output
-       println!("{:?}", output);
+       println!("{output}");
    }
    ```
 
-8. Run `cargo build` to generate the model code, weights, and `mnist` binary.
+7. `cargo build` generates the code and weights, then compiles everything. The generated file lands
+   in `target/debug/build/onnx-inference-*/out/model/mnist.rs` if you want to read it.
 
-## How to export PyTorch model to ONNX
+## Re-exporting the model from PyTorch
 
-The following steps show how to export a PyTorch model to ONNX from checked in PyTorch code (see
-`pytorch/mnist.py`).
+`pytorch/mnist.py` trains the network and exports it to ONNX. Its dependencies are declared inline,
+so `uv` installs them automatically:
 
-1. Run the following script to run the MNIST training and export the model to ONNX:
+```sh
+cd pytorch && uv run mnist.py
+```
 
-   ```bash
-   uv run pytorch/mnist.py
-   ```
-
-   Dependencies are declared inline in the script and installed automatically by `uv`.
-
-This will generate `pytorch/mnist.onnx`.
+This writes `mnist.onnx` to the current directory; copy it over `src/model/mnist.onnx` to use it.
 
 ## Resources
 
-1. [PyTorch ONNX](https://pytorch.org/docs/stable/onnx.html)
-2. [ONNX Intro](https://onnx.ai/onnx/intro/)
+- [Burn Book: ONNX Import](https://burn.dev/books/burn/onnx-import.html)
+- [Exporting a PyTorch model to ONNX](https://pytorch.org/docs/stable/onnx.html)
+- [ONNX introduction](https://onnx.ai/onnx/intro/)

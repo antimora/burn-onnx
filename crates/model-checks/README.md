@@ -76,7 +76,7 @@ The build process will:
 All model checks support multiple backends via Cargo features:
 
 ```bash
-cargo run                              # default (ndarray, CPU)
+cargo run                              # default (Flex, CPU)
 cargo run --features wgpu              # WebGPU
 cargo run --features metal             # Metal (macOS)
 cargo run --features tch               # LibTorch
@@ -97,7 +97,7 @@ BURN_DEVICE=cuda cargo run --features tch    # CUDA GPU 0
 BURN_DEVICE=cuda:1 cargo run --features tch  # CUDA GPU 1
 ```
 
-Other backends (wgpu, metal) already select the best GPU by default; ndarray is CPU-only.
+Other backends (wgpu, metal) already select the best GPU by default; Flex is CPU-only.
 
 ## Models
 

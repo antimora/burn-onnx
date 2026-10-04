@@ -23,7 +23,7 @@
 //! burn-import = { version = "0.21", features = ["onnx"] }
 //!
 //! # After
-//! burn-onnx = "0.21"
+//! burn-onnx = "0.22"
 //! ```
 //!
 //! Update your imports:

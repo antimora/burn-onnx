@@ -76,11 +76,11 @@ To extend `burn-onnx` with support for new ONNX operators, follow these steps:
    ```
 
 5. **Implement Missing Operators**: If you encounter an error stating that an operator is
-   unsupported, [implement it](#implementing-a-new-operator). The `./out/my-model.graph.txt` should
-   provide relevant information.
+   unsupported, [implement it](#implementing-a-new-operator). The `./out/<op>.onnx.txt` dump of
+   the parsed IR should provide relevant information.
 
-6. **Inspect Generated Files**: The `my-model.graph.txt` contains IR details, `my-model.rs` holds
-   the Burn model in Rust code, and `my-model.bpk` contains the model weights.
+6. **Inspect Generated Files**: `<op>.onnx.txt` contains the IR after type inference, `<op>.rs`
+   holds the Burn model in Rust code, and `<op>.bpk` contains the model weights.
 
 7. **Integration Test**: Include the test in the `tests/<op_name>/mod.rs` file in the
    [crates/onnx-tests/tests/](crates/onnx-tests/tests/) directory. Further details can be found in
@@ -1073,8 +1073,8 @@ same way.
 
 While iterating on `forward`, compile errors point into the generated file
 under `$OUT_DIR/<out_dir>/<model>.rs` - open it to see your emitted code in
-context. `ModelGen::development(true)` additionally writes `<model>.onnx.txt`
-and `<model>.graph.txt` debug dumps next to it.
+context. `ModelGen::development(true)` additionally writes a `<model>.onnx.txt`
+dump of the parsed IR next to it.
 
 Notes:
 

@@ -25,8 +25,9 @@ cargo test
 
 ## Simplification Testing
 
-The ONNX-IR pipeline supports an optional simplification pass (`ModelGen::simplify(true)`) that folds
-shape computations into constants at codegen time. The `tests/simplify/` directory contains
+The ONNX-IR pipeline runs a simplification pass (on by default, toggled with `ModelGen::simplify`)
+that folds shape computations into constants at codegen time. Operator tests turn it off so each
+test exercises the operator it was written for. The `tests/simplify/` directory contains
 purpose-built ONNX models that exercise specific simplification patterns.
 
 **How it works:**

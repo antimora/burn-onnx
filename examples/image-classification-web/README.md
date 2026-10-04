@@ -4,7 +4,7 @@
 
 This demo showcases how to execute an image classification task in a web browser using a model
 converted to Rust code. The project utilizes the Burn deep learning framework, WebGPU and
-WebAssembly . Specifically, it demonstrates:
+WebAssembly. Specifically, it demonstrates:
 
 1. Converting an ONNX (Open Neural Networks Exchange) model into Rust code compatible with the Burn
    framework.
@@ -40,8 +40,9 @@ http://localhost:8000
 
 ## Backend Compatibility
 
-As of now, the WebGPU backend is compatible only with Chrome browsers running on macOS and Windows.
-The application will dynamically detect if WebGPU support is available and proceed accordingly.
+The page lets you switch between two backends: Flex, Burn's CPU backend compiled to WebAssembly, and
+WebGPU. WebGPU support varies by browser and platform; when the browser does not expose it, the
+WebGPU option is disabled and the demo runs on Flex.
 
 ## SIMD Support
 

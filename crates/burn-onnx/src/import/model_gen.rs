@@ -44,10 +44,25 @@ pub enum LoadStrategy {
 ///
 /// # Conversion Process
 ///
-/// 1. Parses ONNX model file(s)
+/// 1. Parses ONNX model file(s) with `onnx-ir`, running type inference and
+///    (by default) graph simplification
 /// 2. Converts ONNX operations to Burn nodes using the node registry
 /// 3. Generates Rust source code with type-safe tensor operations
 /// 4. Saves model weights in BurnPack (.bpk) format
+///
+/// # Output
+///
+/// For each input `<name>.onnx`, the output directory receives:
+///
+/// - `<name>.rs`: a `Model` struct deriving Burn's `Module`, with `new(&device)`,
+///   a typed `forward` method, and the weight-loading constructors selected by
+///   [`LoadStrategy`]
+/// - `<name>.bpk`: the model's weights (constants and initializers)
+/// - `<name>.onnx.txt`: a dump of the parsed ONNX IR, only in
+///   [`development`](Self::development) mode
+///
+/// The generated code depends on `burn` and `burn-store`, so the crate that
+/// includes it needs both as regular dependencies.
 ///
 /// # Examples
 ///
@@ -87,7 +102,7 @@ pub enum LoadStrategy {
 /// ModelGen::new()
 ///     .input("path/to/model.onnx")
 ///     .out_dir("model/")
-///     .development(true)  // Generates .onnx.txt and .graph.txt debug files
+///     .development(true)  // Also writes model.onnx.txt, a dump of the parsed graph
 ///     .run_from_cli();
 /// ```
 #[derive(Debug)]
@@ -126,6 +141,8 @@ impl ModelGen {
     /// Default configuration:
     /// - Development mode: off
     /// - Load strategy: [`LoadStrategy::File`]
+    /// - Graph simplification: on
+    /// - Submodule partitioning: on
     ///
     /// # Examples
     ///
@@ -194,13 +211,15 @@ impl ModelGen {
 
     /// Enables development mode for debugging.
     ///
-    /// When enabled, generates additional debug files alongside the Rust source:
-    /// - `<model>.onnx.txt` - Debug representation of the parsed ONNX graph
-    /// - `<model>.graph.txt` - Debug representation of the converted Burn graph
+    /// When enabled, writes `<model>.onnx.txt` alongside the Rust source: the
+    /// `Debug` representation of the parsed ONNX IR, after type inference and
+    /// simplification. It shows the node types, configs, and argument types the
+    /// code generator worked from, which is what you need when an import produces
+    /// unexpected code or when writing an [`OpOverride`](crate::ext::OpOverride).
     ///
     /// # Arguments
     ///
-    /// * `development` - If `true`, generate debug files
+    /// * `development` - If `true`, write the debug file
     ///
     /// # Examples
     ///
@@ -210,7 +229,7 @@ impl ModelGen {
     /// ModelGen::new()
     ///     .input("model.onnx")
     ///     .out_dir("debug/")
-    ///     .development(true)  // Generates model.onnx.txt and model.graph.txt
+    ///     .development(true)  // Also writes debug/model.onnx.txt
     ///     .run_from_cli();
     /// ```
     pub fn development(&mut self, development: bool) -> &mut Self {

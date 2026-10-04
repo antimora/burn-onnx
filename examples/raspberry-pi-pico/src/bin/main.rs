@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use burn::{backend::Flex, tensor::Tensor};
+use burn::tensor::{Device, Tensor};
 use embassy_executor::Spawner;
 use embassy_rp::{
     bind_interrupts,
@@ -13,11 +13,6 @@ use embassy_time::Timer;
 use embedded_alloc::LlffHeap as Heap;
 use raspberry_pi_pico::sine::Model;
 use {defmt_rtt as _, panic_probe as _};
-
-// Set the backend to Flex (pure-Rust CPU backend)
-type Backend = Flex;
-// Get the backend device we use (cpu)
-type BackendDevice = <Backend as burn::tensor::backend::BackendTypes>::Device;
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -42,17 +37,17 @@ async fn main(spawner: Spawner) {
     // This is just setup to make the microcontroller output to serial.
     let p = embassy_rp::init(Default::default());
     let driver = Driver::new(p.USB, Irqs);
-    spawner.spawn(logger_task(driver)).unwrap();
+    spawner.spawn(logger_task(driver).unwrap());
 
     // Set the onboard LED to high to help indicate that the program is working properly.
     let mut led = Output::new(p.PIN_25, Level::Low);
     led.set_high();
 
-    // Get a default device for the backend
-    let device = BackendDevice::default();
+    // Flex is the pure-Rust CPU backend, the only one enabled in Cargo.toml
+    let device = Device::flex();
 
-    // Create a new model and load the state
-    let model: Model<Backend> = Model::default();
+    // Create the model and load the weights embedded in the binary
+    let model = Model::from_embedded(&device);
 
     // Define input, this is the `x` in the function `y = sin(x)` that we are
     // approximating with our model
@@ -76,9 +71,9 @@ async fn main(spawner: Spawner) {
     }
 }
 
-fn run_model(model: &Model<Backend>, device: &BackendDevice, input: f32) -> Tensor<Backend, 2> {
+fn run_model(model: &Model, device: &Device, input: f32) -> Tensor<2> {
     // Define the tensor
-    let input = Tensor::<Backend, 2>::from_floats([[input]], device);
+    let input = Tensor::<2>::from_floats([[input]], device);
 
     // Run the model on the input
     model.forward(input)

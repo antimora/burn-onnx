@@ -19,7 +19,7 @@ struct Args {
     /// Disable submodule partitioning for large models
     #[arg(long)]
     no_partition: bool,
-    /// Disable development mode (suppresses `.onnx.txt` and `.graph.txt` debug files)
+    /// Disable development mode (suppresses the `.onnx.txt` debug dump)
     #[arg(long)]
     no_development: bool,
     /// Embed model weights into the generated Rust code instead of a `.bpk` file

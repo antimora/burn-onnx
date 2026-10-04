@@ -18,6 +18,9 @@ pipeline. The resulting IR provides:
 - **Pre-extracted configuration**: Attributes are parsed into strongly-typed config structs
 - **Static tensor data**: Constant values are available for constant folding
 - **Support for 100+ ONNX operators**: Including control flow (`If`, `Loop`, `Scan`)
+- **Graph simplification** (on by default, `OnnxGraphBuilder::simplify(false)` to disable): constant
+  folding, shape propagation, common subexpression elimination, dead node removal, and attention
+  fusion
 - **Tolerant of unknown operators**: Operators from custom or vendor domains parse as
   `Node::Custom` rather than failing, so any model can be inspected
 
@@ -26,7 +29,13 @@ For detailed architecture information, see the
 
 ## Usage
 
-ONNX-IR is typically used through the `burn-onnx` crate, but can also be used standalone:
+ONNX-IR is typically used through the `burn-onnx` crate, but it has no Burn dependency and works
+standalone:
+
+```toml
+[dependencies]
+onnx-ir = "0.22"
+```
 
 ```rust
 use onnx_ir::{OnnxGraphBuilder, OnnxGraph, Node};
@@ -62,9 +71,8 @@ for node in &graph.nodes {
 ## Unknown and Custom Operators
 
 An operator is resolved by its full ONNX identity `(domain, op_type)`. Op types in the standard
-domains (`""`, `ai.onnx`, `ai.onnx.ml`) map to built-in `Node` variants; anything else — a vendor
-domain like `com.microsoft`, or an op type this crate does not implement — becomes
-`Node::Custom`, carrying its raw op type, domain, per-domain opset, attributes, and inputs
+domains (`""`, `ai.onnx`, `ai.onnx.ml`) map to built-in `Node` variants. Anything else (a vendor
+domain like `com.microsoft`, or an op type this crate does not implement) becomes `Node::Custom`, carrying its raw op type, domain, per-domain opset, attributes, and inputs
 (including readable constant data). Parsing does not fail, so unknown models stay inspectable.
 
 Type inference for those nodes falls back to a best-effort guess. To supply real inference,

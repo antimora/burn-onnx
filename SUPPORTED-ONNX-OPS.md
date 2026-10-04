@@ -7,6 +7,11 @@ represent Burn's implementation of dimension-specific versions of the
 corresponding ONNX operators to make the mapping clearer between ONNX and Burn
 functionality.
 
+Every supported operator handles all ONNX opset versions it exists in (1 through
+24). An operator missing from this table, or one from a non-standard domain such
+as `com.microsoft`, can still be imported by registering a custom op hook; see
+[Custom Operators](README.md#custom-operators).
+
 | ONNX OP                          | Import Support | Burn Support |
 |----------------------------------|:--------------:|:------------:|
 | [Abs][1]                         | ✅             | ✅           |

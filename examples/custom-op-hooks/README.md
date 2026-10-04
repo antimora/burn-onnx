@@ -20,7 +20,7 @@ Three hooks in [`build.rs`](build.rs) cover it:
 | `ChannelScale`    | `CustomOp`   | reading a **constant initializer input** at build time and inlining it |
 | `SigmoidOverride` | `OpOverride` | replacing a built-in operator's generated code                         |
 
-The kernels the hooks call live in [`src/ops.rs`](src/ops.rs) — ordinary Rust functions you can
+The kernels the hooks call live in [`src/ops.rs`](src/ops.rs): ordinary Rust functions you can
 test, benchmark, or swap out without touching the import.
 
 ## Usage
@@ -43,7 +43,7 @@ matches the ONNX reference
 ```
 
 The binary asserts against the values in `src/model/generate_model.py`, so a passing run means the
-whole path — parse, hook type inference, codegen, weight loading, execution — is correct.
+whole path (parse, hook type inference, codegen, weight loading, execution) is correct.
 
 To regenerate the ONNX file (and print the reference values):
 
@@ -76,7 +76,7 @@ straight into it.
 ## Things worth knowing
 
 **Discovering which hooks a model needs.** Register none and build. The failure lists every custom
-`(domain, op_type)` pair with how many nodes use it — that list is your TODO:
+`(domain, op_type)` pair with how many nodes use it. That list is your TODO:
 
 ```text
 Failed to parse ONNX file 'src/model/custom_model.onnx': model contains 2 custom op(s) with no
@@ -97,7 +97,7 @@ the hooks emit `crate::ops::...` (registered as `use crate::ops;`). A path like 
 only works if `my_crate` is a dependency.
 
 **Inlined constants leave an unused binding.** `ChannelScale` reads its constant input at build time
-and inlines the values, so nothing consumes that input at runtime — but the initializer is still
+and inlines the values, so nothing consumes that input at runtime, but the initializer is still
 lifted to a model parameter, producing the unused `constant2_out1` line above (and an
 `unused_variables` warning). It is harmless. The alternative is to consume the input with
 `ctx.arg(&node.inputs[1])`, which uses the runtime tensor from the weights file instead of inlining.
