@@ -38,8 +38,10 @@
 //!
 //! - **Every opset.** Each supported operator handles ONNX opsets 1 through 24,
 //!   including attributes that later became inputs and defaults that changed.
-//! - **Faithful attributes.** Config structs mirror the ONNX spec rather than
-//!   any one framework; optional attributes are `Option`s.
+//! - **Typed configs.** Each operator's attributes are parsed into a config
+//!   struct of typed, normalized settings, independent of any one framework:
+//!   opset-dependent defaults are applied and negative axes are resolved.
+//!   Attribute values the parser cannot represent are skipped with a warning.
 //! - **Type and shape inference.** Every [`Argument`] has an [`ArgType`]:
 //!   a tensor with dtype, rank, and static shape when known, a scalar, or a
 //!   shape value.

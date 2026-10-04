@@ -127,9 +127,11 @@ ONNX graph next to the code, which helps when debugging an import.
 | `Bytes`            | `from_bytes(bytes, &device)`                    | WebAssembly, custom loaders              |
 | `None`             | none                                            | managing weights yourself                |
 
-With `File`, `Model::default()` reads the `.bpk` from the build's `OUT_DIR`. That is convenient
-during development; for a binary you distribute, ship the `.bpk` and call
-`Model::from_file(path, &device)`, or switch to `Embedded`. Avoid `Model::new(&device)` on its
+With `File`, `Model::default()` reads the `.bpk` from the path it was written to at generation time:
+an absolute path inside `OUT_DIR` from a build script, or the `out_dir` exactly as given to
+`onnx2burn` or `run_from_cli`, which a relative path resolves against the working directory at
+runtime. That is convenient during development; for a binary you distribute, ship the `.bpk` and
+call `Model::from_file(path, &device)`, or switch to `Embedded`. Avoid `Model::new(&device)` on its
 own: it builds the structure without loading any weights.
 
 ## Command Line
@@ -228,8 +230,9 @@ and currently covers the operations typical of convolutional and fully connected
 ```
 
 [`onnx-ir`](https://github.com/tracel-ai/burn-onnx/tree/main/crates/onnx-ir) is a standalone ONNX
-parser that knows nothing about Burn: it turns the protobuf into a typed graph, extracts every
-attribute, infers types and static shapes, and simplifies the graph. `burn-onnx` then maps each node
+parser that knows nothing about Burn: it turns the protobuf into a typed graph, parses each
+operator's attributes into a typed config, infers types and static shapes, and simplifies the
+graph. `burn-onnx` then maps each node
 to Burn code. The [Development Guide](https://github.com/tracel-ai/burn-onnx/blob/main/DEVELOPMENT-GUIDE.md)
 covers each phase in detail.
 

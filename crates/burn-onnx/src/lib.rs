@@ -30,12 +30,14 @@
 //! Generate the code in `build.rs`:
 //!
 //! ```no_run
+//! # #[cfg(feature = "import")] {
 //! use burn_onnx::ModelGen;
 //!
 //! ModelGen::new()
 //!     .input("src/model/my_model.onnx")
 //!     .out_dir("model/")
 //!     .run_from_script();
+//! # }
 //! ```
 //!
 //! Include it from your crate (here `src/model/mod.rs`). The file is named
@@ -62,7 +64,7 @@
 //! ## Loading weights
 //!
 //! Which constructors the generated `Model` gets depends on the
-//! [`LoadStrategy`] chosen at build time:
+//! [`LoadStrategy`][load-strategy] chosen at build time:
 //!
 //! | Constructor                         | Strategies                  | Loads weights from                         |
 //! | ----------------------------------- | --------------------------- | ------------------------------------------ |
@@ -72,9 +74,12 @@
 //! | `Model::from_bytes(bytes, &device)` | `File`, `Embedded`, `Bytes` | in-memory `.bpk` contents (`burn::tensor::Bytes`) |
 //!
 //! `Model::default()` uses the default device and, with `LoadStrategy::File`,
-//! the absolute path of the `.bpk` inside the build's `OUT_DIR`. That is fine
-//! for development; ship the `.bpk` alongside your binary and call `from_file`
-//! (or use `Embedded`) for anything you distribute.
+//! the `.bpk` path recorded at generation time: an absolute path inside
+//! `OUT_DIR` for [`ModelGen::run_from_script`][run-from-script], or the
+//! `out_dir` exactly as given for `run_from_cli` and `onnx2burn`, where a
+//! relative path resolves against the working directory at runtime. That is
+//! fine for development; ship the `.bpk` alongside your binary and call
+//! `from_file` (or use `Embedded`) for anything you distribute.
 //!
 //! `Model::new(&device)` only builds the module structure: layers get fresh
 //! random parameters and ONNX constants read as zeros. Never run a model built
@@ -97,20 +102,39 @@
 //! [supported operators table] lists what converts out of the box. Anything
 //! else (vendor domains such as `com.microsoft`, custom exporter ops, or
 //! operators not implemented yet) can be supplied by registering a
-//! [`CustomOp`](ext::CustomOp); [`OpOverride`](ext::OpOverride) replaces the code
-//! generated for a built-in operator. Everything a hook needs lives in [`ext`].
+//! [`CustomOp`][custom-op]; [`OpOverride`][op-override] replaces the code
+//! generated for a built-in operator. Everything a hook needs lives in [`ext`][ext-mod].
 //!
 //! # Feature flags
 //!
 //! | Feature  | Default | Description                                                      |
 //! | -------- | :-----: | ---------------------------------------------------------------- |
-//! | `import` | yes     | ONNX to Burn code generation ([`ModelGen`]) and the `onnx2burn` CLI |
+//! | `import` | yes     | ONNX to Burn code generation ([`ModelGen`][model-gen]) and the `onnx2burn` CLI |
 //! | `mmap`   | yes     | Memory-map `.onnx` files while parsing instead of reading them in |
 //! | `export` | no      | Burn to ONNX export ([`OnnxExporter`][exporter])                 |
 //!
 //! [export-mod]: https://docs.rs/burn-onnx/latest/burn_onnx/export/index.html
 //! [exporter]: https://docs.rs/burn-onnx/latest/burn_onnx/export/struct.OnnxExporter.html
 //! [supported operators table]: https://github.com/tracel-ai/burn-onnx/blob/main/SUPPORTED-ONNX-OPS.md
+// The import API exists only with the `import` feature; link to docs.rs without it.
+#![cfg_attr(
+    feature = "import",
+    doc = "[model-gen]: crate::ModelGen
+[run-from-script]: crate::ModelGen::run_from_script
+[load-strategy]: crate::LoadStrategy
+[ext-mod]: crate::ext
+[custom-op]: crate::ext::CustomOp
+[op-override]: crate::ext::OpOverride"
+)]
+#![cfg_attr(
+    not(feature = "import"),
+    doc = "[model-gen]: https://docs.rs/burn-onnx/latest/burn_onnx/struct.ModelGen.html
+[run-from-script]: https://docs.rs/burn-onnx/latest/burn_onnx/struct.ModelGen.html#method.run_from_script
+[load-strategy]: https://docs.rs/burn-onnx/latest/burn_onnx/enum.LoadStrategy.html
+[ext-mod]: https://docs.rs/burn-onnx/latest/burn_onnx/ext/index.html
+[custom-op]: https://docs.rs/burn-onnx/latest/burn_onnx/ext/trait.CustomOp.html
+[op-override]: https://docs.rs/burn-onnx/latest/burn_onnx/ext/trait.OpOverride.html"
+)]
 
 #[cfg(feature = "import")]
 #[macro_use]
@@ -124,7 +148,6 @@ pub mod import;
 #[cfg(feature = "import")]
 pub use import::*;
 
-/// Burn-to-ONNX graph capture and export.
 #[cfg(feature = "export")]
 #[cfg_attr(docsrs, doc(cfg(feature = "export")))]
 pub mod export;
