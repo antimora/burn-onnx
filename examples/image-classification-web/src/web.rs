@@ -1,22 +1,22 @@
 #![allow(clippy::new_without_default)]
 
 use alloc::{
+    format,
     string::{String, ToString},
     vec::Vec,
 };
 use core::convert::Into;
-use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::model::{label::LABELS, normalizer::Normalizer, squeezenet::Model as SqueezenetModel};
 
-use burn::{prelude::*, tensor::activation::softmax};
+use burn::{
+    prelude::*,
+    tensor::{activation::softmax, wgpu::WgpuBackend},
+};
 
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use web_time::Instant;
-
-// Global value to ensure that the wgpu backend is initialized at most once
-static WGPU_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -34,6 +34,8 @@ const CHANNELS: usize = 3;
 #[wasm_bindgen]
 pub struct ImageClassifier {
     model: Model,
+    // The wgpu runtime can only be initialized once, so the device is kept for reuse
+    wgpu_device: Option<Device>,
 }
 
 #[wasm_bindgen]
@@ -45,6 +47,7 @@ impl ImageClassifier {
         let device = Device::flex();
         Self {
             model: Model::new(&device),
+            wgpu_device: None,
         }
     }
 
@@ -77,11 +80,18 @@ impl ImageClassifier {
         log::info!("Loading the model to the Wgpu backend");
         let start = Instant::now();
 
-        // First-time wgpu device init is handled internally by the new burn dispatch.
-        // The compare_exchange guard keeps the original "init once" contract in case
-        // we need to add an explicit setup hook later.
-        let _ = WGPU_INITIALIZED.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
-        let device = Device::webgpu(DeviceKind::default());
+        let device = match &self.wgpu_device {
+            Some(device) => device.clone(),
+            None => {
+                let device = Device::wgpu_options()
+                    .graphics_api(WgpuBackend::WebGpu)
+                    .init_async()
+                    .await
+                    .map_err(|err| JsValue::from_str(&format!("{err}")))?;
+                self.wgpu_device = Some(device.clone());
+                device
+            }
+        };
         self.model = Model::new(&device);
         let duration = start.elapsed();
         log::debug!("Model is loaded to the Wgpu backend in {duration:?}");

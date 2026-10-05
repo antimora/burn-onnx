@@ -34,4 +34,4 @@ web-time = "1.1.0"
 
 [build-dependencies]
 # Used to generate code from ONNX model
-burn-onnx = { workspace = true }
+burn-onnx = { workspace = true, features = ["default"] }
