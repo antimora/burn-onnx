@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -7,7 +8,7 @@ use super::ir::{
     TensorType,
 };
 use super::protos::{
-    AttributeProto, NodeProto, TensorProto, ValueInfoProto,
+    AttributeProto, GraphProto, NodeProto, TensorProto, ValueInfoProto,
     attribute_proto::AttributeType,
     tensor_proto::{DataLocation, DataType as DT},
     tensor_shape_proto::dimension::Value,
@@ -94,6 +95,73 @@ pub fn sanitize_name(name: &str) -> String {
     }
 
     result
+}
+
+/// Rename values whose ONNX names differ but sanitize to the same identifier
+///
+/// `sanitize_name` is lossy ("/c/[-1]" and "/c/[1]" both become "c_1") and the IR keys values
+/// by their sanitized name, so two such values would silently merge into one. The first name
+/// to claim an identifier keeps it; each later one gets a numeric suffix. The rename covers
+/// subgraphs too, so outer-scope references stay consistent.
+pub(crate) fn dedup_sanitized_names(graph: &mut GraphProto) {
+    let mut names = Vec::new();
+    let mut seen = HashSet::new();
+    for_each_value_name(graph, &mut |name| {
+        if !name.is_empty() && seen.insert(name.clone()) {
+            names.push(name.clone());
+        }
+    });
+
+    // sanitized identifier -> the ONNX name that owns it
+    let mut owners: HashMap<String, String> = HashMap::new();
+    let mut renames: HashMap<String, String> = HashMap::new();
+    for name in names {
+        let sanitized = sanitize_name(&name);
+        if let Entry::Vacant(slot) = owners.entry(sanitized.clone()) {
+            slot.insert(name);
+            continue;
+        }
+        let mut suffix = 1;
+        let (renamed, renamed_sanitized) = loop {
+            let candidate = format!("{name}_{suffix}");
+            let candidate_sanitized = sanitize_name(&candidate);
+            if !seen.contains(&candidate) && !owners.contains_key(&candidate_sanitized) {
+                break (candidate, candidate_sanitized);
+            }
+            suffix += 1;
+        };
+        log::debug!("Renamed '{name}' to '{renamed}': its identifier '{sanitized}' is taken");
+        owners.insert(renamed_sanitized, renamed.clone());
+        renames.insert(name, renamed);
+    }
+
+    if !renames.is_empty() {
+        for_each_value_name(graph, &mut |name| {
+            if let Some(renamed) = renames.get(name.as_str()) {
+                *name = renamed.clone();
+            }
+        });
+    }
+}
+
+/// Visit every value name in a graph and its subgraphs, in definition order
+fn for_each_value_name<F: FnMut(&mut String)>(graph: &mut GraphProto, f: &mut F) {
+    graph.input.iter_mut().for_each(|v| f(&mut v.name));
+    graph.initializer.iter_mut().for_each(|t| f(&mut t.name));
+    for node in &mut graph.node {
+        node.input.iter_mut().for_each(&mut *f);
+        for attr in &mut node.attribute {
+            if let Some(g) = attr.g.as_mut() {
+                for_each_value_name(g, f);
+            }
+            for g in &mut attr.graphs {
+                for_each_value_name(g, f);
+            }
+        }
+        node.output.iter_mut().for_each(&mut *f);
+    }
+    graph.output.iter_mut().for_each(|v| f(&mut v.name));
+    graph.value_info.iter_mut().for_each(|v| f(&mut v.name));
 }
 
 /// Convert ONNX protobuf DataType to DType
@@ -1022,5 +1090,37 @@ mod tests {
             let refs = extract_node_outer_scope_references(&node);
             assert_eq!(refs, ["x".to_string()].into_iter().collect(), "{op_type}");
         }
+    }
+
+    #[test]
+    fn dedup_sanitized_names_renames_later_collisions_everywhere() {
+        let mut node_in_subgraph = NodeProto::new();
+        node_in_subgraph.input = vec!["a.b".into()];
+        node_in_subgraph.output = vec!["inner".into()];
+        let mut body = GraphProto::new();
+        body.node.push(node_in_subgraph);
+
+        let mut attr = AttributeProto::new();
+        attr.g = protobuf::MessageField::some(body);
+        let mut node = NodeProto::new();
+        node.input = vec!["a/b".into(), "a.b".into(), "".into()];
+        node.output = vec!["out".into()];
+        node.attribute.push(attr);
+
+        let mut graph = GraphProto::new();
+        for name in ["a/b", "a.b", "a.b_1"] {
+            let mut init = TensorProto::new();
+            init.name = name.into();
+            graph.initializer.push(init);
+        }
+        graph.node.push(node);
+
+        dedup_sanitized_names(&mut graph);
+
+        // "a/b" claims "a_b" first; "a.b_1" is taken as an ONNX name, so "a.b" becomes "a.b_2"
+        let inits: Vec<_> = graph.initializer.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(inits, ["a/b", "a.b_2", "a.b_1"]);
+        assert_eq!(graph.node[0].input, ["a/b", "a.b_2", ""]);
+        assert_eq!(graph.node[0].attribute[0].g.node[0].input, ["a.b_2"]);
     }
 }

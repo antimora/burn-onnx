@@ -116,6 +116,7 @@ pub mod min;
 pub mod mish;
 pub mod r#mod;
 pub mod mul;
+pub mod name_collision;
 pub mod neg;
 pub mod non_max_suppression;
 pub mod nonzero;
