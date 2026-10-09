@@ -458,6 +458,9 @@ fn eval_slice(node: &RawNode) -> Option<(TensorData, ArgType)> {
     // ONNX clamps start and end to [0, dim] for a positive step and to [0, dim - 1] and
     // [-1, dim - 1] for a negative one
     let dim0 = data.shape()[0] as i64;
+    if dim0 == 0 {
+        return None;
+    }
     let resolve = |idx: i64| if idx < 0 { idx + dim0 } else { idx };
     let rows: Vec<usize> = if step > 0 {
         let start = resolve(starts[0]).clamp(0, dim0);
@@ -568,6 +571,10 @@ fn eval_concat(node: &RawNode) -> Option<(TensorData, ArgType)> {
     Some((result, output_ty))
 }
 
+/// Largest ConstantOfShape fill that is folded. A Shape fill is a vector of dims, so a
+/// longer one is not shape bookkeeping and its length comes straight from the model.
+const MAX_FOLDED_FILL_ELEMENTS: usize = 4096;
+
 /// Evaluate ConstantOfShape: a tensor of the constant input's shape, filled with the
 /// one-element `value` attribute (an f32 zero when absent).
 ///
@@ -591,8 +598,12 @@ fn eval_constant_of_shape(node: &RawNode) -> Option<(TensorData, ArgType)> {
     if value.bytes().len() != value.dtype().size() {
         return None;
     }
+    let numel = shape
+        .iter()
+        .try_fold(1usize, |acc, &d| acc.checked_mul(d))
+        .filter(|&n| n <= MAX_FOLDED_FILL_ELEMENTS)?;
 
-    let bytes = value.bytes().repeat(shape.iter().product());
+    let bytes = value.bytes().repeat(numel);
     let output_ty = ArgType::Tensor(crate::ir::TensorType {
         dtype: value.dtype(),
         rank: shape.len(),
@@ -1430,6 +1441,26 @@ mod tests {
     }
 
     #[test]
+    fn test_slice_negative_step_on_empty_axis_not_folded() {
+        let input = const_f32_tensor("w", &[], vec![0, 2]);
+        let nodes = vec![raw_node(
+            "slice",
+            NodeType::Slice,
+            vec![
+                input,
+                const_i64_vec("starts", &[-1]),
+                const_i64_vec("ends", &[-(1 << 62)]),
+                const_i64_vec("axes", &[0]),
+                const_i64_vec("steps", &[-1]),
+            ],
+            vec![dynamic_tensor_out("out", DType::F32, 2)],
+        )];
+
+        let result = fold_constants(nodes, &mut [], &test_state());
+        assert_eq!(result[0].node_type, NodeType::Slice);
+    }
+
+    #[test]
     fn test_transpose_constant() {
         let input = const_f32_tensor("w", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
         let nodes = vec![raw_node_with_attrs(
@@ -1499,6 +1530,17 @@ mod tests {
         assert_eq!(result[0].outputs[0].ty, ArgType::Shape(3));
         let data = result[0].inputs[0].value().unwrap();
         assert_eq!(data.to_i64_vec().unwrap(), vec![7, 7, 7]);
+    }
+
+    #[test]
+    fn test_constant_of_shape_oversized_fill_not_folded() {
+        // A model can claim a Shape output of any length; that must not allocate it
+        let mut output = dynamic_tensor_out("out", DType::I64, 1);
+        output.ty = ArgType::Shape(1_000_000_000);
+        let nodes = vec![constant_of_shape_node(&[1_000_000_000], output)];
+
+        let result = fold_constants(nodes, &mut [], &test_state());
+        assert_eq!(result[0].node_type, NodeType::ConstantOfShape);
     }
 
     #[test]
