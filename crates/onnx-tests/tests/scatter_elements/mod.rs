@@ -11,6 +11,7 @@ include_models!(
     scatter_elements_3d,
     scatter_elements_1d,
     scatter_elements_int,
+    scatter_elements_shape,
     scatter_opset10
 );
 
@@ -476,5 +477,26 @@ mod tests {
 
         let expected = TensorData::from([[false, true, false], [false, false, false]]);
         output.to_data().assert_eq(&expected, false);
+    }
+
+    #[test]
+    fn scatter_elements_shape() {
+        let device = Default::default();
+        let model = scatter_elements_shape::Model::default();
+
+        let x = Tensor::<2>::zeros([2, 3], &device);
+        let y = Tensor::<2>::zeros([4, 5], &device);
+
+        let i = Tensor::<1, Int>::from_ints([0, -1], &device);
+        let u = Tensor::<1, Int>::from_ints([7, 1], &device);
+
+        let (z, s3, s4) = model.forward(x, y, i, u);
+
+        // Shape(x) = [2, 3] with entry 0 replaced by Shape(y)[0] = 4
+        assert_eq!(z.dims(), [4, 3]);
+        // Shape(x) with 2 added to the last entry
+        assert_eq!(s3, [2, 5]);
+        // Runtime indices and updates, max reduction: [max(2, 7), max(3, 1)]
+        assert_eq!(s4, [7, 3]);
     }
 }

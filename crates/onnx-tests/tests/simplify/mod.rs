@@ -29,6 +29,7 @@ include_simplified_models!(
     simplify_reshape_concat_shape,
     simplify_resize_sizes_from_shape,
     simplify_pool_output_dims,
+    simplify_reshape_symbolic_dims,
     simplify_pad_from_constants
 );
 
@@ -49,7 +50,7 @@ fn extract_forward(source: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use burn::tensor::{Tensor, TensorData};
+    use burn::tensor::{Int, Tensor, TensorData};
 
     // -- Output equality tests --
 
@@ -828,6 +829,33 @@ mod tests {
             }
         }
         ");
+    }
+
+    #[test]
+    fn reshape_symbolic_dims() {
+        let device = Default::default();
+        // `Model::default()` loads constants from the bpk; `new` would zero them.
+        let s = simplified::simplify_reshape_symbolic_dims::Model::default();
+        let u = unsimplified::simplify_reshape_symbolic_dims::Model::default();
+        let input = Tensor::<1, Int>::arange(0..30, &device)
+            .float()
+            .reshape([1, 2, 3, 5]);
+        let out = s.forward(input.clone());
+        // Relative-position shift of each [3, 5] block, from ReferenceEvaluator
+        let expected = TensorData::from([[
+            [
+                [2f32, 3., 4., 0., 5.],
+                [6., 7., 8., 9., 0.],
+                [10., 11., 12., 13., 14.],
+            ],
+            [
+                [17., 18., 19., 0., 20.],
+                [21., 22., 23., 24., 0.],
+                [25., 26., 27., 28., 29.],
+            ],
+        ]]);
+        out.to_data().assert_eq(&expected, false);
+        assert_eq!(out.to_data(), u.forward(input).to_data());
     }
 
     #[test]

@@ -262,11 +262,12 @@ impl NodeProcessor for ReshapeProcessor {
             return true;
         }
 
-        // Reshape is a no-op when input and output have identical static shapes
+        // Reshape is a no-op when input and output have identical, fully known static shapes.
+        // An unknown dim on each side says nothing about whether the two are equal.
         if let (ArgType::Tensor(input_t), ArgType::Tensor(output_t)) =
             (&node.inputs[0].ty, &node.outputs[0].ty)
             && let (Some(in_shape), Some(out_shape)) =
-                (&input_t.static_shape, &output_t.static_shape)
+                (input_t.static_shape_known(), output_t.static_shape_known())
         {
             return in_shape == out_shape;
         }
@@ -904,6 +905,27 @@ mod tests {
         }
         if let ArgType::Tensor(ref mut t) = node.outputs[0].ty {
             t.static_shape = Some(vec![Some(6), Some(4)]);
+        }
+
+        let processor = ReshapeProcessor;
+        assert!(!processor.is_noop(&node));
+    }
+
+    #[test]
+    fn test_reshape_symbolic_static_shape_is_not_noop() {
+        // value_info of [b, 8, t, 2t] -> [b, 8, 2t, t]: the symbolic dims differ at runtime
+        let shape: Vec<Option<usize>> = vec![None, Some(8), None, None];
+        let mut node = TestNodeBuilder::new(NodeType::Reshape, "test_reshape")
+            .input_tensor_f32("data", 4, None)
+            .input_tensor_i64("shape", 1, None)
+            .output_tensor_f32("reshaped", 4, None)
+            .build();
+
+        if let ArgType::Tensor(ref mut t) = node.inputs[0].ty {
+            t.static_shape = Some(shape.clone());
+        }
+        if let ArgType::Tensor(ref mut t) = node.outputs[0].ty {
+            t.static_shape = Some(shape);
         }
 
         let processor = ReshapeProcessor;

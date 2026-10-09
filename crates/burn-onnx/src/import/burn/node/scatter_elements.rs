@@ -20,6 +20,9 @@ impl NodeCodegen for onnx_ir::scatter_elements::ScatterElementsNode {
 
         let (data_kind, rank) = match &self.inputs[0].ty {
             ArgType::Tensor(t) => (TensorKind::from(t.dtype), t.rank),
+            ArgType::Shape(rank) => {
+                return forward_shape(self, data, indices, updates, output, *rank);
+            }
             _ => {
                 let msg = format!(
                     "ScatterElements node '{}': data input must be a tensor",
@@ -146,6 +149,46 @@ impl NodeCodegen for onnx_ir::scatter_elements::ScatterElementsNode {
                 }
             }#to_bool;
         }
+    }
+}
+
+/// Scatter into a Shape value on the host. Shape `indices` and `updates` are `[i64; K]`
+/// arrays; a runtime tensor is read back.
+fn forward_shape(
+    node: &onnx_ir::scatter_elements::ScatterElementsNode,
+    data: TokenStream,
+    indices: TokenStream,
+    updates: TokenStream,
+    output: Ident,
+    rank: usize,
+) -> TokenStream {
+    let host_values = |arg: &Argument, value: TokenStream| match &arg.ty {
+        ArgType::Shape(_) => value,
+        _ => quote! { #value.to_data().iter::<i64>() },
+    };
+    let indices_iter = host_values(&node.inputs[1], quote! { indices });
+    let updates_iter = host_values(&node.inputs[2], quote! { updates });
+    let update = match &node.config.reduction {
+        ScatterElementsReduction::None => quote! { data[index] = update; },
+        ScatterElementsReduction::Add => quote! { data[index] += update; },
+        ScatterElementsReduction::Mul => quote! { data[index] *= update; },
+        ScatterElementsReduction::Max => quote! { data[index] = data[index].max(update); },
+        ScatterElementsReduction::Min => quote! { data[index] = data[index].min(update); },
+    };
+    let rank_usize = rank.to_tokens();
+    let rank_i64 = proc_macro2::Literal::i64_unsuffixed(rank as i64);
+
+    // ONNX allows indices down to `-rank`; `rem_euclid` folds them like the tensor path's
+    // floored remainder.
+    quote! {
+        let #output: [i64; #rank_usize] = {
+            let (mut data, indices, updates) = (#data, #indices, #updates);
+            for (index, update) in core::iter::zip(#indices_iter, #updates_iter) {
+                let index = index.rem_euclid(#rank_i64) as usize;
+                #update
+            }
+            data
+        };
     }
 }
 
@@ -708,5 +751,143 @@ mod tests {
             .config(config)
             .build();
         assert!(shadow_check_result(&node).is_ok());
+    }
+
+    #[test]
+    fn test_scatter_elements_shape_data() {
+        let config = ScatterElementsConfig::new(0, ScatterElementsReduction::None);
+        let node = ScatterElementsNodeBuilder::new("scatter1")
+            .input_shape("data", 3)
+            .input_shape("indices", 1)
+            .input_shape("updates", 1)
+            .output_shape("output", 3)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, data: [i64; 3], indices: [i64; 1], updates: [i64; 1]) -> [i64; 3] {
+            let output: [i64; 3] = {
+                let (mut data, indices, updates) = (data, indices, updates);
+                for (index, update) in core::iter::zip(indices, updates) {
+                    let index = index.rem_euclid(3) as usize;
+                    data[index] = update;
+                }
+                data
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_scatter_elements_shape_data_runtime_tensor_indices_max() {
+        let config = ScatterElementsConfig::new(0, ScatterElementsReduction::Max);
+        let node = ScatterElementsNodeBuilder::new("scatter1")
+            .input_shape("data", 3)
+            .input_tensor("indices", 1, DType::I64)
+            .input_tensor("updates", 1, DType::I64)
+            .output_shape("output", 3)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(
+            &self,
+            data: [i64; 3],
+            indices: Tensor<1, Int>,
+            updates: Tensor<1, Int>,
+        ) -> [i64; 3] {
+            let output: [i64; 3] = {
+                let (mut data, indices, updates) = (data, indices, updates);
+                for (index, update) in core::iter::zip(
+                    indices.to_data().iter::<i64>(),
+                    updates.to_data().iter::<i64>(),
+                ) {
+                    let index = index.rem_euclid(3) as usize;
+                    data[index] = data[index].max(update);
+                }
+                data
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_scatter_elements_shape_data_add() {
+        let config = ScatterElementsConfig::new(0, ScatterElementsReduction::Add);
+        let node = ScatterElementsNodeBuilder::new("scatter1")
+            .input_shape("data", 3)
+            .input_shape("indices", 1)
+            .input_shape("updates", 1)
+            .output_shape("output", 3)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, data: [i64; 3], indices: [i64; 1], updates: [i64; 1]) -> [i64; 3] {
+            let output: [i64; 3] = {
+                let (mut data, indices, updates) = (data, indices, updates);
+                for (index, update) in core::iter::zip(indices, updates) {
+                    let index = index.rem_euclid(3) as usize;
+                    data[index] += update;
+                }
+                data
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_scatter_elements_shape_data_mul() {
+        let config = ScatterElementsConfig::new(0, ScatterElementsReduction::Mul);
+        let node = ScatterElementsNodeBuilder::new("scatter1")
+            .input_shape("data", 3)
+            .input_shape("indices", 1)
+            .input_shape("updates", 1)
+            .output_shape("output", 3)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, data: [i64; 3], indices: [i64; 1], updates: [i64; 1]) -> [i64; 3] {
+            let output: [i64; 3] = {
+                let (mut data, indices, updates) = (data, indices, updates);
+                for (index, update) in core::iter::zip(indices, updates) {
+                    let index = index.rem_euclid(3) as usize;
+                    data[index] *= update;
+                }
+                data
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_scatter_elements_shape_data_min() {
+        let config = ScatterElementsConfig::new(0, ScatterElementsReduction::Min);
+        let node = ScatterElementsNodeBuilder::new("scatter1")
+            .input_shape("data", 3)
+            .input_shape("indices", 1)
+            .input_shape("updates", 1)
+            .output_shape("output", 3)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, data: [i64; 3], indices: [i64; 1], updates: [i64; 1]) -> [i64; 3] {
+            let output: [i64; 3] = {
+                let (mut data, indices, updates) = (data, indices, updates);
+                for (index, update) in core::iter::zip(indices, updates) {
+                    let index = index.rem_euclid(3) as usize;
+                    data[index] = data[index].min(update);
+                }
+                data
+            };
+            output
+        }
+        ");
     }
 }

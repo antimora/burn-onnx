@@ -401,7 +401,7 @@ impl OnnxGraphBuilder {
         // Get the base directory for external data resolution
         let base_path = source_path.and_then(|p| p.parent());
 
-        let model: ModelProto =
+        let mut model: ModelProto =
             Message::parse_from_tokio_bytes(&buffer).map_err(|e| Error::InvalidFormat {
                 path: path_str.clone(),
                 error: e.to_string(),
@@ -413,6 +413,10 @@ impl OnnxGraphBuilder {
             return Err(Error::InvalidGraphStructure {
                 reason: "Nodes are not topologically sorted (ONNX spec violation)".to_string(),
             });
+        }
+
+        if let Some(graph) = model.graph.as_mut() {
+            crate::proto_conversion::dedup_sanitized_names(graph);
         }
 
         let hooks = PipelineHooks::new(self.custom_op_inference.clone());

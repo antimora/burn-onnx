@@ -442,6 +442,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/mul/mul_shape_broadcast.onnx")
         .input("tests/mul/mul_shape_rank_lift.onnx")
         .input("tests/mul/mul_shape_tensor.onnx")
+        .input("tests/name_collision/name_collision.onnx")
         .input("tests/neg/neg.onnx")
         .input("tests/neg/neg_shape.onnx")
         .input("tests/non_max_suppression/non_max_suppression.onnx")
@@ -702,6 +703,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/scatter_elements/scatter_elements_3d.onnx")
         .input("tests/scatter_elements/scatter_elements_1d.onnx")
         .input("tests/scatter_elements/scatter_elements_int.onnx")
+        .input("tests/scatter_elements/scatter_elements_shape.onnx")
         .input("tests/scatter_elements/scatter_opset10.onnx")
         // ScatterND operator tests
         .input("tests/scatter_nd/scatter_nd.onnx")
@@ -918,5 +920,6 @@ fn add_simplify_inputs(model_gen: &mut ModelGen) {
         .input("tests/simplify/simplify_reshape_concat_shape.onnx")
         .input("tests/simplify/simplify_resize_sizes_from_shape.onnx")
         .input("tests/simplify/simplify_pool_output_dims.onnx")
+        .input("tests/simplify/simplify_reshape_symbolic_dims.onnx")
         .input("tests/simplify/simplify_pad_from_constants.onnx");
 }
