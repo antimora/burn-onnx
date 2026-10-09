@@ -1,11 +1,25 @@
 // Import the shared macro
 use crate::include_models;
-include_models!(clip);
+include_models!(clip, clip_int_static_min_runtime_max);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use burn::tensor::{Device, Tensor, TensorData};
+
+    #[test]
+    fn clip_int_static_min_runtime_max() {
+        let device = Default::default();
+        let model = clip_int_static_min_runtime_max::Model::default();
+        let input = Tensor::<1, burn::tensor::Int>::from_data(
+            TensorData::from([0i64, 3, 9]),
+            (&device, burn::tensor::DType::I64),
+        );
+        let output = model.forward(input, 5);
+        output
+            .to_data()
+            .assert_eq(&TensorData::from([1i64, 3, 5]), true);
+    }
 
     #[test]
     fn clip() {

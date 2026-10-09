@@ -33,12 +33,26 @@ impl ClipBoundCast {
             Self::F64 => quote! { f64 },
         }
     }
+
+    fn literal(self, v: f64) -> TokenStream {
+        match self {
+            Self::I64 => {
+                let v = v as i64;
+                quote! { #v }
+            }
+            Self::U64 => {
+                let v = v as u64;
+                quote! { #v }
+            }
+            Self::F64 => quote! { #v },
+        }
+    }
 }
 
 /// Token stream for a single Clip `min`/`max` bound. Static bounds are
-/// inlined as literals; runtime bounds are extracted from the input
-/// (native scalar or `ScalarTensor`) and `as`-cast to `bound_cast` — see
-/// `ClipBoundCast` for why the cast width is chosen up front from the
+/// inlined as `bound_cast`-typed literals; runtime bounds are extracted from
+/// the input (native scalar or `ScalarTensor`) and `as`-cast to `bound_cast`
+/// — see `ClipBoundCast` for why the cast width is chosen up front from the
 /// data tensor's dtype.
 fn clip_bound_expr(
     bound: &Option<onnx_ir::node::clip::ClipInput>,
@@ -48,10 +62,7 @@ fn clip_bound_expr(
 ) -> Option<TokenStream> {
     match bound {
         None => None,
-        Some(onnx_ir::node::clip::ClipInput::Static(v)) => {
-            let v = *v;
-            Some(quote! { #v })
-        }
+        Some(onnx_ir::node::clip::ClipInput::Static(v)) => Some(bound_cast.literal(*v)),
         Some(onnx_ir::node::clip::ClipInput::Runtime(r)) => {
             let arg = &inputs[r.input_index];
             let cast_ty = bound_cast.tokens();
