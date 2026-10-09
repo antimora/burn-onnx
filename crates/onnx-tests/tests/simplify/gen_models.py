@@ -1142,6 +1142,56 @@ def pad_from_constants():
     )
 
 
+def ones_times_minus_one():
+    """expand(-1) bookkeeping with a constant length, as RF-DETR exports it.
+
+    ones = ConstantOfShape([3], 1); y = Where(Equal(x, ones * -1), ones, x) turns each -1
+    in x into 1. Once ones folds to [1, 1, 1], `ones * -1` must not be treated as `1 * x`:
+    the scalar -1 is broadcast to the shape of ones.
+    """
+    nodes = [
+        helper.make_node(
+            "Constant",
+            [],
+            ["len"],
+            value=helper.make_tensor("len_val", TensorProto.INT64, [1], [3]),
+        ),
+        helper.make_node(
+            "ConstantOfShape",
+            ["len"],
+            ["ones"],
+            value=helper.make_tensor("one", TensorProto.INT64, [1], [1]),
+        ),
+        helper.make_node(
+            "Constant",
+            [],
+            ["minus_one"],
+            value=helper.make_tensor("minus_one_val", TensorProto.INT64, [], [-1]),
+        ),
+        helper.make_node("Mul", ["ones", "minus_one"], ["negs"]),
+        helper.make_node("Equal", ["x", "negs"], ["is_neg"]),
+        helper.make_node("Where", ["is_neg", "ones", "x"], ["y"]),
+    ]
+    graph = helper.make_graph(
+        name="main_graph",
+        nodes=nodes,
+        inputs=[
+            helper.make_value_info(
+                "x", helper.make_tensor_type_proto(TensorProto.INT64, shape=[3])
+            ),
+        ],
+        outputs=[
+            helper.make_value_info(
+                "y", helper.make_tensor_type_proto(TensorProto.INT64, shape=[3])
+            ),
+        ],
+    )
+    save(
+        helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", OPSET)]),
+        "simplify_ones_times_minus_one.onnx",
+    )
+
+
 if __name__ == "__main__":
     print("Generating simplify test models:")
     shape_folding()
@@ -1166,4 +1216,5 @@ if __name__ == "__main__":
     pool_output_dims()
     reshape_symbolic_dims()
     pad_from_constants()
+    ones_times_minus_one()
     print("Done.")

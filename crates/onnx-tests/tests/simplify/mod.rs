@@ -30,7 +30,8 @@ include_simplified_models!(
     simplify_resize_sizes_from_shape,
     simplify_pool_output_dims,
     simplify_reshape_symbolic_dims,
-    simplify_pad_from_constants
+    simplify_pad_from_constants,
+    simplify_ones_times_minus_one
 );
 
 /// Extract the `forward` method body from generated source code.
@@ -897,6 +898,22 @@ mod tests {
             }
         }
         ");
+    }
+
+    #[test]
+    fn ones_times_minus_one() {
+        let device = Default::default();
+        // `Model::default()` loads constants from the bpk; `new` would zero them.
+        let s = simplified::simplify_ones_times_minus_one::Model::default();
+        let u = unsimplified::simplify_ones_times_minus_one::Model::default();
+        let input = Tensor::<1, Int>::from_data(
+            TensorData::from([2i64, -1, 5]),
+            (&device, burn::tensor::DType::I64),
+        );
+        let out = s.forward(input.clone());
+        out.to_data()
+            .assert_eq(&TensorData::from([2i64, 1, 5]), false);
+        assert_eq!(out.to_data(), u.forward(input).to_data());
     }
 
     #[test]

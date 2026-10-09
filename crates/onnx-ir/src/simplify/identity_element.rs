@@ -13,6 +13,10 @@ use crate::ir::{NodeType, RawNode, TensorDataExt};
 ///
 /// When detected, rewires consumers to use the non-identity input directly.
 /// The eliminated node becomes dead and is cleaned up by dead node elimination.
+///
+/// The kept input must already have the output's type: an identity operand that is larger
+/// sets the broadcast shape (`[1, 1, 1] * x` with scalar `x` is a vector), so dropping it
+/// would change the result.
 pub(crate) fn eliminate_identity_elements(mut nodes: Vec<RawNode>) -> Vec<RawNode> {
     let mut rename: HashMap<String, String> = HashMap::new();
 
@@ -62,7 +66,7 @@ pub(crate) fn eliminate_identity_elements(mut nodes: Vec<RawNode>) -> Vec<RawNod
             _ => None,
         };
 
-        if let Some(keep_idx) = passthrough {
+        if let Some(keep_idx) = passthrough.filter(|&i| node.inputs[i].ty == node.outputs[0].ty) {
             let keep_name = &node.inputs[keep_idx].name;
             log::debug!(
                 "Identity element elimination: {:?} '{}' (output '{}' -> input '{}')",
@@ -203,6 +207,20 @@ mod tests {
         let result = eliminate_identity_elements(nodes);
         let relu = result.iter().find(|n| n.name == "relu").unwrap();
         assert_eq!(relu.inputs[0].name, "x");
+    }
+
+    #[test]
+    fn test_mul_by_broadcasting_ones_kept() {
+        // [1, 1, 1] * -1 is [-1, -1, -1], not the scalar -1
+        let ones = Argument::from_const_i64_shape("ones", &[1, 1, 1]);
+        let minus_one = Argument::from_const_i64("minus_one", -1);
+        let mut mul = make_binary_node("mul", NodeType::Mul, ones, minus_one, "mul_out");
+        mul.outputs[0].ty = ArgType::Shape(3);
+        let nodes = vec![mul, node("relu", NodeType::Relu, &["mul_out"], &["output"])];
+
+        let result = eliminate_identity_elements(nodes);
+        let relu = result.iter().find(|n| n.name == "relu").unwrap();
+        assert_eq!(relu.inputs[0].name, "mul_out");
     }
 
     #[test]
