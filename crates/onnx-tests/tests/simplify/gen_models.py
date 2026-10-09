@@ -1005,6 +1005,68 @@ def pool_output_dims():
     )
 
 
+def pad_from_constants():
+    """F.pad amounts built from constants only, as PyTorch exports them.
+
+    ConstantOfShape -> Concat -> Reshape -> reversed Slice -> Transpose -> Reshape -> Pad.
+    The pads fold to [0, 0, 0, 0, 0, 1] at import, so Pad gets static amounts instead of
+    reading them back from the device every call.
+    """
+
+    def const(name, values):
+        return helper.make_node(
+            "Constant",
+            [],
+            [name],
+            value=helper.make_tensor(
+                f"{name}_val", TensorProto.INT64, [len(values)], values
+            ),
+        )
+
+    nodes = [
+        const("c", [4]),
+        helper.make_node(
+            "ConstantOfShape",
+            ["c"],
+            ["zeros"],
+            value=helper.make_tensor("zero", TensorProto.INT64, [1], [0]),
+        ),
+        const("p", [0, 1]),
+        helper.make_node("Concat", ["p", "zeros"], ["pads0"], axis=0),
+        const("shp", [-1, 2]),
+        helper.make_node("Reshape", ["pads0", "shp"], ["r"]),
+        const("st", [-1]),
+        const("en", [-(2**62)]),
+        const("ax", [0]),
+        const("stp", [-1]),
+        helper.make_node("Slice", ["r", "st", "en", "ax", "stp"], ["rev"]),
+        helper.make_node("Transpose", ["rev"], ["tr"], perm=[1, 0]),
+        const("flat", [-1]),
+        helper.make_node("Reshape", ["tr", "flat"], ["pads"]),
+        helper.make_node("Pad", ["x", "pads"], ["y"]),
+    ]
+    graph = helper.make_graph(
+        name="main_graph",
+        nodes=nodes,
+        inputs=[
+            helper.make_value_info(
+                "x",
+                helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[1, 4, "t"]),
+            ),
+        ],
+        outputs=[
+            helper.make_value_info(
+                "y",
+                helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[1, 4, "u"]),
+            ),
+        ],
+    )
+    save(
+        helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", 17)]),
+        "simplify_pad_from_constants.onnx",
+    )
+
+
 if __name__ == "__main__":
     print("Generating simplify test models:")
     shape_folding()
@@ -1027,4 +1089,5 @@ if __name__ == "__main__":
     reshape_concat_shape()
     resize_sizes_from_shape()
     pool_output_dims()
+    pad_from_constants()
     print("Done.")

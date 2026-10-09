@@ -165,6 +165,8 @@ fn try_evaluate(node: &RawNode) -> Option<(TensorData, ArgType)> {
         NodeType::Slice => eval_slice(node),
         NodeType::Concat => eval_concat(node),
         NodeType::Unsqueeze | NodeType::Squeeze | NodeType::Reshape => eval_reshape(node),
+        NodeType::ConstantOfShape => eval_constant_of_shape(node),
+        NodeType::Transpose => eval_transpose(node),
         _ => None,
     }
 }
@@ -440,45 +442,56 @@ fn eval_slice(node: &RawNode) -> Option<(TensorData, ArgType)> {
         return None;
     };
 
-    // Only support single-axis slicing on axis 0 with default step
+    // Only support single-axis slicing on axis 0
     if axes.len() != 1 || axes[0] != 0 || starts.is_empty() || ends.is_empty() {
         return None;
     }
 
-    // Check steps (must be 1 or absent)
-    if node.attrs.contains_key("steps") {
-        let steps = node.attrs.get("steps")?.clone().into_i64s().ok()?;
-        if steps.iter().any(|&s| s != 1) {
-            return None;
-        }
-    } else if let Some(steps_input) = node.inputs.get(4)
-        && let Some(steps_data) = steps_input.value()
-    {
-        let steps = steps_data.to_i64_vec().ok()?;
-        if steps.iter().any(|&s| s != 1) {
-            return None;
-        }
-    }
-
-    let dim0 = data.shape()[0];
-    let start = clamp_index(starts[0], dim0);
-    let end = clamp_index(ends[0], dim0);
-    if start >= end {
+    let step = match node.get_input(4) {
+        Some(steps) => *steps.value()?.to_i64_vec().ok()?.first()?,
+        None => 1,
+    };
+    if step == 0 {
         return None;
     }
 
-    // For axis=0, the data is contiguous in row-major layout
-    let row_size: usize = data.shape()[1..].iter().product::<usize>().max(1);
-    let elem_size = data.dtype().size();
-    let byte_start = start * row_size * elem_size;
-    let byte_end = end * row_size * elem_size;
-    if byte_end > data.bytes().len() {
+    // ONNX clamps start and end to [0, dim] for a positive step and to [0, dim - 1] and
+    // [-1, dim - 1] for a negative one
+    let dim0 = data.shape()[0] as i64;
+    let resolve = |idx: i64| if idx < 0 { idx + dim0 } else { idx };
+    let rows: Vec<usize> = if step > 0 {
+        let start = resolve(starts[0]).clamp(0, dim0);
+        let end = resolve(ends[0]).clamp(0, dim0);
+        (start..end)
+            .step_by(step as usize)
+            .map(|i| i as usize)
+            .collect()
+    } else {
+        let start = resolve(starts[0]).clamp(0, dim0 - 1);
+        let end = resolve(ends[0]).clamp(-1, dim0 - 1);
+        (end + 1..=start)
+            .rev()
+            .step_by(step.unsigned_abs() as usize)
+            .map(|i| i as usize)
+            .collect()
+    };
+    if rows.is_empty() {
         return None;
     }
-    let sliced_bytes = &data.bytes()[byte_start..byte_end];
+
+    // Rows along axis 0 are contiguous in row-major layout
+    let row_bytes = data.shape()[1..].iter().product::<usize>() * data.dtype().size();
+    if data.bytes().len() != data.shape()[0] * row_bytes {
+        return None;
+    }
+    let sliced_bytes: Vec<u8> = rows
+        .iter()
+        .flat_map(|&row| &data.bytes()[row * row_bytes..(row + 1) * row_bytes])
+        .copied()
+        .collect();
 
     let mut output_shape = data.shape().to_vec();
-    output_shape[0] = end - start;
+    output_shape[0] = rows.len();
 
     let output_ty = ArgType::Tensor(crate::ir::TensorType {
         dtype: data.dtype(),
@@ -486,15 +499,8 @@ fn eval_slice(node: &RawNode) -> Option<(TensorData, ArgType)> {
         static_shape: Some(output_shape.iter().map(|&d| Some(d)).collect()),
     });
 
-    let result = TensorData::from_bytes_vec(sliced_bytes.to_vec(), output_shape, data.dtype());
+    let result = TensorData::from_bytes_vec(sliced_bytes, output_shape, data.dtype());
     Some((result, output_ty))
-}
-
-/// Clamp a slice index per ONNX spec: negative values wrap, then clamp to [0, dim].
-fn clamp_index(idx: i64, dim: usize) -> usize {
-    let dim = dim as i64;
-    let resolved = if idx < 0 { dim + idx } else { idx };
-    resolved.clamp(0, dim) as usize
 }
 
 /// Evaluate Concat on constant inputs along the axis attribute.
@@ -560,6 +566,104 @@ fn eval_concat(node: &RawNode) -> Option<(TensorData, ArgType)> {
 
     let result = TensorData::from_bytes_vec(result_bytes, output_shape, dtype);
     Some((result, output_ty))
+}
+
+/// Evaluate ConstantOfShape: a tensor of the constant input's shape, filled with the
+/// one-element `value` attribute (an f32 zero when absent).
+///
+/// Only a fill typed as a Shape (an int64 vector of known length) is folded. A tensor fill
+/// stays a runtime op, so a large one is not stored in the weights.
+fn eval_constant_of_shape(node: &RawNode) -> Option<(TensorData, ArgType)> {
+    if !node.outputs[0].ty.is_shape() {
+        return None;
+    }
+    let shape = node.inputs[0]
+        .value()?
+        .to_i64_vec()
+        .ok()?
+        .into_iter()
+        .map(|d| usize::try_from(d).ok())
+        .collect::<Option<Vec<_>>>()?;
+    let value = match node.attrs.get("value") {
+        Some(value) => value.clone().into_tensor().ok()?,
+        None => TensorData::new(vec![0f32], vec![1]),
+    };
+    if value.bytes().len() != value.dtype().size() {
+        return None;
+    }
+
+    let bytes = value.bytes().repeat(shape.iter().product());
+    let output_ty = ArgType::Tensor(crate::ir::TensorType {
+        dtype: value.dtype(),
+        rank: shape.len(),
+        static_shape: Some(shape.iter().map(|&d| Some(d)).collect()),
+    });
+    Some((
+        TensorData::from_bytes_vec(bytes, shape, value.dtype()),
+        output_ty,
+    ))
+}
+
+/// Evaluate Transpose by permuting the constant data (default: reverse the axes).
+fn eval_transpose(node: &RawNode) -> Option<(TensorData, ArgType)> {
+    let data = node.inputs[0].value()?;
+    let in_shape = data.shape().to_vec();
+    let rank = in_shape.len();
+    let perm = match node.attrs.get("perm") {
+        Some(perm) => perm
+            .clone()
+            .into_i64s()
+            .ok()?
+            .into_iter()
+            .map(|p| usize::try_from(p).ok().filter(|&p| p < rank))
+            .collect::<Option<Vec<_>>>()?,
+        None => (0..rank).rev().collect(),
+    };
+    let mut sorted = perm.clone();
+    sorted.sort_unstable();
+    if sorted != (0..rank).collect::<Vec<_>>() {
+        return None;
+    }
+
+    let elem_size = data.dtype().size();
+    let numel: usize = in_shape.iter().product();
+    if data.bytes().len() != numel * elem_size {
+        return None;
+    }
+    let mut in_strides = vec![1; rank];
+    for d in (0..rank.saturating_sub(1)).rev() {
+        in_strides[d] = in_strides[d + 1] * in_shape[d + 1];
+    }
+    let out_shape: Vec<usize> = perm.iter().map(|&p| in_shape[p]).collect();
+
+    // Walk the output in row-major order, reading each element from its input position
+    let mut bytes = Vec::with_capacity(data.bytes().len());
+    let mut index = vec![0; rank];
+    for _ in 0..numel {
+        let src: usize = index
+            .iter()
+            .zip(&perm)
+            .map(|(&i, &p)| i * in_strides[p])
+            .sum();
+        bytes.extend_from_slice(&data.bytes()[src * elem_size..(src + 1) * elem_size]);
+        for d in (0..rank).rev() {
+            index[d] += 1;
+            if index[d] < out_shape[d] {
+                break;
+            }
+            index[d] = 0;
+        }
+    }
+
+    let output_ty = ArgType::Tensor(crate::ir::TensorType {
+        dtype: data.dtype(),
+        rank,
+        static_shape: Some(out_shape.iter().map(|&d| Some(d)).collect()),
+    });
+    Some((
+        TensorData::from_bytes_vec(bytes, out_shape, data.dtype()),
+        output_ty,
+    ))
 }
 
 /// Evaluate Unsqueeze/Squeeze/Reshape by reshaping the constant data.
@@ -1287,6 +1391,126 @@ mod tests {
         assert_eq!(data.shape().to_vec(), vec![2, 2]);
         let vals = data.to_f64_vec().unwrap();
         assert_eq!(vals, vec![3.0, 4.0, 5.0, 6.0]);
+    }
+
+    /// Fold a single Slice of a [3, 2] f32 constant along axis 0 with the given step.
+    fn fold_stepped_slice(start: i64, end: i64, step: i64) -> Vec<f64> {
+        let input = const_f32_tensor("w", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]);
+        let nodes = vec![raw_node(
+            "slice",
+            NodeType::Slice,
+            vec![
+                input,
+                const_i64_vec("starts", &[start]),
+                const_i64_vec("ends", &[end]),
+                const_i64_vec("axes", &[0]),
+                const_i64_vec("steps", &[step]),
+            ],
+            vec![dynamic_tensor_out("out", DType::F32, 2)],
+        )];
+
+        let result = fold_constants(nodes, &mut [], &test_state());
+        assert_eq!(result[0].node_type, NodeType::Constant);
+        result[0].inputs[0].value().unwrap().to_f64_vec().unwrap()
+    }
+
+    #[test]
+    fn test_slice_negative_step_reverses_rows() {
+        // x[::-1] as exported by PyTorch: start -1, end -2^62
+        assert_eq!(
+            fold_stepped_slice(-1, -(1 << 62), -1),
+            vec![5.0, 6.0, 3.0, 4.0, 1.0, 2.0]
+        );
+        assert_eq!(fold_stepped_slice(2, 0, -2), vec![5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_slice_step_two() {
+        assert_eq!(fold_stepped_slice(0, i64::MAX, 2), vec![1.0, 2.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_transpose_constant() {
+        let input = const_f32_tensor("w", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+        let nodes = vec![raw_node_with_attrs(
+            "transpose",
+            NodeType::Transpose,
+            vec![input],
+            vec![dynamic_tensor_out("out", DType::F32, 2)],
+            [("perm".to_string(), AttributeValue::Int64s(vec![1, 0]))]
+                .into_iter()
+                .collect(),
+        )];
+
+        let result = fold_constants(nodes, &mut [], &test_state());
+        assert_eq!(result[0].node_type, NodeType::Constant);
+        let data = result[0].inputs[0].value().unwrap();
+        assert_eq!(data.shape().to_vec(), vec![3, 2]);
+        assert_eq!(
+            data.to_f64_vec().unwrap(),
+            vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]
+        );
+    }
+
+    #[test]
+    fn test_transpose_constant_default_perm_reverses_axes() {
+        // [1, 2, 3] -> [3, 2, 1]: out[k, j, 0] = in[0, j, k]
+        let values: Vec<f32> = (0..6).map(|v| v as f32).collect();
+        let input = const_f32_tensor("w", &values, vec![1, 2, 3]);
+        let nodes = vec![raw_node(
+            "transpose",
+            NodeType::Transpose,
+            vec![input],
+            vec![dynamic_tensor_out("out", DType::F32, 3)],
+        )];
+
+        let result = fold_constants(nodes, &mut [], &test_state());
+        let data = result[0].inputs[0].value().unwrap();
+        assert_eq!(data.shape().to_vec(), vec![3, 2, 1]);
+        assert_eq!(
+            data.to_f64_vec().unwrap(),
+            vec![0.0, 3.0, 1.0, 4.0, 2.0, 5.0]
+        );
+    }
+
+    fn constant_of_shape_node(shape: &[i64], output: Argument) -> RawNode {
+        raw_node_with_attrs(
+            "cos",
+            NodeType::ConstantOfShape,
+            vec![const_i64_vec("shape", shape)],
+            vec![output],
+            [(
+                "value".to_string(),
+                AttributeValue::Tensor(TensorData::new(vec![7i64], vec![1])),
+            )]
+            .into_iter()
+            .collect(),
+        )
+    }
+
+    #[test]
+    fn test_constant_of_shape_shape_output() {
+        let mut output = dynamic_tensor_out("out", DType::I64, 1);
+        output.ty = ArgType::Shape(3);
+        let nodes = vec![constant_of_shape_node(&[3], output)];
+
+        let result = fold_constants(nodes, &mut [], &test_state());
+        assert_eq!(result[0].node_type, NodeType::Constant);
+        assert_eq!(result[0].outputs[0].ty, ArgType::Shape(3));
+        let data = result[0].inputs[0].value().unwrap();
+        assert_eq!(data.to_i64_vec().unwrap(), vec![7, 7, 7]);
+    }
+
+    #[test]
+    fn test_constant_of_shape_tensor_output_not_folded() {
+        // A tensor fill stays a runtime op rather than becoming stored data
+        let nodes = vec![constant_of_shape_node(
+            &[2, 2],
+            dynamic_tensor_out("out", DType::I64, 2),
+        )];
+
+        let result = fold_constants(nodes, &mut [], &test_state());
+        assert_eq!(result[0].node_type, NodeType::ConstantOfShape);
     }
 
     #[test]
