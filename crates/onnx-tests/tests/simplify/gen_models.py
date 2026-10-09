@@ -1005,6 +1005,81 @@ def pool_output_dims():
     )
 
 
+def reshape_symbolic_dims():
+    """Relative-position shift with symbolic value_info, as Conformer exports emit it.
+
+    F.pad(x, (1, 0)).view(b, h, -1, t)[:, :, 1:].view(b, h, t, -1)
+
+    x: [b, 2, t, 2t-1]. Both Reshape targets come from Shape(x), and the value_info on each
+    side of a Reshape is [sym, 2, sym, sym]. Unknown dims must not count as equal, or both
+    Reshapes look like no-ops.
+    """
+
+    def const(name, values):
+        return helper.make_node(
+            "Constant",
+            [],
+            [name],
+            value=helper.make_tensor(
+                f"{name}_val", TensorProto.INT64, [len(values)], values
+            ),
+        )
+
+    def scalar(name, value):
+        return helper.make_node(
+            "Constant",
+            [],
+            [name],
+            value=helper.make_tensor(f"{name}_val", TensorProto.INT64, [], [value]),
+        )
+
+    def info(name, shape):
+        return helper.make_value_info(
+            name, helper.make_tensor_type_proto(TensorProto.FLOAT, shape=shape)
+        )
+
+    nodes = [
+        helper.make_node("Shape", ["x"], ["shape"]),
+        const("pads", [0, 0, 0, 1, 0, 0, 0, 0]),
+        helper.make_node("Pad", ["x", "pads"], ["padded"]),
+        scalar("i0", 0),
+        scalar("i2", 2),
+        scalar("i3", 3),
+        const("axes0", [0]),
+        helper.make_node("Gather", ["shape", "i0"], ["b"], axis=0),
+        helper.make_node("Gather", ["shape", "i2"], ["t"], axis=0),
+        helper.make_node("Gather", ["shape", "i3"], ["p"], axis=0),
+        helper.make_node("Unsqueeze", ["b", "axes0"], ["b1"]),
+        helper.make_node("Unsqueeze", ["t", "axes0"], ["t1"]),
+        helper.make_node("Unsqueeze", ["p", "axes0"], ["p1"]),
+        const("heads", [2]),
+        const("minus_one", [-1]),
+        helper.make_node("Concat", ["b1", "heads", "minus_one", "t1"], ["view1"], axis=0),
+        helper.make_node("Concat", ["b1", "heads", "t1", "p1"], ["view2"], axis=0),
+        helper.make_node("Reshape", ["padded", "view1"], ["r1"]),
+        const("starts", [1]),
+        const("ends", [2**62]),
+        const("axes2", [2]),
+        helper.make_node("Slice", ["r1", "starts", "ends", "axes2"], ["sliced"]),
+        helper.make_node("Reshape", ["sliced", "view2"], ["y"]),
+    ]
+    graph = helper.make_graph(
+        name="main_graph",
+        nodes=nodes,
+        inputs=[info("x", ["b", 2, "t", "p"])],
+        outputs=[info("y", ["b", 2, "t", "p"])],
+        value_info=[
+            info("padded", ["b", 2, "t", "p_plus_1"]),
+            info("r1", ["b", 2, "two_t", "t"]),
+            info("sliced", ["b", 2, "two_t_minus_1", "t"]),
+        ],
+    )
+    save(
+        helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", OPSET)]),
+        "simplify_reshape_symbolic_dims.onnx",
+    )
+
+
 if __name__ == "__main__":
     print("Generating simplify test models:")
     shape_folding()
@@ -1027,4 +1102,5 @@ if __name__ == "__main__":
     reshape_concat_shape()
     resize_sizes_from_shape()
     pool_output_dims()
+    reshape_symbolic_dims()
     print("Done.")
