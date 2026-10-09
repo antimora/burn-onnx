@@ -13,13 +13,17 @@
 //!
 //! The deprecated `Scatter` operator (versions 9 and 11) is ScatterElements without a
 //! reduction, so `ScatterProcessor` builds the same node for it.
+//!
+//! When `data` is a Shape value (PyTorch exports index_put on size vectors this way), the
+//! output is a Shape too, and rank-1 `indices` and `updates` are requested as Shapes.
 
 use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
 
-use crate::ir::{Argument, Node, RawNode};
+use crate::ir::{ArgType, Argument, Node, RawNode};
 use crate::processor::{
-    InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
+    ArgPreference, InputPreferences, InputSpec, NodeProcessor, NodeSpec, OutputPreferences,
+    OutputSpec, ProcessError,
 };
 
 /// Reduction mode for ScatterElements.
@@ -68,6 +72,23 @@ impl NodeProcessor for ScatterElementsProcessor {
         }
     }
 
+    fn input_preferences(
+        &self,
+        node: &RawNode,
+        _opset: usize,
+    ) -> Result<Option<InputPreferences>, ProcessError> {
+        if !node.inputs[0].ty.is_shape() {
+            return Ok(None);
+        }
+        let mut prefs = InputPreferences::new();
+        for input in &node.inputs[1..] {
+            if matches!(&input.ty, ArgType::Tensor(t) if t.rank == 1) {
+                prefs = prefs.add(&input.name, ArgPreference::Shape);
+            }
+        }
+        Ok(Some(prefs))
+    }
+
     fn infer_types(
         &self,
         node: &mut RawNode,
@@ -75,18 +96,37 @@ impl NodeProcessor for ScatterElementsProcessor {
         _output_preferences: &OutputPreferences,
     ) -> Result<(), ProcessError> {
         // Output has same type and shape as data input
-        if let crate::ir::ArgType::Tensor(data_tensor) = &node.inputs[0].ty {
-            node.outputs[0].ty = crate::ir::ArgType::Tensor(data_tensor.clone());
+        match &node.inputs[0].ty {
+            ArgType::Tensor(data_tensor) => {
+                node.outputs[0].ty = ArgType::Tensor(data_tensor.clone());
+            }
+            ArgType::Shape(rank) => {
+                for input in &node.inputs[1..] {
+                    match &input.ty {
+                        ArgType::Shape(_) => {}
+                        ArgType::Tensor(t) if t.rank == 1 => {}
+                        other => {
+                            return Err(ProcessError::TypeMismatch {
+                                expected: "Shape or rank-1 Tensor (data is a Shape)".to_string(),
+                                actual: format!("{:?}", other),
+                            });
+                        }
+                    }
+                }
+                node.outputs[0].ty = ArgType::Shape(*rank);
+            }
+            _ => {}
         }
         Ok(())
     }
 
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
         let input_dim = match &node.inputs[0].ty {
-            crate::ir::ArgType::Tensor(tensor) => tensor.rank as i64,
+            ArgType::Tensor(tensor) => tensor.rank as i64,
+            ArgType::Shape(_) => 1,
             other => {
                 return Err(ProcessError::TypeMismatch {
-                    expected: "Tensor".to_string(),
+                    expected: "Tensor or Shape".to_string(),
                     actual: format!("{:?}", other),
                 });
             }
@@ -163,6 +203,14 @@ impl NodeProcessor for ScatterProcessor {
             min_opset: 9,
             ..ScatterElementsProcessor.spec()
         }
+    }
+
+    fn input_preferences(
+        &self,
+        node: &RawNode,
+        opset: usize,
+    ) -> Result<Option<InputPreferences>, ProcessError> {
+        ScatterElementsProcessor.input_preferences(node, opset)
     }
 
     fn infer_types(
@@ -294,5 +342,37 @@ mod tests {
             }
             other => panic!("Expected tensor output, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_infer_types_shape_data() {
+        let mut node = TestNodeBuilder::new(NodeType::ScatterElements, "scatter_shape")
+            .input_shape("data", 3)
+            .input_tensor_i64("indices", 1, None)
+            .input_shape("updates", 1)
+            .output_tensor_i64("output", 1, None)
+            .build();
+        let processor = ScatterElementsProcessor;
+
+        let prefs = processor.input_preferences(&node, 11).unwrap().unwrap();
+        assert!(matches!(prefs.get("indices"), [ArgPreference::Shape]));
+
+        processor
+            .infer_types(&mut node, 11, &OutputPreferences::new())
+            .unwrap();
+        assert_eq!(node.outputs[0].ty, ArgType::Shape(3));
+        assert_eq!(processor.extract_config(&node, 11).unwrap().axis, 0);
+    }
+
+    #[test]
+    fn test_infer_types_shape_data_rejects_rank_2_indices() {
+        let mut node = TestNodeBuilder::new(NodeType::ScatterElements, "scatter_shape")
+            .input_shape("data", 3)
+            .input_tensor_i64("indices", 2, None)
+            .input_shape("updates", 1)
+            .output_tensor_i64("output", 1, None)
+            .build();
+        let result = ScatterElementsProcessor.infer_types(&mut node, 11, &OutputPreferences::new());
+        assert!(matches!(result, Err(ProcessError::TypeMismatch { .. })));
     }
 }
