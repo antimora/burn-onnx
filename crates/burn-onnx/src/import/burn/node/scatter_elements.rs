@@ -812,4 +812,82 @@ mod tests {
         }
         ");
     }
+
+    #[test]
+    fn test_scatter_elements_shape_data_add() {
+        let config = ScatterElementsConfig::new(0, ScatterElementsReduction::Add);
+        let node = ScatterElementsNodeBuilder::new("scatter1")
+            .input_shape("data", 3)
+            .input_shape("indices", 1)
+            .input_shape("updates", 1)
+            .output_shape("output", 3)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, data: [i64; 3], indices: [i64; 1], updates: [i64; 1]) -> [i64; 3] {
+            let output: [i64; 3] = {
+                let (mut data, indices, updates) = (data, indices, updates);
+                for (index, update) in core::iter::zip(indices, updates) {
+                    let index = index.rem_euclid(3) as usize;
+                    data[index] += update;
+                }
+                data
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_scatter_elements_shape_data_mul() {
+        let config = ScatterElementsConfig::new(0, ScatterElementsReduction::Mul);
+        let node = ScatterElementsNodeBuilder::new("scatter1")
+            .input_shape("data", 3)
+            .input_shape("indices", 1)
+            .input_shape("updates", 1)
+            .output_shape("output", 3)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, data: [i64; 3], indices: [i64; 1], updates: [i64; 1]) -> [i64; 3] {
+            let output: [i64; 3] = {
+                let (mut data, indices, updates) = (data, indices, updates);
+                for (index, update) in core::iter::zip(indices, updates) {
+                    let index = index.rem_euclid(3) as usize;
+                    data[index] *= update;
+                }
+                data
+            };
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_scatter_elements_shape_data_min() {
+        let config = ScatterElementsConfig::new(0, ScatterElementsReduction::Min);
+        let node = ScatterElementsNodeBuilder::new("scatter1")
+            .input_shape("data", 3)
+            .input_shape("indices", 1)
+            .input_shape("updates", 1)
+            .output_shape("output", 3)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, data: [i64; 3], indices: [i64; 1], updates: [i64; 1]) -> [i64; 3] {
+            let output: [i64; 3] = {
+                let (mut data, indices, updates) = (data, indices, updates);
+                for (index, update) in core::iter::zip(indices, updates) {
+                    let index = index.rem_euclid(3) as usize;
+                    data[index] = data[index].min(update);
+                }
+                data
+            };
+            output
+        }
+        ");
+    }
 }

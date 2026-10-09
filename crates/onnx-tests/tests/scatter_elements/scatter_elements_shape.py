@@ -20,7 +20,7 @@ import onnx
 from onnx import TensorProto, helper, numpy_helper
 from onnx.reference import ReferenceEvaluator
 
-OPSET_VERSION = 17
+OPSET_VERSION = 18
 
 
 def const(name, arr):
