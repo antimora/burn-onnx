@@ -17,12 +17,13 @@
 //! - **Opset 12**: Extended type support to include integer types (int8-64, uint8-64)
 //! - **Opset 13+**: Added bfloat16 support and defined behavior when min > max
 
+use burn_tensor::{Scalar, TensorData};
 use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
 
 use crate::ir::Argument;
 
-use crate::ir::{Node, RawNode, RuntimeInputRef, TensorDataExt};
+use crate::ir::{Node, RawNode, RuntimeInputRef};
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError, same_as_input,
 };
@@ -30,8 +31,9 @@ use crate::processor::{
 /// Represents either a static value or a runtime argument for clip parameters.
 #[derive(Debug, Clone)]
 pub enum ClipInput {
-    /// Static value known at compile time.
-    Static(f64),
+    /// Static value known at compile time. Integer bounds are kept as
+    /// `Scalar::Int`/`Scalar::UInt` so they are not rounded through f64.
+    Static(Scalar),
     /// Runtime argument determined during execution - references node.inputs\[input_index\].
     Runtime(RuntimeInputRef),
 }
@@ -99,30 +101,52 @@ impl NodeProcessor for ClipProcessor {
     }
 
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
-        fn get_clip_input(node: &RawNode, index: usize, _param_name: &str) -> Option<ClipInput> {
-            let input = node.inputs.get(index)?;
+        /// Read a constant bound in its own numeric kind, so i64/u64 values
+        /// above 2^53 stay exact.
+        fn static_bound(data: &TensorData, name: &str) -> Result<Scalar, ProcessError> {
+            let dtype = data.dtype();
+            let value = if dtype.is_float() {
+                data.iter::<f64>().next().map(Scalar::Float)
+            } else if dtype.is_uint() {
+                data.iter::<u64>().next().map(Scalar::UInt)
+            } else if dtype.is_int() {
+                data.iter::<i64>().next().map(Scalar::Int)
+            } else {
+                return Err(ProcessError::TypeMismatch {
+                    expected: format!("numeric Clip {name}"),
+                    actual: format!("{dtype:?}"),
+                });
+            };
+            value.ok_or_else(|| ProcessError::InvalidAttribute {
+                name: name.to_string(),
+                reason: "constant Clip bound has no elements".to_string(),
+            })
+        }
+
+        fn get_clip_input(
+            node: &RawNode,
+            index: usize,
+            name: &str,
+        ) -> Result<Option<ClipInput>, ProcessError> {
+            let Some(input) = node.inputs.get(index) else {
+                return Ok(None);
+            };
 
             // In ONNX, optional inputs are represented by empty strings
             // Skip optional inputs (those that were never provided)
             if input.is_optional() {
-                return None;
+                return Ok(None);
             }
 
             match input.value() {
                 None => {
                     // Runtime input - store reference instead of cloning the argument
-                    Some(ClipInput::Runtime(RuntimeInputRef::new(
+                    Ok(Some(ClipInput::Runtime(RuntimeInputRef::new(
                         input.name.clone(),
                         index,
-                    )))
+                    ))))
                 }
-                Some(tensor_data) => {
-                    // Static input - extract the scalar value, converting to f64
-                    match tensor_data.scalar_f64() {
-                        Ok(value) => Some(ClipInput::Static(value)),
-                        Err(_) => None, // Unsupported type
-                    }
-                }
+                Some(tensor_data) => Ok(Some(ClipInput::Static(static_bound(&tensor_data, name)?))),
             }
         }
 
@@ -134,11 +158,11 @@ impl NodeProcessor for ClipProcessor {
             match key.as_str() {
                 "min" => {
                     let min = value.clone().into_f32()? as f64;
-                    min_result = Some(ClipInput::Static(min));
+                    min_result = Some(ClipInput::Static(Scalar::Float(min)));
                 }
                 "max" => {
                     let max = value.clone().into_f32()? as f64;
-                    max_result = Some(ClipInput::Static(max));
+                    max_result = Some(ClipInput::Static(Scalar::Float(max)));
                 }
                 _ => {}
             }
@@ -147,11 +171,11 @@ impl NodeProcessor for ClipProcessor {
         // For Clip Opset 11+, the min and max values are inputs
         // Check if inputs are available and attributes weren't set
         if min_result.is_none() {
-            min_result = get_clip_input(node, 1, "min");
+            min_result = get_clip_input(node, 1, "min")?;
         }
 
         if max_result.is_none() {
-            max_result = get_clip_input(node, 2, "max");
+            max_result = get_clip_input(node, 2, "max")?;
         }
 
         // Neither min nor max specified -> Clip is identity. ONNX
@@ -180,7 +204,7 @@ impl NodeProcessor for ClipProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::NodeType;
+    use crate::ir::{ArgType, DType, NodeType, TensorType};
     use crate::node::test_utils::TestNodeBuilder;
 
     fn create_test_node_with_attributes(min: Option<f32>, max: Option<f32>) -> RawNode {
@@ -223,8 +247,12 @@ mod tests {
 
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
-        assert!(matches!(config.min, Some(ClipInput::Static(v)) if (v - (-1.0)).abs() < 1e-6));
-        assert!(matches!(config.max, Some(ClipInput::Static(v)) if (v - 1.0).abs() < 1e-6));
+        assert!(
+            matches!(config.min, Some(ClipInput::Static(Scalar::Float(v))) if (v - (-1.0)).abs() < 1e-6)
+        );
+        assert!(
+            matches!(config.max, Some(ClipInput::Static(Scalar::Float(v))) if (v - 1.0).abs() < 1e-6)
+        );
     }
 
     #[test]
@@ -238,7 +266,9 @@ mod tests {
 
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
-        assert!(matches!(config.min, Some(ClipInput::Static(v)) if (v - (-1.0)).abs() < 1e-6));
+        assert!(
+            matches!(config.min, Some(ClipInput::Static(Scalar::Float(v))) if (v - (-1.0)).abs() < 1e-6)
+        );
         assert!(config.max.is_none());
     }
 
@@ -254,7 +284,9 @@ mod tests {
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
         assert!(config.min.is_none());
-        assert!(matches!(config.max, Some(ClipInput::Static(v)) if (v - 1.0).abs() < 1e-6));
+        assert!(
+            matches!(config.max, Some(ClipInput::Static(Scalar::Float(v))) if (v - 1.0).abs() < 1e-6)
+        );
     }
 
     #[test]
@@ -268,8 +300,12 @@ mod tests {
 
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
-        assert!(matches!(config.min, Some(ClipInput::Static(v)) if (v - (-1.0)).abs() < 1e-6));
-        assert!(matches!(config.max, Some(ClipInput::Static(v)) if (v - 1.0).abs() < 1e-6));
+        assert!(
+            matches!(config.min, Some(ClipInput::Static(Scalar::Float(v))) if (v - (-1.0)).abs() < 1e-6)
+        );
+        assert!(
+            matches!(config.max, Some(ClipInput::Static(Scalar::Float(v))) if (v - 1.0).abs() < 1e-6)
+        );
     }
 
     #[test]
@@ -285,7 +321,9 @@ mod tests {
 
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
-        assert!(matches!(config.min, Some(ClipInput::Static(v)) if (v - (-1.0)).abs() < 1e-6));
+        assert!(
+            matches!(config.min, Some(ClipInput::Static(Scalar::Float(v))) if (v - (-1.0)).abs() < 1e-6)
+        );
         // max is a runtime input (no static value provided)
         assert!(matches!(config.max, Some(ClipInput::Runtime(_))));
     }
@@ -305,7 +343,9 @@ mod tests {
         processor.infer_types(&mut node, 16, &prefs).unwrap();
         // min is a runtime input (no static value provided)
         assert!(matches!(config.min, Some(ClipInput::Runtime(_))));
-        assert!(matches!(config.max, Some(ClipInput::Static(v)) if (v - 1.0).abs() < 1e-6));
+        assert!(
+            matches!(config.max, Some(ClipInput::Static(Scalar::Float(v))) if (v - 1.0).abs() < 1e-6)
+        );
     }
 
     fn create_test_node_with_runtime_inputs() -> TestNodeBuilder {
@@ -352,7 +392,9 @@ mod tests {
         let prefs = OutputPreferences::new();
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
-        assert!(matches!(config.min, Some(ClipInput::Static(v)) if (v - (-1.0)).abs() < 1e-6));
+        assert!(
+            matches!(config.min, Some(ClipInput::Static(Scalar::Float(v))) if (v - (-1.0)).abs() < 1e-6)
+        );
         assert!(matches!(config.max, Some(ClipInput::Runtime(ref arg)) if arg.name == "max"));
     }
 
@@ -415,5 +457,49 @@ mod tests {
         // Verify inputs were converted to Static
         assert!(node.inputs[1].is_static());
         assert!(node.inputs[2].is_static());
+    }
+
+    #[test]
+    fn test_clip_config_int64_bound_keeps_precision() {
+        // 2^53 + 1 is not representable in f64; it must not be rounded.
+        let node = TestNodeBuilder::new(NodeType::Clip, "test_clip")
+            .input_tensor_i64("X", 1, None)
+            .input_scalar_tensor_i64("min", Some(9_007_199_254_740_993))
+            .output_tensor_i64("Y", 1, None)
+            .build_with_graph_data(16);
+
+        let config = ClipProcessor.extract_config(&node, 16).unwrap();
+        assert!(matches!(
+            config.min,
+            Some(ClipInput::Static(Scalar::Int(9_007_199_254_740_993)))
+        ));
+        assert!(config.max.is_none());
+    }
+
+    #[test]
+    fn test_clip_config_uint64_bounds() {
+        // UInt64 bounds used to be dropped because they could not be read as f64.
+        let tensor = ArgType::Tensor(TensorType {
+            dtype: DType::U64,
+            rank: 1,
+            static_shape: None,
+        });
+        let scalar = |v: u64| TensorData::new(vec![v], [0usize; 0]);
+        let node = TestNodeBuilder::new(NodeType::Clip, "test_clip")
+            .add_input("X", tensor.clone())
+            .input_tensor_with_data("min", DType::U64, 0, scalar(3))
+            .input_tensor_with_data("max", DType::U64, 0, scalar(u64::MAX - 1))
+            .add_output("Y", tensor)
+            .build_with_graph_data(16);
+
+        let config = ClipProcessor.extract_config(&node, 16).unwrap();
+        assert!(matches!(
+            config.min,
+            Some(ClipInput::Static(Scalar::UInt(3)))
+        ));
+        assert!(matches!(
+            config.max,
+            Some(ClipInput::Static(Scalar::UInt(v))) if v == u64::MAX - 1
+        ));
     }
 }
