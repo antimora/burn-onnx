@@ -1,6 +1,7 @@
 use super::prelude::*;
 
-/// Which native scalar type a runtime Clip bound should be cast to.
+/// Which native scalar type a Clip bound is emitted as: the type of a static
+/// literal, or the cast target of a runtime bound.
 /// Picked once from the input tensor's dtype so the bound stays in a
 /// type that can represent every value the input can hold:
 ///
@@ -44,18 +45,15 @@ impl ClipBoundCast {
                 let v = v.elem::<u64>();
                 quote! { #v }
             }
-            Self::F64 => {
-                let v = v.elem::<f64>();
-                quote! { #v }
-            }
+            Self::F64 => super::super::codegen::f64_to_tokens(v.elem::<f64>()),
         }
     }
 }
 
 /// Token stream for a single Clip `min`/`max` bound. Static bounds are
 /// inlined as `bound_cast`-typed literals; runtime bounds are extracted from
-/// the input (native scalar or `ScalarTensor`) and `as`-cast to `bound_cast`
-/// — see `ClipBoundCast` for why the cast width is chosen up front from the
+/// the input (native scalar or `ScalarTensor`) and `as`-cast to `bound_cast`.
+/// See `ClipBoundCast` for why the cast width is chosen up front from the
 /// data tensor's dtype.
 fn clip_bound_expr(
     bound: &Option<onnx_ir::node::clip::ClipInput>,
@@ -101,7 +99,7 @@ impl NodeCodegen for onnx_ir::clip::ClipNode {
     fn forward(&self, scope: &mut ScopeAtPosition<'_>) -> TokenStream {
         let output = arg_to_ident(self.outputs.first().unwrap());
 
-        // The input dtype determines whether runtime bounds should be
+        // The input dtype determines whether bounds should be
         // carried as i64, u64, or f64. Picking the widest type that can
         // hold every value in the input's dtype avoids silently wrapping
         // large bounds through a narrower intermediate.
@@ -465,6 +463,19 @@ mod tests {
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<2, Int>) -> Tensor<2, Int> {
             let output = input.clamp_max(9007199254740993i64);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_clip_infinite_static_bound() {
+        // Non-finite floats have no Rust literal form.
+        let node = create_clip_node("clip1", Some(f64::NEG_INFINITY), None);
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<2>) -> Tensor<2> {
+            let output = input.clamp_min(f64::NEG_INFINITY);
             output
         }
         ");

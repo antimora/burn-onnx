@@ -17,13 +17,13 @@
 //! - **Opset 12**: Extended type support to include integer types (int8-64, uint8-64)
 //! - **Opset 13+**: Added bfloat16 support and defined behavior when min > max
 
-use burn_tensor::{Scalar, TensorData};
+use burn_tensor::TensorData;
 use derive_new::new;
 use onnx_ir_derive::NodeBuilder;
 
 use crate::ir::Argument;
 
-use crate::ir::{Node, RawNode, RuntimeInputRef};
+use crate::ir::{ArgType, DType, Node, RawNode, RuntimeInputRef, Scalar};
 use crate::processor::{
     InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError, same_as_input,
 };
@@ -102,25 +102,36 @@ impl NodeProcessor for ClipProcessor {
 
     fn extract_config(&self, node: &RawNode, _opset: usize) -> Result<Self::Config, ProcessError> {
         /// Read a constant bound in its own numeric kind, so i64/u64 values
-        /// above 2^53 stay exact.
-        fn static_bound(data: &TensorData, name: &str) -> Result<Scalar, ProcessError> {
+        /// above 2^53 stay exact. ONNX requires the bound to share the
+        /// input's type; checking the kind here keeps codegen's conversion
+        /// to the input's bound type lossless.
+        fn static_bound(
+            data: &TensorData,
+            input_dtype: DType,
+            name: &str,
+        ) -> Result<Scalar, ProcessError> {
             let dtype = data.dtype();
-            let value = if dtype.is_float() {
+            let value = if dtype.is_float() && input_dtype.is_float() {
                 data.iter::<f64>().next().map(Scalar::Float)
-            } else if dtype.is_uint() {
+            } else if dtype.is_uint() && input_dtype.is_uint() {
                 data.iter::<u64>().next().map(Scalar::UInt)
-            } else if dtype.is_int() {
+            } else if dtype.is_int() && input_dtype.is_int() {
                 data.iter::<i64>().next().map(Scalar::Int)
             } else {
                 return Err(ProcessError::TypeMismatch {
-                    expected: format!("numeric Clip {name}"),
+                    expected: format!(
+                        "Clip {name} of the same numeric kind as input {input_dtype:?}"
+                    ),
                     actual: format!("{dtype:?}"),
                 });
             };
-            value.ok_or_else(|| ProcessError::InvalidAttribute {
-                name: name.to_string(),
-                reason: "constant Clip bound has no elements".to_string(),
-            })
+            match (value, data.num_elements()) {
+                (Some(value), 1) => Ok(value),
+                (_, n) => Err(ProcessError::TypeMismatch {
+                    expected: format!("scalar Clip {name}"),
+                    actual: format!("{n} elements"),
+                }),
+            }
         }
 
         fn get_clip_input(
@@ -146,7 +157,15 @@ impl NodeProcessor for ClipProcessor {
                         index,
                     ))))
                 }
-                Some(tensor_data) => Ok(Some(ClipInput::Static(static_bound(&tensor_data, name)?))),
+                Some(tensor_data) => {
+                    // Shape inputs carry i64 values but have no DType of their own
+                    let input_dtype = match &node.inputs[0].ty {
+                        ArgType::Shape(_) => DType::I64,
+                        ty => ty.elem_type(),
+                    };
+                    let value = static_bound(&tensor_data, input_dtype, name)?;
+                    Ok(Some(ClipInput::Static(value)))
+                }
             }
         }
 
@@ -204,7 +223,7 @@ impl NodeProcessor for ClipProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{ArgType, DType, NodeType, TensorType};
+    use crate::ir::{NodeType, TensorType};
     use crate::node::test_utils::TestNodeBuilder;
 
     fn create_test_node_with_attributes(min: Option<f32>, max: Option<f32>) -> RawNode {
@@ -501,5 +520,35 @@ mod tests {
             config.max,
             Some(ClipInput::Static(Scalar::UInt(v))) if v == u64::MAX - 1
         ));
+    }
+
+    fn clip_node_with_bound(input_dtype: DType, min: TensorData) -> RawNode {
+        let tensor = ArgType::Tensor(TensorType {
+            dtype: input_dtype,
+            rank: 1,
+            static_shape: None,
+        });
+        let min_dtype = min.dtype();
+        let min_rank = min.shape().len();
+        TestNodeBuilder::new(NodeType::Clip, "test_clip")
+            .add_input("X", tensor.clone())
+            .input_tensor_with_data("min", min_dtype, min_rank, min)
+            .add_output("Y", tensor)
+            .build_with_graph_data(16)
+    }
+
+    #[test]
+    fn test_clip_config_rejects_bound_kind_mismatch() {
+        // A negative int64 bound on a uint8 input has no u64 value to emit.
+        let node = clip_node_with_bound(DType::U8, TensorData::new(vec![-1i64], [0usize; 0]));
+        let err = ClipProcessor.extract_config(&node, 16).unwrap_err();
+        assert!(matches!(err, ProcessError::TypeMismatch { .. }), "{err}");
+    }
+
+    #[test]
+    fn test_clip_config_rejects_non_scalar_bound() {
+        let node = clip_node_with_bound(DType::F32, TensorData::new(vec![0f32, 1.0], [2]));
+        let err = ClipProcessor.extract_config(&node, 16).unwrap_err();
+        assert!(matches!(err, ProcessError::TypeMismatch { .. }), "{err}");
     }
 }

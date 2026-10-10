@@ -9,8 +9,7 @@
 
 # used to generate model: clip_static_typed_bounds.onnx
 #
-# Clip with constant bounds whose exact value only survives if it is not read
-# through f64:
+# Clip with constant bounds that were mishandled when read through f64:
 # - uint32 data with uint32 min/max (bounds of this dtype used to be dropped)
 # - int64 data with max = 2^53 + 1, which f64 rounds down to 2^53
 
