@@ -12,7 +12,7 @@
 //!
 //! ## Opset Versions
 //!
-//! - **Opset 6-10**: Initial version with min and max as float attributes only
+//! - **Opset 1-10**: min and max as float attributes only
 //! - **Opset 11**: Changed min and max from attributes to optional inputs (allows runtime values)
 //! - **Opset 12**: Extended type support to include integer types (int8-64, uint8-64)
 //! - **Opset 13+**: Added bfloat16 support and defined behavior when min > max
@@ -70,7 +70,7 @@ impl NodeProcessor for ClipProcessor {
 
     fn lift_constants(&self, node: &mut RawNode, _opset: usize) -> Result<(), ProcessError> {
         // Lift min (input[1]) and max (input[2]) if present and they have constant values
-        // For Opset 6-10: min/max are attributes, not inputs (no lifting needed)
+        // For Opset 1-10: min/max are attributes, not inputs (no lifting needed)
         // For Opset 11+: min/max are optional inputs that might be constants or runtime values
         if node.inputs.len() > 1 && node.inputs[1].is_constant() {
             node.inputs[1].to_static()?;
@@ -90,9 +90,9 @@ impl NodeProcessor for ClipProcessor {
     ) -> Result<(), ProcessError> {
         // TODO: Add validation for unexpected attributes
         // TODO: Validate behavior when min > max - spec says "all values are set to max" but not tested
-        // TODO: Add test for integer type clipping (int8, int16, int32, int64, uint8-64) - opset 12+
+        // TODO: Add test for integer type clipping (int8, int16, int32, uint8, uint16) - opset 12+; int64 and uint32 are covered
         // TODO: Add test for NaN/Inf handling - spec doesn't specify behavior
-        // TODO: Validate min/max tensor shapes when provided as inputs (opset 11+) - should be scalars or broadcastable
+        // TODO: Validate runtime min/max shapes (opset 11+) - must be scalars; constant bounds are checked in extract_config
 
         // Infer output type
         same_as_input(node);
@@ -172,7 +172,7 @@ impl NodeProcessor for ClipProcessor {
         let mut min_result: Option<ClipInput> = None;
         let mut max_result: Option<ClipInput> = None;
 
-        // For Clip Opset 6+, the min and max values are attributes
+        // For Clip Opset 1-10, the min and max values are attributes
         for (key, value) in node.attrs.iter() {
             match key.as_str() {
                 "min" => {
@@ -550,5 +550,24 @@ mod tests {
         let node = clip_node_with_bound(DType::F32, TensorData::new(vec![0f32, 1.0], [2]));
         let err = ClipProcessor.extract_config(&node, 16).unwrap_err();
         assert!(matches!(err, ProcessError::TypeMismatch { .. }), "{err}");
+    }
+
+    #[test]
+    fn test_clip_config_bf16_and_int16_bounds() {
+        // Neither dtype could be read through scalar_f64, so these bounds used to be dropped.
+        let bf16 = half::bf16::from_f32(1.5);
+        let node = clip_node_with_bound(DType::BF16, TensorData::new(vec![bf16], [0usize; 0]));
+        let config = ClipProcessor.extract_config(&node, 16).unwrap();
+        assert!(matches!(
+            config.min,
+            Some(ClipInput::Static(Scalar::Float(1.5)))
+        ));
+
+        let node = clip_node_with_bound(DType::I16, TensorData::new(vec![-300i16], [0usize; 0]));
+        let config = ClipProcessor.extract_config(&node, 16).unwrap();
+        assert!(matches!(
+            config.min,
+            Some(ClipInput::Static(Scalar::Int(-300)))
+        ));
     }
 }
