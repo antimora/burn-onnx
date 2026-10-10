@@ -30,7 +30,7 @@ pub(super) fn dynamic_input_names(nodes: &[RawNode]) -> HashSet<String> {
 /// is carried to every consumer whose input type changes. Nodes are kept in topological order,
 /// so visiting them by index sees each producer before its consumers. The retype is applied
 /// only if all of these hold, and is dropped as a whole otherwise:
-/// - every touched node re-infers and passes the checks type inference runs
+/// - every touched node re-infers, passes the checks type inference runs, and still builds
 /// - no graph output changes type, so the generated `forward` signature stays the same
 /// - an output only changes kind when it becomes a Shape, and every Shape it produces either
 ///   feeds a node that outputs a Shape itself or an input that asks for a Shape. Inference
@@ -115,7 +115,10 @@ impl Retype<'_> {
             let processor = self.hooks.resolve(&node.node_type, registry);
             let inferred = validate_node_spec(&node, self.opset, &processor.spec())
                 .and_then(|_| processor.infer_types(&mut node, self.opset, &prefs))
-                .and_then(|_| validate_no_rank_zero_tensors(&node));
+                .and_then(|_| validate_no_rank_zero_tensors(&node))
+                // Inference can accept a type the config then rejects, as CumSum
+                // does for a Shape input with a static axis
+                .and_then(|_| processor.build_node(node.clone(), self.opset).map(drop));
             if let Err(e) = inferred {
                 log::debug!(
                     "Simplification: not retyping from '{}', '{}' does not accept it: {}",
@@ -369,6 +372,33 @@ mod tests {
         nodes[2]
             .attrs
             .insert("to".to_string(), AttributeValue::Int64(1));
+        let before = types(&nodes);
+        assert!(!retype(&mut nodes, &[], &["len"]));
+        assert_eq!(types(&nodes), before);
+    }
+
+    #[test]
+    fn shape_through_cumsum_into_expand_is_dropped() {
+        // Expand asks for a Shape and CumSum infers one, but CumSum's config rejects it
+        let state = state();
+        let mut nodes = vec![
+            ones(&state),
+            node(
+                "cumsum",
+                NodeType::CumSum,
+                vec![
+                    tensor("ones_out", DType::I64, 1),
+                    Argument::from_const_i64("axis", 0),
+                ],
+                tensor("pos", DType::I64, 1),
+            ),
+            node(
+                "expand",
+                NodeType::Expand,
+                vec![tensor("x", DType::F32, 3), tensor("pos", DType::I64, 1)],
+                tensor("y", DType::F32, 3),
+            ),
+        ];
         let before = types(&nodes);
         assert!(!retype(&mut nodes, &[], &["len"]));
         assert_eq!(types(&nodes), before);
