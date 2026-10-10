@@ -31,7 +31,9 @@ include_simplified_models!(
     simplify_pool_output_dims,
     simplify_reshape_symbolic_dims,
     simplify_pad_from_constants,
-    simplify_ones_times_minus_one
+    simplify_ones_times_minus_one,
+    simplify_expand_minus_one_sizes,
+    simplify_ones_cumsum_positions
 );
 
 /// Extract the `forward` method body from generated source code.
@@ -778,43 +780,37 @@ mod tests {
         let s = simplified_source::simplify_expand_shape_chain();
         let u = unsimplified_source::simplify_expand_shape_chain();
         assert_codegen_differs(s, u, "expand_shape_chain");
-        // The folded Concat stays a Shape array, which Equal and Where read as `&[i64]`
+        // The folded Concat stays a Shape array, and with Shape(target) folded the whole
+        // -1 fixup runs on host arrays
         insta::assert_snapshot!(extract_forward(s), @r"
         pub fn forward(&self, x: Tensor<2>, y: Tensor<2>) -> Tensor<2> {
                 let concat1_out1: [i64; 2] = [1i64, 3i64];
-                let shape2_out1: [i64; 1] = [2i64];
-                let constantofshape1_out1 = Tensor::<
-                    1,
-                    Int,
-                >::from_data(
-                        burn::tensor::TensorData::from([1i64 as i64]),
-                        (&self.device, burn::tensor::DType::I64),
-                    )
-                    .reshape([1])
-                    .expand(shape2_out1);
-                let constant4_out1 = self.constant4.val();
-                let mul1_out1 = constantofshape1_out1.clone().mul(constant4_out1);
-                let equal1_out1 = Tensor::<
-                    1,
-                    burn::tensor::Int,
-                >::from_data(
-                        burn::tensor::TensorData::from(&concat1_out1 as &[i64]),
-                        (&self.device, burn::tensor::DType::I64),
-                    )
-                    .equal(mul1_out1);
-                let where1_out1 = Tensor::<
-                    1,
-                    burn::tensor::Int,
-                >::from_data(
-                        burn::tensor::TensorData::from(&concat1_out1 as &[i64]),
-                        (&self.device, burn::tensor::DType::I64),
-                    )
-                    .mask_where(equal1_out1, constantofshape1_out1);
+                let constantofshape1_out1: [i64; 2] = [1i64, 1i64];
+                let mul1_out1: [i64; 2] = [-1i64, -1i64];
+                let equal1_out1 = {
+                    let __lhs = concat1_out1;
+                    let __rhs = mul1_out1;
+                    core::array::from_fn::<
+                        i64,
+                        2usize,
+                        _,
+                    >(|__i| if __lhs[__i] == __rhs[__i] { 1i64 } else { 0i64 })
+                };
+                let where1_out1 = {
+                    let mut result = concat1_out1;
+                    for (i, (cond_item, x_item)) in equal1_out1
+                        .iter()
+                        .zip(constantofshape1_out1.iter())
+                        .enumerate()
+                    {
+                        if *cond_item != 0 {
+                            result[i] = *x_item;
+                        }
+                    }
+                    result
+                };
                 let expand1_out1 = {
-                    let onnx_shape: [i64; 2usize] = TryInto::<
-                        [i64; 2usize],
-                    >::try_into(where1_out1.to_data().convert::<i64>().as_slice().unwrap())
-                        .unwrap();
+                    let onnx_shape: [i64; 2usize] = where1_out1;
                     let input_dims = x.dims();
                     let mut shape = onnx_shape;
                     #[allow(clippy::needless_range_loop)]
@@ -914,6 +910,110 @@ mod tests {
         out.to_data()
             .assert_eq(&TensorData::from([2i64, 1, 5]), false);
         assert_eq!(out.to_data(), u.forward(input).to_data());
+    }
+
+    #[test]
+    fn expand_minus_one_sizes() {
+        let device = Default::default();
+        // `Model::default()` loads constants from the bpk; `new` would zero them.
+        let s = simplified::simplify_expand_minus_one_sizes::Model::default();
+        let u = unsimplified::simplify_expand_minus_one_sizes::Model::default();
+        let x = Tensor::<3>::from_floats([[[0.], [1.], [2.], [3.]]], &device);
+        let y = Tensor::<3>::zeros([2, 4, 3], &device);
+        let out = s.forward(x.clone(), y.clone());
+        // x.expand(2, -1, 3), from ReferenceEvaluator
+        let row = [[0f32, 0., 0.], [1., 1., 1.], [2., 2., 2.], [3., 3., 3.]];
+        out.to_data()
+            .assert_eq(&TensorData::from([row, row]), false);
+        assert_eq!(out.to_data(), u.forward(x, y).to_data());
+    }
+
+    #[test]
+    fn codegen_expand_minus_one_sizes() {
+        let s = simplified_source::simplify_expand_minus_one_sizes();
+        let u = unsimplified_source::simplify_expand_minus_one_sizes();
+        assert_codegen_differs(s, u, "expand_minus_one_sizes");
+        // Shape(sizes) folds to [3], so the -1 fixup runs on host arrays with no readback
+        insta::assert_snapshot!(extract_forward(s), @r"
+        pub fn forward(&self, x: Tensor<3>, y: Tensor<3>) -> Tensor<3> {
+                let shape1_out1: [i64; 3] = {
+                    let axes = &y.dims()[0..3];
+                    let mut output = [0i64; 3];
+                    for i in 0..3 {
+                        output[i] = axes[i] as i64;
+                    }
+                    output
+                };
+                let gather1_out1 = shape1_out1[0] as i64;
+                let gather2_out1 = shape1_out1[2] as i64;
+                let unsqueeze1_out1 = [gather1_out1 as i64];
+                let constant4_out1: [i64; 1] = [-1i64];
+                let unsqueeze2_out1 = [gather2_out1 as i64];
+                let concat1_out1: [i64; 3usize] = [
+                    &unsqueeze1_out1[..],
+                    &constant4_out1[..],
+                    &unsqueeze2_out1[..],
+                ]
+                    .concat()
+                    .try_into()
+                    .unwrap();
+                let reshape1_out1 = concat1_out1;
+                let constantofshape1_out1: [i64; 3] = [1i64, 1i64, 1i64];
+                let mul1_out1: [i64; 3] = [-1i64, -1i64, -1i64];
+                let equal1_out1 = {
+                    let __lhs = reshape1_out1;
+                    let __rhs = mul1_out1;
+                    core::array::from_fn::<
+                        i64,
+                        3usize,
+                        _,
+                    >(|__i| if __lhs[__i] == __rhs[__i] { 1i64 } else { 0i64 })
+                };
+                let where1_out1 = {
+                    let mut result = reshape1_out1;
+                    for (i, (cond_item, x_item)) in equal1_out1
+                        .iter()
+                        .zip(constantofshape1_out1.iter())
+                        .enumerate()
+                    {
+                        if *cond_item != 0 {
+                            result[i] = *x_item;
+                        }
+                    }
+                    result
+                };
+                let expand1_out1 = {
+                    let onnx_shape: [i64; 3usize] = where1_out1;
+                    let input_dims = x.dims();
+                    let mut shape = onnx_shape;
+                    #[allow(clippy::needless_range_loop)]
+                    for i in 0..3usize {
+                        let dim_offset = i;
+                        if shape[dim_offset] == 1 && input_dims[i] > 1 {
+                            shape[dim_offset] = input_dims[i] as i64;
+                        }
+                    }
+                    x.expand(shape)
+                };
+                expand1_out1
+            }
+        }
+        ");
+    }
+
+    #[test]
+    fn ones_cumsum_positions() {
+        let device = Default::default();
+        // `Model::default()` loads constants from the bpk; `new` would zero them.
+        let s = simplified::simplify_ones_cumsum_positions::Model::default();
+        let u = unsimplified::simplify_ones_cumsum_positions::Model::default();
+        let x = Tensor::<2>::zeros([2, 8], &device);
+        let out = s.forward(x.clone());
+        // x + [1, 2, ..., 8], from ReferenceEvaluator
+        let row = [1f32, 2., 3., 4., 5., 6., 7., 8.];
+        out.to_data()
+            .assert_eq(&TensorData::from([row, row]), false);
+        assert_eq!(out.to_data(), u.forward(x).to_data());
     }
 
     #[test]

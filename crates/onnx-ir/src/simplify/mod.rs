@@ -8,21 +8,23 @@
 //! 1. **Attention coalescing** - decomposed SDPA pattern -> single Attention node
 //! 2. **Permute-reshape detection** - Shape+Gather+Unsqueeze+Concat+Reshape -> Transpose
 //! 3. **Constant shape propagation** - Shape->Gather and Shape->Slice elimination,
-//!    and Size of a Shape-typed value
+//!    and Size or Shape of a Shape-typed value
 //! 4. **Constant folding** - evaluate nodes with all-constant inputs at compile time
+//!    - **Retyping** - re-infer types of nodes whose inputs just became constant
 //! 5. **Idempotent op elimination** - f(f(x)) -> f(x) for Relu, Ceil, Floor, etc.
 //! 6. **Identity element elimination** - x+0, x*1, x/1, x**1 -> x
 //! 7. **Common subexpression elimination** - merge duplicate nodes
 //! 8. **Dead node elimination** - remove unreferenced nodes (cascading)
 //!
-//! All passes run in a fixed-point loop until the graph stabilizes. Constant lifting
+//! All passes run in a fixed-point loop until the graph stabilizes (no node removed and
+//! nothing retyped, since a retype lets the next iteration fold more). Constant lifting
 //! then re-runs once, so inputs that only became constant during simplification are
 //! lifted into their consumers' configs like any other constant.
 //!
-//! ## Design note: constant_shape never folds a bare `Shape(x)`
+//! ## Design note: constant_shape never folds a bare `Shape` of a tensor
 //!
-//! The constant shape pass intentionally does NOT replace bare `Shape(x)` nodes
-//! with constant arrays, even when all input dimensions are statically known.
+//! The constant shape pass intentionally does NOT replace a bare `Shape(x)` of a
+//! tensor `x` with a constant array, even when all its dimensions are statically known.
 //! This is because `static_shape` values come from the ONNX export-time graph
 //! and may not match runtime shapes for models with dynamic spatial dimensions
 //! (e.g., rf-detr exports with fixed dims but runs with variable input sizes).
@@ -32,9 +34,9 @@
 //! dims which remain constant across inputs. The constant_fold pass then cascades
 //! on these scalar/array constants (e.g., `Cast(const_3)`, `Sqrt(const_3.0)`).
 //!
-//! `Size` on a `Shape(N)`-typed input is folded on different grounds: it reads
-//! only the rank, never a dimension value, so no `static_shape` assumption is
-//! involved and dynamic dims cannot invalidate it.
+//! `Size` and `Shape` on a `Shape(N)`-typed input are folded on different grounds:
+//! they read only the rank, never a dimension value, so no `static_shape` assumption
+//! is involved and dynamic dims cannot invalidate them.
 
 mod coalesce_attention;
 pub(crate) mod constant_fold;
@@ -44,6 +46,7 @@ mod idempotent;
 mod identity_element;
 mod permute_reshape;
 mod redundant_nodes;
+mod retype;
 pub(crate) mod split_to_sequence;
 
 use std::{cell::RefCell, rc::Rc};
@@ -51,6 +54,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     graph_state::GraphState,
     ir::{Argument, RawNode},
+    pipeline::PipelineHooks,
     processor::get_processor_registry,
 };
 
@@ -62,6 +66,7 @@ use idempotent::eliminate_idempotent_ops;
 use identity_element::eliminate_identity_elements;
 use permute_reshape::simplify_permute_reshape;
 use redundant_nodes::eliminate_redundant_nodes;
+use retype::{dynamic_input_names, retype_new_constant_consumers};
 
 /// Maximum number of fixed-point iterations to prevent runaway loops.
 const MAX_ITERATIONS: usize = 10;
@@ -77,9 +82,11 @@ pub(crate) fn simplify_graph(
     mut outputs: Vec<Argument>,
     _state: &Rc<RefCell<GraphState>>,
     opset: usize,
+    hooks: &PipelineHooks,
 ) -> (Vec<RawNode>, Vec<Argument>, Vec<Argument>) {
     for iteration in 0..MAX_ITERATIONS {
         let node_count_before = nodes.len();
+        let dynamic_inputs = dynamic_input_names(&nodes);
 
         // Attention coalescing (must run before permute-reshape, since attention
         // pattern uses native Transpose nodes, not Reshape-based transposes)
@@ -95,6 +102,11 @@ pub(crate) fn simplify_graph(
         // Constant folding (evaluate nodes with all-constant inputs)
         nodes = fold_constants(nodes, &mut outputs, _state);
 
+        // Retype consumers of values that just became constant, so the next
+        // iteration can fold them or keep them on the host
+        let retyped =
+            retype_new_constant_consumers(&mut nodes, &outputs, &dynamic_inputs, opset, hooks);
+
         // Idempotent op elimination: f(f(x)) -> f(x)
         nodes = eliminate_idempotent_ops(nodes);
 
@@ -108,7 +120,7 @@ pub(crate) fn simplify_graph(
         nodes = eliminate_dead_nodes(nodes, &outputs);
 
         let removed = node_count_before - nodes.len();
-        if removed == 0 {
+        if removed == 0 && !retyped {
             log::debug!(
                 "Simplification: converged after {} iteration(s)",
                 iteration + 1

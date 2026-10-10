@@ -1192,6 +1192,125 @@ def ones_times_minus_one():
     )
 
 
+def expand_minus_one_sizes():
+    """x.expand(y.size(0), -1, y.size(2)), as the TorchScript exporter emits it.
+
+    The -1 is resolved at runtime with ConstantOfShape(Shape(sizes)), a Mul by -1, an Equal
+    and a Where. `sizes` is a Shape(3), so Shape(sizes) is the constant [3] and the whole
+    chain stays on the host: Expand gets its shape without a device readback.
+    """
+
+    def const(name, values, dims):
+        return helper.make_node(
+            "Constant",
+            [],
+            [name],
+            value=helper.make_tensor(f"{name}_val", TensorProto.INT64, dims, values),
+        )
+
+    nodes = [
+        helper.make_node("Shape", ["y"], ["y_shape"]),
+        const("i0", [0], []),
+        helper.make_node("Gather", ["y_shape", "i0"], ["b"], axis=0),
+        const("i2", [2], []),
+        helper.make_node("Gather", ["y_shape", "i2"], ["t"], axis=0),
+        const("ax0", [0], [1]),
+        helper.make_node("Unsqueeze", ["b", "ax0"], ["b1"]),
+        const("neg1", [-1], [1]),
+        helper.make_node("Unsqueeze", ["t", "ax0"], ["t1"]),
+        helper.make_node("Concat", ["b1", "neg1", "t1"], ["sizes0"], axis=0),
+        const("flat", [-1], [1]),
+        helper.make_node("Reshape", ["sizes0", "flat"], ["sizes"]),
+        helper.make_node("Shape", ["sizes"], ["sizes_len"]),
+        helper.make_node(
+            "ConstantOfShape",
+            ["sizes_len"],
+            ["ones"],
+            value=helper.make_tensor("one", TensorProto.INT64, [1], [1]),
+        ),
+        const("minus_one", [-1], []),
+        helper.make_node("Mul", ["ones", "minus_one"], ["negs"]),
+        helper.make_node("Equal", ["sizes", "negs"], ["is_neg"]),
+        helper.make_node("Where", ["is_neg", "ones", "sizes"], ["shape"]),
+        helper.make_node("Expand", ["x", "shape"], ["z"]),
+    ]
+    graph = helper.make_graph(
+        name="main_graph",
+        nodes=nodes,
+        inputs=[
+            helper.make_value_info(
+                "x", helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[1, 4, 1])
+            ),
+            helper.make_value_info(
+                "y",
+                helper.make_tensor_type_proto(TensorProto.FLOAT, shape=["b", 4, "t"]),
+            ),
+        ],
+        outputs=[
+            helper.make_value_info(
+                "z",
+                helper.make_tensor_type_proto(TensorProto.FLOAT, shape=["b", 4, "t"]),
+            ),
+        ],
+    )
+    save(
+        helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", OPSET)]),
+        "simplify_expand_minus_one_sizes.onnx",
+    )
+
+
+def ones_cumsum_positions():
+    """Position ids as ones(n).cumsum(0) with n a folded static dim.
+
+    The ConstantOfShape length folds to [8], but CumSum and the Add after it need a
+    tensor, so the fill must stay a tensor rather than move to the host as a Shape.
+    """
+
+    def const(name, values, dims):
+        return helper.make_node(
+            "Constant",
+            [],
+            [name],
+            value=helper.make_tensor(f"{name}_val", TensorProto.INT64, dims, values),
+        )
+
+    nodes = [
+        helper.make_node("Shape", ["x"], ["x_shape"]),
+        const("i1", [1], []),
+        helper.make_node("Gather", ["x_shape", "i1"], ["n"], axis=0),
+        const("ax0", [0], [1]),
+        helper.make_node("Unsqueeze", ["n", "ax0"], ["n1"]),
+        helper.make_node(
+            "ConstantOfShape",
+            ["n1"],
+            ["ones"],
+            value=helper.make_tensor("one", TensorProto.INT64, [1], [1]),
+        ),
+        const("axis", [0], []),
+        helper.make_node("CumSum", ["ones", "axis"], ["pos"]),
+        helper.make_node("Cast", ["pos"], ["pos_f"], to=TensorProto.FLOAT),
+        helper.make_node("Add", ["x", "pos_f"], ["y"]),
+    ]
+    graph = helper.make_graph(
+        name="main_graph",
+        nodes=nodes,
+        inputs=[
+            helper.make_value_info(
+                "x", helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[2, 8])
+            ),
+        ],
+        outputs=[
+            helper.make_value_info(
+                "y", helper.make_tensor_type_proto(TensorProto.FLOAT, shape=[2, 8])
+            ),
+        ],
+    )
+    save(
+        helper.make_model(graph, opset_imports=[helper.make_operatorsetid("", OPSET)]),
+        "simplify_ones_cumsum_positions.onnx",
+    )
+
+
 if __name__ == "__main__":
     print("Generating simplify test models:")
     shape_folding()
@@ -1217,4 +1336,6 @@ if __name__ == "__main__":
     reshape_symbolic_dims()
     pad_from_constants()
     ones_times_minus_one()
+    expand_minus_one_sizes()
+    ones_cumsum_positions()
     print("Done.")

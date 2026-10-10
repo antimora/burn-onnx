@@ -13,7 +13,8 @@ use crate::ir::{
     ArgType, Argument, DType, Node, RawNode, RuntimeInputRef, TensorDataExt, TensorType,
 };
 use crate::processor::{
-    InputSpec, NodeProcessor, NodeSpec, OutputPreferences, OutputSpec, ProcessError,
+    ArgPreference, InputPreferences, InputSpec, NodeProcessor, NodeSpec, OutputPreferences,
+    OutputSpec, ProcessError,
 };
 
 /// Node representation for Expand operation
@@ -89,6 +90,21 @@ impl NodeProcessor for ExpandProcessor {
         }
 
         Ok(())
+    }
+
+    fn input_preferences(
+        &self,
+        node: &RawNode,
+        _opset: usize,
+    ) -> Result<Option<InputPreferences>, ProcessError> {
+        if node.inputs.len() < 2 {
+            return Ok(None);
+        }
+
+        // Prefer Shape type for the target shape (second input), read on the host
+        Ok(Some(
+            InputPreferences::new().add(&node.inputs[1].name, ArgPreference::Shape),
+        ))
     }
 
     fn infer_types(
