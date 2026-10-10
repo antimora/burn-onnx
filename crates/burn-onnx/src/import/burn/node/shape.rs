@@ -42,11 +42,14 @@ impl NodeCodegen for onnx_ir::shape::ShapeNode {
                 }
             }
             ArgType::Shape(shape_rank) => {
-                // If input is already a shape array [i64; N], the Shape operation
-                // returns the dimensionality of the shape (which is N) as a Shape(1) array
-                // This matches the ONNX semantics where Shape of a shape gives you the rank
+                // A shape array [i64; N] is 1-D with shape [N]. start/end select either
+                // that single dimension or nothing.
                 let rank_value = *shape_rank as i64;
-                quote! { [#rank_value] }
+                if self.config.start < self.config.end {
+                    quote! { [#rank_value] }
+                } else {
+                    quote! { [] }
+                }
             }
             ArgType::ScalarTensor(_) => {
                 // ScalarTensor is rank 1, so Shape returns [1]
@@ -156,6 +159,27 @@ mod tests {
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: [i64; 3]) -> [i64; 1] {
             let output: [i64; 1] = [3i64];
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_shape_of_shape_empty_range() {
+        // start=1 on a 1-D shape array selects no dimension
+        let config = ShapeConfig { start: 1, end: 1 };
+        let input = Argument::new("input", ArgType::Shape(3));
+
+        let node = ShapeNode {
+            name: "shape3".to_string(),
+            inputs: vec![input],
+            outputs: vec![Argument::new("output", ArgType::Shape(0))],
+            config,
+        };
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: [i64; 3]) -> [i64; 0] {
+            let output: [i64; 0] = [];
             output
         }
         ");

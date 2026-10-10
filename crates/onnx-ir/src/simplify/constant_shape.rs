@@ -9,11 +9,12 @@ use crate::tensor_store::TensorDataRef;
 
 /// Simplify shape-related patterns when input shapes are statically known.
 ///
-/// Handles three patterns. The first two match on the producing node;
-/// the third matches on the input's type, whatever produced it.
+/// Handles four patterns. The first two match on the producing node;
+/// the last two match on the input's type, whatever produced it.
 /// 1. `Shape -> Gather(constant_index)` -> constant scalar
 /// 2. `Shape -> Slice(static starts/ends)` -> constant tensor
 /// 3. `Size` on a `Shape(N)`-typed input -> constant N
+/// 4. `Shape` (default start/end) on a `Shape(N)`-typed input -> constant [N]
 ///
 /// Orphaned nodes are cleaned up by dead node elimination.
 pub(crate) fn simplify_constant_shape(
@@ -120,7 +121,40 @@ pub(crate) fn simplify_constant_shape(
         constant_outputs.push(output_name);
     }
 
-    // Full Shape elimination is intentionally omitted. While it works when
+    // Pass 4: Shape(Shape(N)) -> constant [N]
+    //
+    // Same reasoning as pass 3: the shape of an [i64; N] array is [N] whatever
+    // its values are, provided start/end select the whole 1-D input. PyTorch emits
+    // this as `ConstantOfShape(Shape(sizes))` for `expand(..., -1, ...)`; once the
+    // nodes after it are retyped (see `retype.rs`) the whole chain stays on the host.
+    let mut shape_of_shape: Vec<(usize, i64)> = Vec::new();
+    for (si, node) in nodes.iter().enumerate() {
+        if node.node_type != NodeType::Shape || node.inputs.is_empty() {
+            continue;
+        }
+        if let ArgType::Shape(rank) = &node.inputs[0].ty
+            && shape_range_is_full(node, 1)
+        {
+            shape_of_shape.push((si, *rank as i64));
+        }
+    }
+
+    for (si, rank) in &shape_of_shape {
+        let shape_node = &nodes[*si];
+        log::info!(
+            "Simplification: replacing Shape of a Shape '{}' with constant [{}]",
+            shape_node.name,
+            rank,
+        );
+
+        let output_name = shape_node.outputs[0].name.clone();
+        let node_name = nodes[*si].name.clone();
+        nodes[*si] =
+            make_constant_node(&node_name, &output_name, &[*rank], ArgType::Shape(1), state);
+        constant_outputs.push(output_name);
+    }
+
+    // Folding Shape of a tensor input is intentionally omitted. While it works when
     // static_shape values match runtime shapes, type inference populates static_shape
     // from ONNX export-time values which may differ at runtime for models with dynamic
     // spatial dimensions (e.g., rf-detr). The Shape codegen already handles the dynamic
@@ -280,6 +314,22 @@ fn extract_full_static_shape(shape_node: &RawNode) -> Option<Vec<i64>> {
     }
 
     Some(static_shape[start..end].iter().map(|&d| d as i64).collect())
+}
+
+/// Whether a Shape node's start/end attributes select every dimension of a rank-`rank` input.
+fn shape_range_is_full(shape_node: &RawNode, rank: usize) -> bool {
+    let rank = rank as i64;
+    let attr = |name: &str, default: i64| {
+        let v = shape_node
+            .attrs
+            .get(name)
+            .map(|v| v.clone().into_i64())
+            .transpose()
+            .ok()?
+            .unwrap_or(default);
+        Some(if v < 0 { v + rank } else { v }.clamp(0, rank))
+    };
+    attr("start", 0) == Some(0) && attr("end", rank) == Some(rank)
 }
 
 /// Check if a Slice node consumes a Shape node with static shape, and all slice
@@ -941,5 +991,66 @@ mod tests {
         let result = simplify_constant_shape(nodes, &mut [], &state);
         let size = result.iter().find(|n| n.name == "size").unwrap();
         assert_eq!(size.node_type, NodeType::Size);
+    }
+
+    // --- Shape(Shape) tests ---
+
+    #[test]
+    fn test_shape_of_shape_replaced_with_constant() {
+        // A Shape(3) value is an [i64; 3] whatever its values, so its shape is [3]
+        let nodes = vec![raw_node(
+            "len",
+            NodeType::Shape,
+            vec![shape_arg("sizes", 3)],
+            vec![shape_arg("len_out", 1)],
+            Attributes::new(),
+        )];
+
+        let state = test_state();
+        let result = simplify_constant_shape(nodes, &mut [], &state);
+        assert_eq!(result[0].node_type, NodeType::Constant);
+        assert_eq!(result[0].outputs[0].ty, ArgType::Shape(1));
+        assert_eq!(
+            result[0].inputs[0].value().unwrap().to_i64_vec().unwrap(),
+            vec![3]
+        );
+    }
+
+    #[test]
+    fn test_shape_of_shape_with_start_not_folded() {
+        // start=1 selects no dimension of the 1-D input, so the result is not [N]
+        let mut attrs = Attributes::new();
+        attrs.insert("start".to_string(), AttributeValue::Int64(1));
+        let nodes = vec![raw_node(
+            "len",
+            NodeType::Shape,
+            vec![shape_arg("sizes", 3)],
+            vec![shape_arg("len_out", 1)],
+            attrs,
+        )];
+
+        let state = test_state();
+        let result = simplify_constant_shape(nodes, &mut [], &state);
+        assert_eq!(result[0].node_type, NodeType::Shape);
+    }
+
+    #[test]
+    fn test_shape_of_shape_negative_range() {
+        // On a 1-D input start=-1 normalizes to 0 (whole input), end=-1 to 0 (nothing)
+        let fold = |attr: &str| {
+            let mut attrs = Attributes::new();
+            attrs.insert(attr.to_string(), AttributeValue::Int64(-1));
+            let nodes = vec![raw_node(
+                "len",
+                NodeType::Shape,
+                vec![shape_arg("sizes", 3)],
+                vec![shape_arg("len_out", 1)],
+                attrs,
+            )];
+            simplify_constant_shape(nodes, &mut [], &test_state())[0].node_type
+                == NodeType::Constant
+        };
+        assert!(fold("start"));
+        assert!(!fold("end"));
     }
 }

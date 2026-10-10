@@ -67,12 +67,8 @@ impl NodeProcessor for ShapeProcessor {
                 let config = self.extract_config(node, opset)?;
                 config.end - config.start
             }
-            ArgType::Shape(_) => {
-                // Shape of a Shape: output is always a 1-element array containing the length
-                1
-            }
-            ArgType::ScalarTensor(_) => {
-                // ScalarTensor is rank 1; apply start/end like a rank-1 Tensor
+            ArgType::Shape(_) | ArgType::ScalarTensor(_) => {
+                // Both are rank 1; apply start/end like a rank-1 Tensor
                 let config = self.extract_config(node, opset)?;
                 config.end - config.start
             }
@@ -94,8 +90,8 @@ impl NodeProcessor for ShapeProcessor {
         // Extract the rank/dimension count from the input
         let rank = match &node.inputs[0].ty {
             ArgType::Tensor(tensor) => tensor.rank,
-            ArgType::Shape(rank) => *rank,
-            ArgType::ScalarTensor(_) => 1,
+            // A Shape value is a 1-D array, so its rank is 1 whatever its length
+            ArgType::Shape(_) | ArgType::ScalarTensor(_) => 1,
             _ => {
                 return Err(ProcessError::TypeMismatch {
                     expected: "Tensor, Shape, or ScalarTensor".to_string(),
@@ -362,5 +358,31 @@ mod tests {
         processor.infer_types(&mut node, 16, &prefs).unwrap();
 
         assert!(matches!(node.outputs[0].ty, ArgType::Shape(1)));
+    }
+
+    #[test]
+    fn test_shape_of_shape_honors_range() {
+        // A Shape(3) value is a 1-D array, so start/end index its single dimension
+        let infer = |start: Option<i64>, end: Option<i64>| {
+            let mut builder = TestNodeBuilder::new(NodeType::Shape, "test_shape")
+                .add_input("data", ArgType::Shape(3))
+                .output_tensor_i64("shape", 1, None);
+            if let Some(start) = start {
+                builder = builder.attr_int("start", start);
+            }
+            if let Some(end) = end {
+                builder = builder.attr_int("end", end);
+            }
+            let mut node = builder.build();
+            ShapeProcessor
+                .infer_types(&mut node, 16, &OutputPreferences::new())
+                .unwrap();
+            node.outputs[0].ty.clone()
+        };
+
+        assert!(matches!(infer(None, None), ArgType::Shape(1)));
+        assert!(matches!(infer(Some(-1), None), ArgType::Shape(1)));
+        assert!(matches!(infer(Some(1), None), ArgType::Shape(0)));
+        assert!(matches!(infer(None, Some(-1)), ArgType::Shape(0)));
     }
 }

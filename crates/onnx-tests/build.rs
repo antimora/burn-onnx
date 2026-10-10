@@ -932,5 +932,7 @@ fn add_simplify_inputs(model_gen: &mut ModelGen) {
         .input("tests/simplify/simplify_pool_output_dims.onnx")
         .input("tests/simplify/simplify_reshape_symbolic_dims.onnx")
         .input("tests/simplify/simplify_pad_from_constants.onnx")
-        .input("tests/simplify/simplify_ones_times_minus_one.onnx");
+        .input("tests/simplify/simplify_ones_times_minus_one.onnx")
+        .input("tests/simplify/simplify_expand_minus_one_sizes.onnx")
+        .input("tests/simplify/simplify_ones_cumsum_positions.onnx");
 }
