@@ -134,6 +134,7 @@ fn add_all_inputs(model_gen: &mut ModelGen) {
         .input("tests/ceil/ceil.onnx")
         .input("tests/celu/celu.onnx")
         .input("tests/clip/clip.onnx")
+        .input("tests/clip/clip_runtime_bounds.onnx")
         .input("tests/conv_runtime_weight/conv_runtime_weight.onnx")
         .input("tests/conv_runtime_weight/conv_runtime_bias.onnx")
         .input("tests/col2im/col2im_basic.onnx")
