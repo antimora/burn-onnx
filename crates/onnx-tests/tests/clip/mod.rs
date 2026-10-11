@@ -1,6 +1,6 @@
 // Import the shared macro
 use crate::include_models;
-include_models!(clip);
+include_models!(clip, clip_int_static_min_runtime_max);
 
 // Runtime bounds go through a separate codegen path. Deny `unused_parens` so a
 // regression in the generated bound casts fails to compile instead of warning.
@@ -13,6 +13,26 @@ pub mod clip_runtime_bounds {
 mod tests {
     use super::*;
     use burn::tensor::{Device, Tensor, TensorData};
+
+    #[test]
+    fn clip_int_static_min_runtime_max() {
+        let device = Default::default();
+        let model = clip_int_static_min_runtime_max::Model::from_file(
+            concat!(
+                env!("OUT_DIR"),
+                "/model/clip_int_static_min_runtime_max.bpk"
+            ),
+            &device,
+        );
+        let input = Tensor::<1, burn::tensor::Int>::from_data(
+            TensorData::from([0i64, 3, 9]),
+            (&device, burn::tensor::DType::I64),
+        );
+        let output = model.forward(input, 5);
+        output
+            .to_data()
+            .assert_eq(&TensorData::from([1i64, 3, 5]), true);
+    }
 
     #[test]
     fn clip() {

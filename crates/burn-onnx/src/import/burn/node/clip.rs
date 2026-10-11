@@ -33,12 +33,26 @@ impl ClipBoundCast {
             Self::F64 => quote! { f64 },
         }
     }
+
+    fn literal(self, v: f64) -> TokenStream {
+        match self {
+            Self::I64 => {
+                let v = v as i64;
+                quote! { #v }
+            }
+            Self::U64 => {
+                let v = v as u64;
+                quote! { #v }
+            }
+            Self::F64 => quote! { #v },
+        }
+    }
 }
 
 /// Token stream for a single Clip `min`/`max` bound. Static bounds are
-/// inlined as literals; runtime bounds are extracted from the input
-/// (native scalar or `ScalarTensor`) and `as`-cast to `bound_cast` — see
-/// `ClipBoundCast` for why the cast width is chosen up front from the
+/// inlined as `bound_cast`-typed literals; runtime bounds are extracted from
+/// the input (native scalar or `ScalarTensor`) and `as`-cast to `bound_cast`
+/// — see `ClipBoundCast` for why the cast width is chosen up front from the
 /// data tensor's dtype.
 fn clip_bound_expr(
     bound: &Option<onnx_ir::node::clip::ClipInput>,
@@ -48,10 +62,7 @@ fn clip_bound_expr(
 ) -> Option<TokenStream> {
     match bound {
         None => None,
-        Some(onnx_ir::node::clip::ClipInput::Static(v)) => {
-            let v = *v;
-            Some(quote! { #v })
-        }
+        Some(onnx_ir::node::clip::ClipInput::Static(v)) => Some(bound_cast.literal(*v)),
         Some(onnx_ir::node::clip::ClipInput::Runtime(r)) => {
             let arg = &inputs[r.input_index];
             let cast_ty = bound_cast.tokens();
@@ -386,6 +397,50 @@ mod tests {
         assert_snapshot!(code, @r"
         pub fn forward(&self, input: Tensor<2>, max_val: f32) -> Tensor<2> {
             let output = input.clamp_max(max_val as f64);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_clip_int_static_min_runtime_max() {
+        let config = ClipConfig {
+            min: Some(ClipInput::Static(1.0)),
+            max: Some(ClipInput::Runtime(onnx_ir::ir::RuntimeInputRef::new(
+                "max_val".to_string(),
+                1,
+            ))),
+        };
+        let node = ClipNodeBuilder::new("clip1")
+            .input_tensor("input", 2, DType::I64)
+            .input_scalar("max_val", DType::I64)
+            .output_tensor("output", 2, DType::I64)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<2, Int>, max_val: i64) -> Tensor<2, Int> {
+            let output = input.clamp(1i64, max_val as i64);
+            output
+        }
+        ");
+    }
+
+    #[test]
+    fn test_clip_uint_static_bounds() {
+        let config = ClipConfig {
+            min: Some(ClipInput::Static(0.0)),
+            max: Some(ClipInput::Static(200.0)),
+        };
+        let node = ClipNodeBuilder::new("clip1")
+            .input_tensor("input", 2, DType::U8)
+            .output_tensor("output", 2, DType::U8)
+            .config(config)
+            .build();
+        let code = codegen_forward_default(&node);
+        assert_snapshot!(code, @r"
+        pub fn forward(&self, input: Tensor<2, Int>) -> Tensor<2, Int> {
+            let output = input.clamp(0u64, 200u64);
             output
         }
         ");
