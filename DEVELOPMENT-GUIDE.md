@@ -874,7 +874,7 @@ cargo xtask model-check --model silero-vad
 cargo xtask model-check --model silero-vad build
 
 # Select backend
-cargo xtask model-check --features tch
+cargo xtask model-check --features wgpu
 
 # Debug build
 cargo xtask model-check --model silero-vad --debug
