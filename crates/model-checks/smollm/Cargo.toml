@@ -8,7 +8,6 @@ publish = false
 [features]
 default = ["flex"]
 flex = ["burn/flex"]
-tch = ["burn/tch"]
 wgpu = ["burn/wgpu", "burn/autotune", "burn/fusion"]
 metal = ["burn/metal", "burn/autotune", "burn/fusion"]
 

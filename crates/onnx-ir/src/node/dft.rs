@@ -12,12 +12,12 @@
 //!
 //! - Forward real DFT with `onesided=1`: maps to `burn::tensor::signal::rfft`
 //! - Forward real DFT with `onesided=0`: rfft + conjugate symmetry reconstruction
-//! - Complex input and inverse DFT: maps to `burn::tensor::signal::cfft`, with the
-//!   inverse computed as `conj(DFT(conj(x))) / N`
+//! - Complex input: maps to `burn::tensor::signal::cfft`
+//! - Inverse DFT: maps to `burn::tensor::signal::ifft`
 //!
 //! Not supported: `onesided=1` together with complex input or `inverse=1`.
 //!
-//! burn's `rfft` and `cfft` panic at run time unless the transform length (the signal
+//! burn's `rfft`, `cfft` and `ifft` panic at run time unless the transform length (the signal
 //! length, or `dft_length` when given) is a power of two.
 //!
 //! ## Type Constraints

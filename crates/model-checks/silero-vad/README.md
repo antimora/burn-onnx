@@ -59,9 +59,6 @@ This model check supports multiple backends:
 # Flex backend (default, CPU)
 cargo run
 
-# LibTorch backend (CPU/CUDA)
-cargo run --features tch --no-default-features
-
 # WGPU backend (GPU via WebGPU)
 cargo run --features wgpu --no-default-features
 

@@ -139,11 +139,10 @@ fn forward_rfft_full(
     }
 }
 
-/// Complex or inverse DFT via cfft, which takes the real and imaginary parts
+/// Complex or inverse DFT via cfft / ifft, which take the real and imaginary parts
 /// separately.
 ///
-/// ONNX: [..., N, 1] (real) or [..., N, 2] (complex) -> [..., N, 2]. The inverse is
-/// `conj(DFT(conj(x))) / N`.
+/// ONNX: [..., N, 1] (real) or [..., N, 2] (complex) -> [..., N, 2]
 fn forward_cfft(
     config: &DftConfig,
     input: TokenStream,
@@ -170,9 +169,7 @@ fn forward_cfft(
 
     let transform = if config.inverse {
         quote! {
-            let (re, im) = burn::tensor::signal::cfft(re, im.neg(), #axis, #n);
-            let len = re.dims()[#axis] as f64;
-            let (re, im) = (re.div_scalar(len), im.neg().div_scalar(len));
+            let (re, im) = burn::tensor::signal::ifft(re, im, #axis, #n);
         }
     } else {
         quote! {
@@ -189,7 +186,7 @@ fn forward_cfft(
     }
 }
 
-/// The `n` argument of rfft/cfft, which zero-pads or truncates the signal to `dft_length`.
+/// The `n` argument of rfft/cfft/ifft, which zero-pads or truncates the signal to `dft_length`.
 fn dft_length_tokens(config: &DftConfig) -> TokenStream {
     match config.dft_length {
         Some(dft_length) => quote! { Some(#dft_length) },
@@ -339,9 +336,7 @@ mod tests {
             let output = {
                 let re = input.clone().narrow(2usize, 0, 1).squeeze_dims::<2usize>(&[2isize]);
                 let im = input.narrow(2usize, 1, 1).squeeze_dims::<2usize>(&[2isize]);
-                let (re, im) = burn::tensor::signal::cfft(re, im.neg(), 1usize, None);
-                let len = re.dims()[1usize] as f64;
-                let (re, im) = (re.div_scalar(len), im.neg().div_scalar(len));
+                let (re, im) = burn::tensor::signal::ifft(re, im, 1usize, None);
                 Tensor::<2usize>::stack::<3usize>([re, im].to_vec(), 2usize)
             };
             output
@@ -369,9 +364,7 @@ mod tests {
             let output = {
                 let re = input.squeeze_dims::<2usize>(&[2isize]);
                 let im = re.zeros_like();
-                let (re, im) = burn::tensor::signal::cfft(re, im.neg(), 1usize, Some(16usize));
-                let len = re.dims()[1usize] as f64;
-                let (re, im) = (re.div_scalar(len), im.neg().div_scalar(len));
+                let (re, im) = burn::tensor::signal::ifft(re, im, 1usize, Some(16usize));
                 Tensor::<2usize>::stack::<3usize>([re, im].to_vec(), 2usize)
             };
             output

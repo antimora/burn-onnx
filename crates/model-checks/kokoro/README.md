@@ -145,7 +145,6 @@ The check has two acceptance tiers:
 
 ```bash
 cargo run                                          # flex (default)
-cargo run --no-default-features --features tch     # LibTorch
 cargo run --no-default-features --features wgpu    # WebGPU
 cargo run --no-default-features --features metal   # Metal
 ```

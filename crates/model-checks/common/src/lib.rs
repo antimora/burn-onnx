@@ -53,53 +53,8 @@ macro_rules! backend_type {
 
 /// Returns the best available device for the active backend.
 ///
-/// Override with `BURN_DEVICE=cpu|mps|cuda|cuda:N`.
-///
-/// Defaults:
-/// - **wgpu / metal / flex**: `Default::default()` (already picks the best device)
-/// - **tch**: MPS on macOS, Cuda(0) elsewhere
+/// Every supported backend (wgpu / metal / flex) picks its best device by default.
 #[macro_export]
 macro_rules! best_device {
-    () => {{
-        #[cfg(feature = "tch")]
-        {
-            use burn::tensor::LibTorchDevice;
-            let libtorch: LibTorchDevice = match std::env::var("BURN_DEVICE").ok().as_deref() {
-                Some("cpu") => LibTorchDevice::Cpu,
-                Some("mps") => LibTorchDevice::Mps,
-                Some(s) if s.starts_with("cuda") => {
-                    let idx = match s.strip_prefix("cuda:") {
-                        Some(i) => match i.parse() {
-                            Ok(n) => n,
-                            Err(_) => {
-                                eprintln!(
-                                    "Warning: invalid CUDA index '{i}', defaulting to cuda:0"
-                                );
-                                0
-                            }
-                        },
-                        None => 0,
-                    };
-                    LibTorchDevice::Cuda(idx)
-                }
-                _ => {
-                    #[cfg(target_os = "macos")]
-                    {
-                        LibTorchDevice::Mps
-                    }
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        LibTorchDevice::Cuda(0)
-                    }
-                }
-            };
-            let device: burn::prelude::Device = libtorch.into();
-            device
-        }
-
-        #[cfg(not(feature = "tch"))]
-        {
-            <burn::prelude::Device as core::default::Default>::default()
-        }
-    }};
+    () => {{ <burn::prelude::Device as core::default::Default>::default() }};
 }
